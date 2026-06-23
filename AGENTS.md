@@ -43,6 +43,13 @@ recipe delete <slug>                           Rezept loeschen
 recipe suggest [--days N] [--limit N]          Kandidaten fuers naechste Essen
 recipe check                                   Konsistenz Index <-> .md
 recipe serve  [--host H] [--port N]            Web-Oberflaeche starten (LAN)
+
+recipe einkauf list [--offen]                  Einkaufsliste anzeigen
+recipe einkauf add "<text>" [--menge M]        Eintrag hinzufuegen
+recipe einkauf rezept <slug>                   Alle Zutaten eines Rezepts -> Liste
+recipe einkauf check|uncheck <id>              Eintrag ab-/anhaken
+recipe einkauf remove <id>                     Eintrag entfernen (Tombstone)
+recipe einkauf clear                           Erledigte (abgehakte) entfernen
 ```
 
 Aufruf: `python -m recipe <kommando>` (oder `recipe <kommando>` nach `pip install -e .`).

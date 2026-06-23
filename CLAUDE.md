@@ -85,16 +85,13 @@ Serifenziffern, Karten mit gestaffeltem Einblenden. UI und Datenfelder deutsch.
 
 **Fertig:** Datenmodell, Core, CLI, Web-UI (Liste/Suche/Tag-Filter, Rezept-
 ansicht, anlegen/bearbeiten/löschen, „heute gekocht", Vorschläge, Logbuch),
-404-Seite, Pi-Deployment (systemd), Browsertest.
+404-Seite, Pi-Deployment (systemd), Browsertest. **Einkaufsliste** (Core/CLI/
+Web, `recipe einkauf …`) inkl. offline-fähiger **PWA**: Service-Worker (App-
+Shell-Cache, Offline-Fallback) + Voll-State-Sync per „letzter gewinnt" +
+Tombstones. Sync-Kontrakt: [docs/sync-kontrakt.md](docs/sync-kontrakt.md).
+Tests: `scripts/browser_check.py` (Web inkl. No-JS-Fallback) +
+`scripts/pwa_check.py` (Offline, Zwei-Geräte-Merge, Service-Worker).
 
 **In Diskussion / geplant:**
-- **Einkaufsliste + PWA** — ENTSCHIEDEN: offline-fähige **PWA** (kein App Store,
-  eine Codebasis), die zu Hause im LAN mit dem Pi synct; WireGuard nur optionaler
-  Bonus für Live-Sync unterwegs. Sync ist konfliktarm (pro Eintrag „letzter
-  gewinnt" + Tombstones), weil der Datenfluss asymmetrisch ist (schreiben zu
-  Hause, abhaken unterwegs). Detaillierter Umsetzungsplan mit erzwungener
-  Subagent-Parallelisierung: **[docs/plan-einkaufsliste-pwa.md](docs/plan-einkaufsliste-pwa.md)**.
-  Wird in 2 Wellen à 3 parallele Subagents gebaut (Contract-first, disjunkte
-  Dateien, git-Worktrees).
 - Agent-verwaltete Rezeptbilder.
 - Wochenplan.
