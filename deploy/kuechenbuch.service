@@ -1,0 +1,18 @@
+[Unit]
+Description=Kuechenbuch – Rezept-Webserver
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# --- an deine Umgebung anpassen ---
+User=pi
+WorkingDirectory=/home/pi/recipes
+ExecStart=/home/pi/recipes/.venv/bin/python -m recipe serve --host 0.0.0.0 --port 8000
+# Optional: Daten woanders ablegen (sonst neben dem Code)
+# Environment=RECIPE_HOME=/home/pi/kuechenbuch-daten
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow">Entscheidungshilfe</p>
+  <h1 class="page-title">Was koche ich?</h1>
+  <p class="lede">Vorschläge, die du in den letzten {{ days }} Tagen nicht gekocht hast — am längsten Vermisstes zuerst.</p>
+  <form class="dayswitch" method="get" action="/vorschlaege">
+    <span>Zeitraum:</span>
+    {% for d in [3, 7, 14] %}
+      <button name="days" value="{{ d }}" class="tagchip {{ 'is-on' if days == d else '' }}">{{ d }} Tage</button>
+    {% endfor %}
+  </form>
+</section>
+
+{% if kandidaten %}
+<ul class="cards">
+  {% for r in kandidaten %}
+  <li class="card" style="--i: {{ loop.index0 }}">
+    <a href="/rezept/{{ r.slug }}">
+      <div class="card-top">
+        <span class="rank">{{ '%02d'|format(loop.index) }}</span>
+        {% if r.dauer_minuten %}<span class="card-time">{{ r.dauer_minuten }} min</span>{% endif %}
+      </div>
+      <h2 class="card-title">{{ r.titel }}</h2>
+      <div class="card-meta"><span>zuletzt: {{ r.zuletzt_gekocht or 'noch nie' }}</span></div>
+      {% if r.tags %}<div class="card-tags">{% for t in r.tags %}<span class="tag">{{ t }}</span>{% endfor %}</div>{% endif %}
+    </a>
+    <form method="post" action="/rezept/{{ r.slug }}/gekocht" class="card-quick">
+      <button class="btn-ghost" type="submit">Heute gekocht</button>
+    </form>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="empty">
+  <p class="empty-emoji">🍽️</p>
+  <p>Nichts übrig — in den letzten {{ days }} Tagen war schon alles dran.</p>
+</div>
+{% endif %}
+{% endblock %}

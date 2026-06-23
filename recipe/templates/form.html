@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="form-wrap">
+  <a class="back" href="{{ '/' if not r else '/rezept/' ~ r.slug }}">← Zurück</a>
+  <h1 class="page-title">{{ 'Rezept bearbeiten' if r else 'Neues Rezept' }}</h1>
+  {% if fehler %}<p class="fehler">{{ fehler }}</p>{% endif %}
+  <form class="rezept-form" method="post" action="{{ form_action }}">
+    <label>Titel
+      <input type="text" name="titel" value="{{ form.titel }}" required autofocus>
+    </label>
+    <div class="form-row">
+      <label>Tags <span class="hint">kommagetrennt</span>
+        <input type="text" name="tags" value="{{ form.tags }}" placeholder="pasta, schnell, vegetarisch">
+      </label>
+      <label>Dauer <span class="hint">Minuten</span>
+        <input type="number" name="dauer" value="{{ form.dauer }}" min="0" inputmode="numeric">
+      </label>
+      <label>Portionen
+        <input type="number" name="portionen" value="{{ form.portionen }}" min="0" inputmode="numeric">
+      </label>
+    </div>
+    <label>Rezept <span class="hint">Markdown — Zutaten &amp; Zubereitung</span>
+      <textarea name="inhalt" rows="18" spellcheck="false">{{ form.inhalt }}</textarea>
+    </label>
+    <div class="form-actions">
+      <button class="btn" type="submit">Speichern</button>
+      <a class="btn-ghost" href="{{ '/' if not r else '/rezept/' ~ r.slug }}">Abbrechen</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow">Dein Küchenbuch</p>
+  <h1 class="page-title">Was kochen wir?</h1>
+</section>
+
+<form class="filters" method="get" action="/">
+  <div class="search">
+    <input type="search" name="q" value="{{ q }}" placeholder="Suche nach Zutat, Name, Stichwort…" autocomplete="off">
+    <button type="submit">Suchen</button>
+  </div>
+  <div class="tagbar">
+    <a href="/" class="tagchip {{ 'is-on' if not tag else '' }}">Alle</a>
+    {% for t in alle_tags %}
+      <a href="/?tag={{ t|urlencode }}{% if q %}&q={{ q|urlencode }}{% endif %}"
+         class="tagchip {{ 'is-on' if tag == t else '' }}">{{ t }}</a>
+    {% endfor %}
+  </div>
+</form>
+
+{% if recipes %}
+<ul class="cards">
+  {% for r in recipes %}
+  <li class="card" style="--i: {{ loop.index0 }}">
+    <a href="/rezept/{{ r.slug }}">
+      <div class="card-top">
+        {% if r.dauer_minuten %}<span class="card-time">{{ r.dauer_minuten }} min</span>{% endif %}
+      </div>
+      <h2 class="card-title">{{ r.titel }}</h2>
+      <div class="card-meta">
+        {% if r.portionen %}<span>{{ r.portionen }} Portionen</span>{% endif %}
+        {% if r.zuletzt_gekocht %}<span>· zuletzt {{ r.zuletzt_gekocht }}</span>{% endif %}
+      </div>
+      {% if r.tags %}
+      <div class="card-tags">
+        {% for t in r.tags %}<span class="tag">{{ t }}</span>{% endfor %}
+      </div>
+      {% endif %}
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="empty">
+  <p class="empty-emoji">🍅</p>
+  <p>Keine Rezepte gefunden{% if q or tag %} für diese Suche{% endif %}.</p>
+  <a class="btn" href="/neu">Erstes Rezept anlegen</a>
+</div>
+{% endif %}
+{% endblock %}

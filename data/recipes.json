@@ -1,0 +1,26 @@
+[
+  {
+    "slug": "spaghetti-carbonara",
+    "titel": "Spaghetti Carbonara",
+    "tags": ["pasta", "italienisch", "schnell"],
+    "dauer_minuten": 25,
+    "portionen": 2,
+    "zuletzt_gekocht": "2026-06-21"
+  },
+  {
+    "slug": "rotes-linsen-dal",
+    "titel": "Rotes Linsen-Dal",
+    "tags": ["vegan", "indisch", "guenstig"],
+    "dauer_minuten": 30,
+    "portionen": 4,
+    "zuletzt_gekocht": "2026-06-18"
+  },
+  {
+    "slug": "ofengemuese-feta",
+    "titel": "Ofengemüse mit Feta",
+    "tags": ["vegetarisch", "ofen", "einfach"],
+    "dauer_minuten": 40,
+    "portionen": 2,
+    "zuletzt_gekocht": null
+  }
+]

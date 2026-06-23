@@ -1,0 +1,20 @@
+[project]
+name = "recipe"
+version = "0.1.0"
+description = "Markdown-basiertes Rezept-System, steuerbar per CLI und Web – agent-freundlich."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+# Werden erst fuer die Web-UI gebraucht:
+web = ["fastapi", "uvicorn[standard]", "jinja2", "markdown"]
+
+[project.scripts]
+recipe = "recipe.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["recipe"]

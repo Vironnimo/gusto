@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow">Verlauf</p>
+  <h1 class="page-title">Logbuch</h1>
+  <p class="lede">Was zuletzt auf dem Tisch stand.</p>
+</section>
+
+{% if eintraege %}
+<ol class="timeline">
+  {% for e in eintraege %}
+  <li>
+    <span class="tl-date">{{ e.datum }}</span>
+    <span class="tl-dot"></span>
+    {% if e.slug in titel_map %}
+      <a class="tl-name" href="/rezept/{{ e.slug }}">{{ titel_map[e.slug] }}</a>
+    {% else %}
+      <span class="tl-name tl-gone">{{ e.slug }}</span>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<div class="empty">
+  <p class="empty-emoji">📖</p>
+  <p>Noch nichts gekocht. Markiere ein Rezept als „heute gekocht“.</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,176 @@
+"""Web-Oberflaeche (FastAPI, server-gerendert).
+
+Duenne Huelle um recipe.core – genau wie die CLI. Jede Aktion hier hat ihre
+Entsprechung im Core und damit in der CLI; es gibt kein Web-only-Feature.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import markdown as md
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from . import core
+
+BASE = Path(__file__).resolve().parent
+app = FastAPI(title="Kuechenbuch")
+app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
+templates = Jinja2Templates(directory=str(BASE / "templates"))
+
+
+# --- Helfer -----------------------------------------------------------------
+
+def _split_title(text: str) -> str:
+    """Entfernt die erste H1-Zeile (den Titel) – den zeigen wir separat."""
+    out, dropped = [], False
+    for ln in text.splitlines():
+        if not dropped and ln.strip().startswith("# "):
+            dropped = True
+            continue
+        out.append(ln)
+    return "\n".join(out).strip()
+
+
+def _render(text: str) -> str:
+    return md.markdown(_split_title(text), extensions=["extra", "sane_lists"])
+
+
+def _int_or_none(v: str | None):
+    v = (v or "").strip()
+    return int(v) if v.lstrip("-").isdigit() else None
+
+
+def _tags(s: str | None):
+    return [t.strip() for t in (s or "").split(",") if t.strip()]
+
+
+def _alle_tags():
+    return sorted({t for r in core.load_recipes() for t in r.tags})
+
+
+# --- Seiten -----------------------------------------------------------------
+
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request, q: str = "", tag: str = ""):
+    recipes = sorted(core.search(query=q, tag=tag or None), key=lambda r: r.titel.lower())
+    return templates.TemplateResponse(request, "list.html", {
+        "nav": "rezepte", "titel": "Rezepte",
+        "recipes": recipes, "q": q, "tag": tag, "alle_tags": _alle_tags(),
+    })
+
+
+@app.get("/rezept/{slug}", response_class=HTMLResponse)
+def rezept(request: Request, slug: str):
+    r = core.get(slug)
+    if r is None:
+        raise StarletteHTTPException(status_code=404)
+    return templates.TemplateResponse(request, "recipe.html", {
+        "nav": "rezepte", "titel": r.titel,
+        "r": r, "inhalt_html": _render(r.inhalt()),
+    })
+
+
+@app.get("/neu", response_class=HTMLResponse)
+def neu_form(request: Request):
+    form = {"titel": "", "tags": "", "dauer": "", "portionen": "",
+            "inhalt": "## Zutaten\n\n- \n\n## Zubereitung\n\n1. "}
+    return templates.TemplateResponse(request, "form.html", {
+        "nav": "neu", "titel": "Neues Rezept",
+        "r": None, "form": form, "form_action": "/neu",
+    })
+
+
+@app.post("/neu")
+def neu_speichern(request: Request, titel: str = Form(...), tags: str = Form(""),
+                  dauer: str = Form(""), portionen: str = Form(""),
+                  inhalt: str = Form("")):
+    content = f"# {titel.strip()}\n\n{inhalt.strip()}\n"
+    try:
+        r = core.add_recipe(titel.strip(), tags=_tags(tags),
+                            dauer_minuten=_int_or_none(dauer),
+                            portionen=_int_or_none(portionen), inhalt=content)
+    except ValueError as e:
+        form = {"titel": titel, "tags": tags, "dauer": dauer,
+                "portionen": portionen, "inhalt": inhalt.strip()}
+        return templates.TemplateResponse(request, "form.html", {
+            "nav": "neu", "titel": "Neues Rezept",
+            "r": None, "form": form, "form_action": "/neu", "fehler": str(e),
+        }, status_code=400)
+    return RedirectResponse(f"/rezept/{r.slug}", status_code=303)
+
+
+@app.get("/rezept/{slug}/bearbeiten", response_class=HTMLResponse)
+def bearbeiten_form(request: Request, slug: str):
+    r = core.get(slug)
+    if r is None:
+        raise StarletteHTTPException(status_code=404)
+    form = {"titel": r.titel, "tags": ", ".join(r.tags),
+            "dauer": r.dauer_minuten or "", "portionen": r.portionen or "",
+            "inhalt": _split_title(r.inhalt())}
+    return templates.TemplateResponse(request, "form.html", {
+        "nav": "rezepte", "titel": f"{r.titel} bearbeiten",
+        "r": r, "form": form, "form_action": f"/rezept/{slug}/bearbeiten",
+    })
+
+
+@app.post("/rezept/{slug}/bearbeiten")
+def bearbeiten_speichern(slug: str, titel: str = Form(...), tags: str = Form(""),
+                         dauer: str = Form(""), portionen: str = Form(""),
+                         inhalt: str = Form("")):
+    content = f"# {titel.strip()}\n\n{inhalt.strip()}\n"
+    try:
+        core.update_recipe(slug, titel=titel.strip(), tags=_tags(tags),
+                           dauer_minuten=_int_or_none(dauer),
+                           portionen=_int_or_none(portionen), inhalt=content)
+    except ValueError:
+        raise StarletteHTTPException(status_code=404)
+    return RedirectResponse(f"/rezept/{slug}", status_code=303)
+
+
+@app.post("/rezept/{slug}/gekocht")
+def gekocht(slug: str):
+    try:
+        core.log_cooked(slug)
+    except ValueError:
+        raise StarletteHTTPException(status_code=404)
+    return RedirectResponse(f"/rezept/{slug}", status_code=303)
+
+
+@app.post("/rezept/{slug}/loeschen")
+def loeschen(slug: str):
+    try:
+        core.delete_recipe(slug)
+    except ValueError:
+        raise StarletteHTTPException(status_code=404)
+    return RedirectResponse("/", status_code=303)
+
+
+@app.get("/vorschlaege", response_class=HTMLResponse)
+def vorschlaege(request: Request, days: int = 7):
+    return templates.TemplateResponse(request, "suggest.html", {
+        "nav": "vorschlaege", "titel": "Was koche ich?",
+        "kandidaten": core.suggest(days=days), "days": days,
+    })
+
+
+@app.get("/logbuch", response_class=HTMLResponse)
+def logbuch(request: Request):
+    eintraege = list(reversed(core.load_log()))
+    titel_map = {r.slug: r.titel for r in core.load_recipes()}
+    return templates.TemplateResponse(request, "log.html", {
+        "nav": "logbuch", "titel": "Logbuch",
+        "eintraege": eintraege, "titel_map": titel_map,
+    })
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception(request: Request, exc: StarletteHTTPException):
+    if exc.status_code == 404:
+        return templates.TemplateResponse(request, "404.html", {
+            "nav": "", "titel": "Nicht gefunden",
+        }, status_code=404)
+    return PlainTextResponse(str(exc.detail or exc.status_code), status_code=exc.status_code)
