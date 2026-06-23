@@ -131,7 +131,7 @@ Shopping-list item:
 | `data/log.json` | `[ { date, slug } ]`. |
 | `data/shopping_list.json` | `{ items: [ … ] }` (includes tombstones). |
 
-## Worked example — "Was soll ich heute essen?"
+## Worked example — "what should I cook?"
 
 ```
 $ python -m recipe log --days 7 --json
