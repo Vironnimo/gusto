@@ -115,7 +115,7 @@ Zusätzlich: Manifest + SW-Registrierung da, Zwei-Geräte-Merge simulieren
 (Integration + Test).
 
 ## Subagent-Briefing (Vorlage, je Subagent)
-1. Pfad zu **diesem Plan** + `CLAUDE.md` + `AGENTS.md` lesen.
+1. Pfad zu **diesem Plan** + `CLAUDE.md` lesen.
 2. **Nur die eigene Tabellen-Zeile** anfassen (exklusiver Datei-Besitz).
 3. Auf dem **Kontrakt-Commit** aufsetzen, gegen die fixen Signaturen arbeiten.
 4. Eigene Tests schreiben. Iron Rule beachten: kein Web-only-Feature, jedes

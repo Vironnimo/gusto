@@ -8,8 +8,9 @@ für einen Raspberry Pi im lokalen Netzwerk, erreichbar von jedem Gerät.
 - **Metadaten** (Tags, Dauer, Portionen, zuletzt gekocht) liegen gebündelt in
   `data/recipes.json`, das Koch-Logbuch in `data/log.json`.
 - **Zwei gleichwertige Oberflächen über demselben Kern** (`recipe/core.py`):
-  eine **CLI** (auch für Agents, siehe [AGENTS.md](AGENTS.md)) und eine schöne
-  **Web-UI**. Es gibt kein Feature, das nur die eine kann.
+  eine **CLI** (auch für Agents; Anleitung in [CLAUDE.md](CLAUDE.md) und als
+  Skill unter `skill/recipes/`) und eine schöne **Web-UI**. Es gibt kein
+  Feature, das nur die eine kann.
 
 ## Installation
 
@@ -60,7 +61,7 @@ recipe/templates/   Jinja2-Templates
 recipe/static/      CSS + JS
 deploy/             systemd-Unit für den Raspberry Pi
 scripts/            End-to-End-Test der Web-UI (Playwright)
-AGENTS.md           Bedienungsanleitung für Agents
+skill/recipes/      Skill zur Bedienung per CLI (für Agents)
 ```
 
 ## Auf dem Raspberry Pi (Autostart)
