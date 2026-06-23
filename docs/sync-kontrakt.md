@@ -6,9 +6,9 @@ Jeder Subagent arbeitet ausschließlich an seinen Dateien (siehe unten) gegen
 diesen Kontrakt.
 
 ## Architektur in einem Absatz
-`/einkauf` ist server-gerendert und funktioniert online auch ohne JS
+`/shopping` ist server-gerendert und funktioniert online auch ohne JS
 (Phase 1). Phase 2 macht die Seite **offline-fähig**: ein Service-Worker cacht
-die App-Shell, und `einkauf-client.js` rendert die Liste aus **localStorage**
+die App-Shell, und `shopping-client.js` rendert die Liste aus **localStorage**
 und hakt **optimistisch offline** ab. Sync gegen den Pi ist **Voll-State**:
 der Client schickt seinen kompletten lokalen Stand, der Server merged
 ("letzter gewinnt" pro `id` + Tombstones) und schickt den gemergten
@@ -22,12 +22,12 @@ Ein Item ist exakt das Dict von `core.EinkaufItem.to_dict()`:
 {
   "id": "string (opak, eindeutig)",
   "text": "200 g Spaghetti",
-  "menge": "",
+  "quantity": "",
   "checked": false,
-  "quelle": "spaghetti-carbonara",   // oder null
-  "erstellt_am": "2026-06-23T18:00:00Z",
-  "geaendert_am": "2026-06-23T18:00:00Z",
-  "geloescht": false
+  "source": "spaghetti-carbonara",   // oder null
+  "created_at": "2026-06-23T18:00:00Z",
+  "updated_at": "2026-06-23T18:00:00Z",
+  "deleted": false
 }
 ```
 
@@ -43,63 +43,63 @@ Opaker, eindeutiger String. Server: `uuid4().hex`. Client für neue Items:
 `crypto.randomUUID()`. Beide Formate sind erlaubt — gemerged wird per exaktem
 `id`-Vergleich. Eine einmal vergebene `id` bleibt für das Item stabil.
 
-## Merge-Regel (`core.einkauf_merge`, 2A)
+## Merge-Regel (`core.shopping_merge`, 2A)
 Voll-State, pro `id`:
 - `id` nur lokal → bleibt.
 - `id` nur remote → wird übernommen.
-- `id` beidseitig → die Version mit dem **größeren `geaendert_am`** gewinnt
+- `id` beidseitig → die Version mit dem **größeren `updated_at`** gewinnt
   (String-Vergleich). Bei Gleichstand bleibt die **lokale** (Server-)Version.
-- Tombstones (`geloescht: true`) sind ganz normale Versionen und propagieren
+- Tombstones (`deleted: true`) sind ganz normale Versionen und propagieren
   nach derselben Regel.
 Ergebnis enthält **alle** ids (inkl. Tombstones), wird gespeichert und
 zurückgegeben.
 
-## API (Subagent 2A — `recipe/web.py` API-Abschnitt + `core.einkauf_merge`)
-Die Stubs stehen bereits in `web.py` (`/api/einkauf`, `/api/einkauf/sync`) und
-in `core.einkauf_merge`. Implementieren:
+## API (Subagent 2A — `recipe/web.py` API-Abschnitt + `core.shopping_merge`)
+Die Stubs stehen bereits in `web.py` (`/api/shopping`, `/api/shopping/sync`) und
+in `core.shopping_merge`. Implementieren:
 
-- `GET /api/einkauf` → `200 {"items": [<item>, ...]}` (alle inkl. Tombstones,
-  via `core.einkauf_load()`).
-- `POST /api/einkauf/sync` — Body `{"items": [<item>, ...]}` →
-  `200 {"items": [<gemergt>, ...]}` (via `core.einkauf_merge(body["items"])`).
+- `GET /api/shopping` → `200 {"items": [<item>, ...]}` (alle inkl. Tombstones,
+  via `core.shopping_load()`).
+- `POST /api/shopping/sync` — Body `{"items": [<item>, ...]}` →
+  `200 {"items": [<gemergt>, ...]}` (via `core.shopping_merge(body["items"])`).
   Fehlt `items`, wie leere Liste behandeln.
 
 Beide liefern `application/json` (JSONResponse). Keine HTML-Redirects.
 
-## Client-Store + Verhalten (Subagent 2C — `recipe/static/einkauf-client.js`, `recipe/templates/einkauf.html`)
-**localStorage-Key:** `gusto.einkauf`
+## Client-Store + Verhalten (Subagent 2C — `recipe/static/shopping-client.js`, `recipe/templates/shopping.html`)
+**localStorage-Key:** `gusto.shopping`
 **Wert:** `JSON.stringify({ items: [<item>, ...] })` (gleiches Item-Schema).
 
-**Progressive Enhancement in `einkauf.html`:**
+**Progressive Enhancement in `shopping.html`:**
 - Die server-gerenderte Phase-1-Liste bleibt als **No-JS-Fallback** erhalten,
   umschlossen von z.B. `<div id="eink-server">`.
 - Neu: ein leerer Container `<div id="eink-client" hidden></div>` und
-  `<script src="/static/einkauf-client.js" defer></script>`.
+  `<script src="/static/shopping-client.js" defer></script>`.
 - Beim Start blendet der Client `#eink-server` aus und `#eink-client` ein und
   rendert dort. So funktioniert die Seite mit JS (offline-fähig) **und** ohne
   JS (online, Server-Forms).
 - Der Client rendert mit **denselben CSS-Klassen** wie die Server-Version
   (`.eink-board`, `.eink-group`, `.eink-group-done`, `.eink-item`, `.is-done`,
-  `.eink-box`, `.is-checked`, `.eink-body`, `.eink-text`, `.eink-menge`,
-  `.eink-quelle`, `.eink-x`, `.eink-add`, `.eink-clear`, `.eink-count`,
-  `.eink-leer`), damit kein neues CSS nötig ist. Nur `einkauf.html` und
-  `einkauf-client.js` anfassen (für JS-Umschaltung ggf. ein kleines inline
-  `<style>` in `einkauf.html`).
+  `.eink-box`, `.is-checked`, `.eink-body`, `.eink-text`, `.eink-quantity`,
+  `.eink-source`, `.eink-x`, `.eink-add`, `.eink-clear`, `.eink-count`,
+  `.eink-leer`), damit kein neues CSS nötig ist. Nur `shopping.html` und
+  `shopping-client.js` anfassen (für JS-Umschaltung ggf. ein kleines inline
+  `<style>` in `shopping.html`).
 
-**Render:** Items aus localStorage, `geloescht` rausfiltern, in
-offen/erledigt gruppieren, nach `erstellt_am` aufsteigend.
+**Render:** Items aus localStorage, `deleted` rausfiltern, in
+offen/erledigt gruppieren, nach `created_at` aufsteigend.
 
 **Mutationen (immer: localStorage schreiben → neu rendern → `sync()` anstoßen):**
-- Hinzufügen: neues Item `{id: crypto.randomUUID(), text, menge, checked:false,
-  quelle:null, erstellt_am:now, geaendert_am:now, geloescht:false}`.
-- Abhaken/auf-offen: `checked` setzen, `geaendert_am=now`.
-- Entfernen: `geloescht=true`, `geaendert_am=now` (kein Hard-Delete).
-- Erledigte entfernen: alle `checked && !geloescht` → `geloescht=true`,
-  `geaendert_am=now`.
+- Hinzufügen: neues Item `{id: crypto.randomUUID(), text, quantity, checked:false,
+  source:null, created_at:now, updated_at:now, deleted:false}`.
+- Abhaken/auf-offen: `checked` setzen, `updated_at=now`.
+- Entfernen: `deleted=true`, `updated_at=now` (kein Hard-Delete).
+- Erledigte entfernen: alle `checked && !deleted` → `deleted=true`,
+  `updated_at=now`.
 
 **`sync()`** (idempotent, fehlertolerant):
 - Offline (`!navigator.onLine`) → nichts tun, Änderungen bleiben lokal.
-- Online → `POST /api/einkauf/sync` mit `{items: <localItems inkl. Tombstones>}`;
+- Online → `POST /api/shopping/sync` mit `{items: <localItems inkl. Tombstones>}`;
   bei Erfolg Antwort-`items` als neuen lokalen Stand übernehmen (localStorage
   überschreiben) und neu rendern. Bei Netzwerkfehler lokalen Stand behalten.
 
@@ -112,7 +112,7 @@ offen/erledigt gruppieren, nach `erstellt_am` aufsteigend.
 ```json
 {
   "name": "Gusto", "short_name": "Gusto",
-  "start_url": "/einkauf", "scope": "/",
+  "start_url": "/shopping", "scope": "/",
   "display": "standalone",
   "background_color": "#f6efe1", "theme_color": "#bf4528",
   "icons": [
@@ -132,23 +132,23 @@ Größe ~55 % der Kantenlänge, im sicheren Bereich für „maskable"). Cremeton
 ok, muss aber nicht.
 
 **`recipe/static/sw.js`** — Service-Worker:
-- Versionierter Cache-Name (z.B. `gusto-v1`); im `activate` alte Caches
+- Versionierter Cache-Name (z.B. `gusto-v2`); im `activate` alte Caches
   löschen.
 - `install`: App-Shell **precachen** (Liste unten), dann `skipWaiting()`.
 - `fetch`:
   - **Navigationen** (`request.mode === "navigate"`): network-first, bei
-    Fehler aus dem Cache `/einkauf` liefern (Offline-Fallback).
+    Fehler aus dem Cache `/shopping` liefern (Offline-Fallback).
   - `/api/...`: **network-only** (nicht cachen — Offline regelt der Client
     über localStorage).
   - sonstige same-origin GET (Static): **cache-first**.
 
 **App-Shell-Asset-Liste (precache):**
 ```
-/einkauf
+/shopping
 /
 /static/style.css
 /static/app.js
-/static/einkauf-client.js
+/static/shopping-client.js
 /static/manifest.webmanifest
 /static/icons/icon-192.png
 /static/icons/icon-512.png
@@ -166,9 +166,9 @@ die System-Font-Fallbacks aus `style.css`.)
 ## Datei-Eigentum (disjunkt!)
 | Subagent | Exklusiv |
 |---|---|
-| 2A | `recipe/core.py` (NUR `einkauf_merge`), `recipe/web.py` (NUR die zwei `/api/...`-Stubs ausfüllen) |
+| 2A | `recipe/core.py` (NUR `shopping_merge`), `recipe/web.py` (NUR die zwei `/api/...`-Stubs ausfüllen) |
 | 2B | `recipe/static/manifest.webmanifest`, `recipe/static/sw.js`, `recipe/static/icons/*`, `recipe/templates/base.html` |
-| 2C | `recipe/static/einkauf-client.js` (neu), `recipe/templates/einkauf.html` |
+| 2C | `recipe/static/shopping-client.js` (neu), `recipe/templates/shopping.html` |
 
 Keine zwei Subagents fassen dieselbe Datei an. `recipe/static/app.js` bleibt
 unverändert.

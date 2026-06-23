@@ -13,11 +13,11 @@ description: >-
   parsing.
 ---
 
-# Gusto — Rezept-System per CLI
+# Gusto — recipe system via the CLI
 
 ## Overview
 
-The Gusto is a self-hosted, markdown-based recipe system. Recipes are
+Gusto is a self-hosted, markdown-based recipe system. Recipes are
 plain `.md` files; all metadata lives in JSON. The `recipe` CLI is the single
 interface — built so an agent operates it exactly like a human, and every
 command supports `--json`. The system stays deliberately simple: the *reasoning*
@@ -53,7 +53,7 @@ Do not use for:
 - `RECIPE_HOME` (env var) relocates the data folder (`recipes/` + `data/`);
   honor it if set (e.g. on the Pi).
 - Read commands (`list`, `search`, `show`, `tags`, `log`, `suggest`, `check`)
-  are safe to run freely. Treat `new`, `set`, `delete`, `cooked`, and `einkauf`
+  are safe to run freely. Treat `new`, `set`, `delete`, `cooked`, and `shopping`
   writes as state changes.
 
 ## Core Workflows
@@ -88,37 +88,37 @@ Report 2–3 concrete picks, each with a one-line reason — not the raw list.
 
 ### Add a recipe
 
-1. `python -m recipe new "Ofen-Lachs" --tags ofen,schnell --dauer 25 --portionen 2 --json`
+1. `python -m recipe new "Ofen-Lachs" --tags ofen,schnell --duration 25 --servings 2 --json`
    — writes both the `.md` (a template) and the index entry in one step.
 2. Write the real content into `recipes/<slug>.md`: keep the first line
    `# Ofen-Lachs`, then `## Zutaten` (bullet list) and `## Zubereitung`
    (numbered). **No frontmatter.**
 3. If you used a tag not yet in a category, add it under the right key in
    `data/categories.json`, then run `python -m recipe check` (it reports
-   `unsortierte_tags`).
+   `uncategorized_tags`).
 
-From Python you can do it atomically: `core.add_recipe(titel, tags=...,
-inhalt=full_markdown)`.
+From Python you can do it atomically: `core.add_recipe(title, tags=...,
+content=full_markdown)`.
 
 ### Edit, log, shopping list
 
-- Metadata: `recipe set <slug> --tags a,b --dauer N` (`--tags` replaces the
-  whole list). Body: rewrite `recipes/<slug>.md` (first line stays `# Titel`).
+- Metadata: `recipe set <slug> --tags a,b --duration N` (`--tags` replaces the
+  whole list). Body: rewrite `recipes/<slug>.md` (first line stays `# Title`).
 - Record a cook: `recipe cooked <slug>` (adds a log entry + bumps
-  `zuletzt_gekocht`).
-- Shopping list: `recipe einkauf rezept <slug>` (all ingredients of a recipe),
-  `einkauf add "<text>"`, `einkauf list [--offen]`,
-  `einkauf check|uncheck|remove <id>`, `einkauf clear`.
+  `last_cooked`).
+- Shopping list: `recipe shopping add-recipe <slug>` (all ingredients of a recipe),
+  `shopping add "<text>"`, `shopping list [--pending]`,
+  `shopping check|uncheck|remove <id>`, `shopping clear`.
 
 ## Data Model (know it, don't fight it)
 
-- `recipes/<slug>.md` — pure markdown, starts with `# Titel`. **Never add
+- `recipes/<slug>.md` — pure markdown, starts with `# Title`. **Never add
   frontmatter.**
-- `data/recipes.json` — metadata index: `slug, titel, tags[], dauer_minuten,
-  portionen, zuletzt_gekocht`.
+- `data/recipes.json` — metadata index: `slug, title, tags[], duration_min,
+  servings, last_cooked`.
 - `data/categories.json` — tag → category map: `{ key: { label, tags[] } }`
   (order = display order).
-- `data/log.json`, `data/einkaufsliste.json` — cooking log / shopping list.
+- `data/log.json`, `data/shopping_list.json` — cooking log / shopping list.
 
 The `slug` links `.md` ↔ index. Prefer CLI commands over hand-editing JSON so
 invariants hold; if you do hand-edit, run `recipe check` afterward.
@@ -137,7 +137,7 @@ invariants hold; if you do hand-edit, run `recipe check` afterward.
    add the entry and run `recipe check`.
 4. Assuming one tag = one filter — tags are facets: multiple `--tag`, OR within
    a category, AND across categories.
-5. Forgetting to categorize a new tag — `recipe check` flags `unsortierte_tags`;
+5. Forgetting to categorize a new tag — `recipe check` flags `uncategorized_tags`;
    add it to `categories.json`.
 6. Proposing or building MCP — forbidden in this project.
 7. Treating `suggest` as the final answer — it is a simple rule; you add the

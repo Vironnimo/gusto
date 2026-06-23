@@ -35,26 +35,26 @@ Worktree-Isolation für die Subagents.
 ## Phase 0 — Kontrakt 🔒 (1 Agent / Haupt-Session, blockiert Phase 1)
 Festlegen, als Stubs committen, BEVOR Phase 1 startet:
 
-- **`data/einkaufsliste.json`-Schema (sync-fähig):**
+- **`data/shopping_list.json`-Schema (sync-fähig):**
   ```json
   { "items": [ {
-      "id": "uuid", "text": "200 g Spaghetti", "menge": "200 g",
-      "checked": false, "quelle": "spaghetti-carbonara",
-      "erstellt_am": "2026-06-23T18:00:00Z",
-      "geaendert_am": "2026-06-23T18:00:00Z",
-      "geloescht": false
+      "id": "uuid", "text": "200 g Spaghetti", "quantity": "200 g",
+      "checked": false, "source": "spaghetti-carbonara",
+      "created_at": "2026-06-23T18:00:00Z",
+      "updated_at": "2026-06-23T18:00:00Z",
+      "deleted": false
   } ] }
   ```
-  `geaendert_am` (UTC ISO) treibt later „letzter gewinnt"; `geloescht` =
+  `updated_at` (UTC ISO) treibt later „letzter gewinnt"; `deleted` =
   Tombstone, damit Löschungen synchron propagieren.
 - **Core-Signaturen** (nur Stubs + Docstrings): `parse_zutaten`,
-  `einkauf_load/save/add/add_rezept/list/toggle/remove/clear_done/merge`.
+  `shopping_load/save/add/add_rezept/list/toggle/remove/clear_done/merge`.
 - **Zutaten-Parsing-Regel:** Bullet-Items (`-`/`*`) unter `## Zutaten` bis zur
   nächsten `##`-Überschrift; v1 = ganze Zeile als `text`.
-- **CLI-Spec:** `recipe einkauf list|add|rezept|check|uncheck|remove|clear`
+- **CLI-Spec:** `recipe shopping list|add|rezept|check|uncheck|remove|clear`
   (alle mit `--json`).
 - **Schon mit Blick auf Phase 2:** Merge-Regel = pro `id` neuestes
-  `geaendert_am` gewinnt, Tombstones propagieren.
+  `updated_at` gewinnt, Tombstones propagieren.
 
 → Ergebnis: ein Commit mit Stubs + Kontrakt. Daran hängen alle weiteren Agents.
 
@@ -65,15 +65,15 @@ Gegen den Phase-0-Kontrakt, gleichzeitig, getrennte Dateien:
 
 | Subagent | Auftrag | Besitzt (exklusiv) |
 |---|---|---|
-| **1A · Core** | `parse_zutaten` + alle `einkauf_*`-Funktionen (außer `merge`) implementieren; Tests | `recipe/core.py` (Einkauf-Abschnitt), `tests/test_einkauf.py` |
-| **1B · CLI** | `recipe einkauf …`-Subcommands gegen den Kontrakt, alle mit `--json` | `recipe/cli.py` (Einkauf-Abschnitt) |
-| **1C · Web** | Routen + Listen-Seite + „Zutaten auf die Liste"-Knopf am Rezept + Styles | `recipe/web.py` (Einkauf-Routen), `recipe/templates/einkauf.html`, `recipe/templates/recipe.html` (nur der Knopf), `recipe/static/style.css` (Einkauf-Styles) |
+| **1A · Core** | `parse_zutaten` + alle `shopping_*`-Funktionen (außer `merge`) implementieren; Tests | `recipe/core.py` (Einkauf-Abschnitt), `tests/test_shopping.py` |
+| **1B · CLI** | `recipe shopping …`-Subcommands gegen den Kontrakt, alle mit `--json` | `recipe/cli.py` (Einkauf-Abschnitt) |
+| **1C · Web** | Routen + Listen-Seite + „Zutaten auf die Liste"-Knopf am Rezept + Styles | `recipe/web.py` (Einkauf-Routen), `recipe/templates/shopping.html`, `recipe/templates/recipe.html` (nur der Knopf), `recipe/static/style.css` (Einkauf-Styles) |
 
 Hinweis: 1B/1C schreiben gegen die **Signaturen** und laufen erst nach dem Merge
 mit 1A grün — genau dafür ist Contract-first da.
 
 ### Checkpoint 1 🔒
-Zusammenführen → `python -m recipe einkauf …` prüfen, `browser_check.py` um die
+Zusammenführen → `python -m recipe shopping …` prüfen, `browser_check.py` um die
 Einkaufs-Flows erweitern (Rezept→Liste, Häkchen, Clear). Grün? → weiter.
 
 ---
@@ -81,9 +81,9 @@ Einkaufs-Flows erweitern (Rezept→Liste, Häkchen, Clear). Grün? → weiter.
 ## Phase 2 — PWA + Offline + Sync
 
 ### Phase 2.0 — Sync-Kontrakt 🔒 (kurz, 1 Agent)
-- `einkauf_merge(remote_items)` finalisieren (letzter gewinnt pro `id` +
+- `shopping_merge(remote_items)` finalisieren (letzter gewinnt pro `id` +
   Tombstones).
-- **API-Form:** `GET /api/einkauf` → `{items}`; `POST /api/einkauf/sync`
+- **API-Form:** `GET /api/shopping` → `{items}`; `POST /api/shopping/sync`
   (Body `{items}`) → gemergte `{items}` zurück. Voll-State-Sync (bei der
   Listengröße völlig ausreichend, kein Delta-Protokoll nötig).
 - **Client-Store-Schema** (localStorage reicht bei der Größe; IndexedDB
@@ -95,9 +95,9 @@ Einkaufs-Flows erweitern (Rezept→Liste, Häkchen, Clear). Grün? → weiter.
 ### Phase 2.1 ⚡ MUSS an 3 Subagents
 | Subagent | Auftrag | Besitzt (exklusiv) |
 |---|---|---|
-| **2A · Sync-Server** | `einkauf_merge` + `GET /api/einkauf` + `POST /api/einkauf/sync` | `recipe/core.py` (merge), `recipe/web.py` (API-Abschnitt) |
+| **2A · Sync-Server** | `shopping_merge` + `GET /api/shopping` + `POST /api/shopping/sync` | `recipe/core.py` (merge), `recipe/web.py` (API-Abschnitt) |
 | **2B · PWA-Schale** | `manifest.webmanifest`, Icons, Service-Worker (App-Shell cachen, Offline-Fallback), Registrierung | `recipe/static/manifest.webmanifest`, `recipe/static/sw.js`, `recipe/static/icons/*`, `recipe/templates/base.html` (manifest-Link + SW-Registrierung + theme-color) |
-| **2C · Offline-Client** | Lokaler Store, optimistische Häkchen offline, Sync-Logik gegen die API | `recipe/static/einkauf-client.js`, `recipe/templates/einkauf.html` (Client-Anbindung) |
+| **2C · Offline-Client** | Lokaler Store, optimistische Häkchen offline, Sync-Logik gegen die API | `recipe/static/shopping-client.js`, `recipe/templates/shopping.html` (Client-Anbindung) |
 
 2A & 2C arbeiten gegen den 2.0-API-Kontrakt; 2B ist davon unabhängig
 (braucht nur die Asset-Liste).

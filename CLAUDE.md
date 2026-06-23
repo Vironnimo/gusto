@@ -37,13 +37,13 @@ days.
 | Location | Contents |
 |----------|----------|
 | `recipes/<slug>.md` | Pure recipe content (Markdown, starts with `# Title`). No frontmatter. |
-| `data/recipes.json` | Metadata of all recipes: `slug`, `titel`, `tags`, `dauer_minuten`, `portionen`, `zuletzt_gekocht`. |
+| `data/recipes.json` | Metadata of all recipes: `slug`, `title`, `tags`, `duration_min`, `servings`, `last_cooked`. |
 | `data/categories.json` | Tag categories (facets): `{ "<key>": {"label", "tags": [...]} }`. Maps the flat tags to categories (order = display order). |
-| `data/log.json` | Cooking log: `[{ "datum": "YYYY-MM-DD", "slug": ... }]`. |
+| `data/log.json` | Cooking log: `[{ "date": "YYYY-MM-DD", "slug": ... }]`. |
 
 `recipe new` writes both the .md AND the index entry. If a .md is created by
 hand, add the entry in `data/recipes.json` and run `recipe check`. When saving
-from the web, the first line of the .md is always rewritten as `# {titel}` (the
+from the web, the first line of the .md is always rewritten as `# {title}` (the
 title is its own form field, not in the body).
 
 Per recipe, tags stay a **flat list**; their category lives centrally in
@@ -51,9 +51,6 @@ Per recipe, tags stay a **flat list**; their category lives centrally in
 `--tag`/`?tag=` can be repeated, **OR within** a category and **AND across**
 categories. Tags without a category are reported by `recipe check` as
 "unsorted"; then sort the tag into `categories.json`.
-
-Data field names stay German (`titel`, `dauer_minuten`, `portionen`, …) to match
-the data model and UI — keep them as-is.
 
 ## Usage
 
@@ -71,23 +68,23 @@ All commands understand `--json` (machine-readable, for agents). `RECIPE_HOME`
 recipe list   [--tag T ...] [--max-time N]    Filter; --tag repeatable/comma-separated
 recipe search "<terms>" [--match any|all] [--tag T ...]   Full-text (incl. ingredients)
 recipe tags   [--all]                          Show tag categories (facets)
-recipe show   <slug>                          Print a recipe (--json: incl. inhalt)
-recipe new    "<Title>" [--tags a,b] [--dauer N] [--portionen N]
+recipe show   <slug>                          Print a recipe (--json: incl. content)
+recipe new    "<Title>" [--tags a,b] [--duration N] [--servings N]
 recipe edit   <slug>                          Open the .md in the editor
 recipe cooked <slug> [--date YYYY-MM-DD]      Record in the cooking log
 recipe log    [--days N]                       Show the cooking log
-recipe set    <slug> [--titel ...] [--tags a,b] [--dauer N] [--portionen N]
+recipe set    <slug> [--title ...] [--tags a,b] [--duration N] [--servings N]
 recipe delete <slug>                           Delete a recipe
 recipe suggest [--days N] [--limit N]          Candidates for the next meal
 recipe check                                   Consistency index <-> .md (+ unsorted tags)
 recipe serve  [--host H] [--port N]            Start the web UI (LAN)
 
-recipe einkauf list [--offen]                  Show the shopping list
-recipe einkauf add "<text>" [--menge M]        Add an entry
-recipe einkauf rezept <slug>                   All ingredients of a recipe -> list
-recipe einkauf check|uncheck <id>              Check / uncheck an entry
-recipe einkauf remove <id>                     Remove an entry (tombstone)
-recipe einkauf clear                           Remove done (checked) entries
+recipe shopping list [--pending]                  Show the shopping list
+recipe shopping add "<text>" [--quantity M]        Add an entry
+recipe shopping add-recipe <slug>                   All ingredients of a recipe -> list
+recipe shopping check|uncheck <id>              Check / uncheck an entry
+recipe shopping remove <id>                     Remove an entry (tombstone)
+recipe shopping clear                           Remove done (checked) entries
 ```
 
 ## Typical tasks (agent)
@@ -106,8 +103,8 @@ recipe einkauf clear                           Remove done (checked) entries
 **Filter by tags (facets):** `recipe list --tag italienisch --tag pizza --tag
 vegetarisch --json` — OR within a category, AND across categories.
 
-**Digitize a recipe:** `recipe new "Title" --tags … --dauer …`, then write the
-content into `recipes/<slug>.md` (from code: `core.add_recipe(…, inhalt=…)`).
+**Digitize a recipe:** `recipe new "Title" --tags … --duration …`, then write the
+content into `recipes/<slug>.md` (from code: `core.add_recipe(…, content=…)`).
 
 ## Important files
 
@@ -152,7 +149,7 @@ staggered fade-in. UI and data fields are German.
 typing, **tag facets**: multi-select grouped by category, OR within / AND across
 categories — `data/categories.json`, `recipe tags`), recipe view,
 create/edit/delete, "cooked today", suggestions, log, 404 page, Pi deployment
-(systemd), browser test. **Shopping list** (core/CLI/web, `recipe einkauf …`)
+(systemd), browser test. **Shopping list** (core/CLI/web, `recipe shopping …`)
 incl. offline-capable **PWA**: service worker (app-shell cache, offline fallback)
 + full-state sync via "last writer wins" + tombstones. Sync contract:
 [docs/sync-kontrakt.md](docs/sync-kontrakt.md). Tests: `scripts/browser_check.py`
