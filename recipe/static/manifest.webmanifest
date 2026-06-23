@@ -1,0 +1,23 @@
+{
+  "name": "Küchenbuch",
+  "short_name": "Küchenbuch",
+  "start_url": "/einkauf",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6efe1",
+  "theme_color": "#bf4528",
+  "icons": [
+    {
+      "src": "/static/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

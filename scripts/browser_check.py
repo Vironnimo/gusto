@@ -141,37 +141,50 @@ try:
         resp = page.goto(BASE + "/rezept/gibtsnicht")
         check(resp.status == 404, "Unbekanntes Rezept -> 404-Seite")
 
-        # --- Einkaufsliste ---
+        # --- Einkaufsliste (JS-Client uebernimmt: rendert in #eink-client) ---
         page.goto(BASE, wait_until="networkidle")
         check(page.locator(".nav a", has_text="Einkauf").count() >= 1, "Nav-Link zur Einkaufsliste")
 
-        # Zutaten eines Rezepts auf die Einkaufsliste schicken
+        # Zutaten eines Rezepts auf die Liste (Server-Form auf der Rezeptseite)
         page.goto(BASE + "/rezept/spaghetti-carbonara", wait_until="networkidle")
         page.locator("form[action$='/einkauf'] button").click()
         page.wait_for_load_state("networkidle")
         check(page.url.endswith("/einkauf"), "Knopf fuehrt auf /einkauf")
-        check(page.locator(".eink-item").count() == 6, "6 Carbonara-Zutaten auf der Liste")
+        page.wait_for_function("() => document.querySelectorAll('#eink-client .eink-item').length === 6")
+        check(page.locator("#eink-client .eink-item").count() == 6, "6 Carbonara-Zutaten (Client)")
         page.screenshot(path=str(SHOTS / "09_einkauf.png"), full_page=True)
 
-        # Manuell etwas hinzufuegen
-        page.fill("input[name=text]", "Backpapier")
-        page.fill("input[name=menge]", "1 Rolle")
-        page.locator("form.eink-add button[type=submit]").click()
-        page.wait_for_load_state("networkidle")
-        check(page.locator(".eink-item").count() == 7, "Manuelles Item hinzugefuegt -> 7")
-        check("Backpapier" in page.content(), "Manuelles Item sichtbar")
+        # Manuell hinzufuegen (Client-Form, optimistisch + Hintergrund-Sync)
+        page.fill("#eink-client input[name=text]", "Backpapier")
+        page.fill("#eink-client input[name=menge]", "1 Rolle")
+        page.locator("#eink-client form.eink-add button").click()
+        page.wait_for_function("() => document.querySelectorAll('#eink-client .eink-item').length === 7")
+        check("Backpapier" in page.content(), "Manuelles Item sichtbar (Client)")
 
         # Ein Item abhaken -> wandert nach 'Erledigt'
-        page.locator(".eink-group:not(.eink-group-done) .eink-box").first.click()
-        page.wait_for_load_state("networkidle")
-        check(page.locator(".eink-group-done .eink-item").count() == 1, "Ein Item ist erledigt")
+        page.locator("#eink-client .eink-group:not(.eink-group-done) .eink-box").first.click()
+        page.wait_for_function("() => document.querySelectorAll('#eink-client .eink-group-done .eink-item').length === 1")
+        check(page.locator("#eink-client .eink-group-done .eink-item").count() == 1, "Ein Item ist erledigt (Client)")
 
-        # Erledigte entfernen (Tombstone, bleibt aus der Ansicht)
-        page.locator("form.eink-clear button").click()
-        page.wait_for_load_state("networkidle")
-        check(page.locator(".eink-group-done").count() == 0, "Keine Erledigt-Gruppe mehr")
-        check(page.locator(".eink-item").count() == 6, "Wieder 6 offene Items")
+        # Erledigte entfernen (Tombstone)
+        page.locator("#eink-client .eink-clear button").click()
+        page.wait_for_function("() => document.querySelectorAll('#eink-client .eink-group-done').length === 0")
+        check(page.locator("#eink-client .eink-item").count() == 6, "Wieder 6 offene Items (Client)")
         page.screenshot(path=str(SHOTS / "10_einkauf_after.png"), full_page=True)
+
+        # No-JS-Fallback: server-gerenderte Liste funktioniert ohne JavaScript
+        # (zustandsunabhaengig: vorher/nachher statt fester Anzahl)
+        nojs = browser.new_context(java_script_enabled=False)
+        njp = nojs.new_page()
+        njp.goto(BASE + "/einkauf", wait_until="domcontentloaded")
+        check(njp.locator("#eink-server form.eink-add").count() == 1, "No-JS: Server-Formular vorhanden")
+        vorher = njp.locator("#eink-server .eink-item").count()
+        njp.fill("#eink-server input[name=text]", "Senf")
+        njp.locator("#eink-server form.eink-add button").click()
+        njp.wait_for_load_state("domcontentloaded")
+        check(njp.locator("#eink-server .eink-item").count() == vorher + 1, "No-JS: hinzufuegen per Server-Form")
+        check("Senf" in njp.content(), "No-JS: neues Item sichtbar")
+        nojs.close()
 
         # Mobile-Ansichten
         m = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2)

@@ -11,7 +11,7 @@ dist/
 *.tmp
 
 # Test- und Laufzeit-Artefakte
-.testdata/
+.testdata*/
 .clitest/
 .serve.log
 scripts/shots/

@@ -9,7 +9,8 @@ from pathlib import Path
 
 import markdown as md
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, JSONResponse
+from fastapi.responses import (HTMLResponse, RedirectResponse, PlainTextResponse,
+                               JSONResponse, FileResponse)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -231,7 +232,7 @@ def api_einkauf_get():
     Implementierung (2A): JSONResponse({"items": [i.to_dict() for i in
     core.einkauf_load()]}).
     """
-    raise NotImplementedError("Phase 2.1 / Subagent 2A")
+    return JSONResponse({"items": [i.to_dict() for i in core.einkauf_load()]})
 
 
 @app.post("/api/einkauf/sync")
@@ -244,7 +245,23 @@ async def api_einkauf_sync(request: Request):
     merged = core.einkauf_merge(body.get("items", []));
     return JSONResponse({"items": [i.to_dict() for i in merged]}).
     """
-    raise NotImplementedError("Phase 2.1 / Subagent 2A")
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    merged = core.einkauf_merge(body.get("items", []))
+    return JSONResponse({"items": [i.to_dict() for i in merged]})
+
+
+# --- PWA: Service-Worker am Root ausliefern ---------------------------------
+# Die Datei liegt unter static/, der SW MUSS aber vom Root aus registriert
+# werden, sonst ist sein Scope nur /static/ und er kann /einkauf & Co. nicht
+# offline bedienen.
+
+@app.get("/sw.js", include_in_schema=False)
+def service_worker():
+    return FileResponse(str(BASE / "static" / "sw.js"),
+                        media_type="application/javascript")
 
 
 @app.exception_handler(StarletteHTTPException)

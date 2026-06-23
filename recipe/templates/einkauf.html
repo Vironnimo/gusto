@@ -1,11 +1,22 @@
 {% extends "base.html" %}
 {% block content %}
+{# JS-Umschaltung: Wenn der Client läuft, setzt er #eink-server auf hidden und
+   blendet #eink-client ein. Dieses Inline-Style hält die Seite auch in dem
+   kurzen Moment vor dem JS-Start sauber (kein neues style.css nötig). #}
+<style>
+  #eink-client[hidden] { display: none; }
+</style>
+
 <section class="page-head">
   <p class="eyebrow">Vorrat &amp; Plan</p>
   <h1 class="page-title">Einkaufsliste</h1>
   <p class="lede">Was noch ins Körbchen muss — Zutaten aus Rezepten landen hier mit einem Klick.</p>
 </section>
 
+{# No-JS-Fallback: vollständig server-gerendert und ohne JS funktionsfähig.
+   Der Client (einkauf-client.js) blendet diesen Block aus und rendert in
+   #eink-client mit denselben CSS-Klassen. #}
+<div id="eink-server">
 <form class="eink-add" method="post" action="/einkauf/add">
   <input class="eink-add-text" type="text" name="text" placeholder="Was brauchst du? z.B. 200 g Spaghetti" autocomplete="off" required autofocus>
   <input class="eink-add-menge" type="text" name="menge" placeholder="Menge" autocomplete="off">
@@ -71,4 +82,9 @@
   <p>Die Einkaufsliste ist leer. Trag oben etwas ein oder schick die Zutaten eines Rezepts hierher.</p>
 </div>
 {% endif %}
+</div>{# /#eink-server #}
+
+{# Vom Client (einkauf-client.js) befüllt; bleibt versteckt, bis JS läuft. #}
+<div id="eink-client" hidden></div>
+<script src="/static/einkauf-client.js" defer></script>
 {% endblock %}

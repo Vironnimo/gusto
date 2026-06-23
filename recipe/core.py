@@ -454,4 +454,19 @@ def einkauf_merge(remote_items: list[dict]) -> list[EinkaufItem]:
 
     Hinweis: Erst in Phase 2.1 (Subagent 2A) zu implementieren.
     """
-    raise NotImplementedError("Phase 2.1 / Subagent 2A")
+    # Lokaler Stand (inkl. Tombstones) als Quelle der Wahrheit, indiziert per id.
+    gemergt: dict[str, EinkaufItem] = {i.id: i for i in einkauf_load()}
+
+    for roh in remote_items:
+        remote = EinkaufItem.from_dict(roh)
+        lokal = gemergt.get(remote.id)
+        # id nur remote -> uebernehmen.
+        # id beidseitig -> groesseres geaendert_am gewinnt (String-Vergleich);
+        # bei Gleichstand bleibt die lokale Version.
+        if lokal is None or remote.geaendert_am > lokal.geaendert_am:
+            gemergt[remote.id] = remote
+    # ids, die nur lokal existieren, bleiben unveraendert erhalten.
+
+    ergebnis = list(gemergt.values())
+    einkauf_save(ergebnis)
+    return ergebnis
