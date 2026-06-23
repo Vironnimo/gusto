@@ -1,15 +1,17 @@
-"""Kern-Logik des Rezept-Systems.
+"""Core logic of the recipe system.
 
-Hier lebt ALLE Logik. Die CLI (recipe/cli.py) und – später – die Web-UI sind
-nur duenne Huellen um dieses Modul. Es gibt bewusst kein Feature, das nur in
-einer Oberflaeche existiert.
+ALL logic lives here. The CLI (recipe/cli.py) and the web UI (recipe/web.py)
+are only thin shells around this module. No feature exists in only one surface.
 
-Datenmodell:
-  recipes/<slug>.md   reiner Markdown-Inhalt eines Rezepts (KEIN Frontmatter)
-  data/recipes.json   Metadaten ALLER Rezepte (Quelle fuer Liste/Suche/Filter)
-  data/log.json       Koch-Logbuch: was wurde wann gekocht
+Data model:
+  recipes/<slug>.md   pure Markdown content of a recipe (NO frontmatter)
+  data/recipes.json   metadata of ALL recipes (source for list/search/filter)
+  data/log.json       cooking log: what was cooked when
 
-Der slug verbindet beides:  data/recipes.json[*].slug  <->  recipes/<slug>.md
+The slug links both:  data/recipes.json[*].slug  <->  recipes/<slug>.md
+
+User-facing strings (error messages, the German section headers in recipe
+content) stay German on purpose; identifiers and comments are English.
 """
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 
-# --- Pfade (per RECIPE_HOME ueberschreibbar, z.B. auf dem Pi) ----------------
+# --- Paths (overridable via RECIPE_HOME, e.g. on the Pi) ---------------------
 
 def project_root() -> Path:
     env = os.environ.get("RECIPE_HOME")
@@ -55,28 +57,28 @@ def recipe_file(slug: str) -> Path:
     return recipes_dir() / f"{slug}.md"
 
 
-def einkauf_path() -> Path:
-    return data_dir() / "einkaufsliste.json"
+def shopping_path() -> Path:
+    return data_dir() / "shopping_list.json"
 
 
-# --- Datenmodell ------------------------------------------------------------
+# --- Data model -------------------------------------------------------------
 
 @dataclass
 class Recipe:
     slug: str
-    titel: str
+    title: str
     tags: list[str] = field(default_factory=list)
-    dauer_minuten: int | None = None
-    portionen: int | None = None
-    zuletzt_gekocht: str | None = None  # ISO "YYYY-MM-DD" oder None
+    duration_min: int | None = None
+    servings: int | None = None
+    last_cooked: str | None = None  # ISO "YYYY-MM-DD" or None
 
     @property
-    def pfad(self) -> Path:
+    def path(self) -> Path:
         return recipe_file(self.slug)
 
-    def inhalt(self) -> str:
-        """Reiner Markdown-Inhalt aus der .md-Datei."""
-        p = self.pfad
+    def content(self) -> str:
+        """Pure Markdown content from the .md file."""
+        p = self.path
         return p.read_text(encoding="utf-8") if p.exists() else ""
 
     def to_dict(self) -> dict:
@@ -84,11 +86,11 @@ class Recipe:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Recipe":
-        erlaubt = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in d.items() if k in erlaubt})
+        allowed = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in d.items() if k in allowed})
 
 
-# --- Laden / Speichern ------------------------------------------------------
+# --- Load / save ------------------------------------------------------------
 
 def load_recipes() -> list[Recipe]:
     p = index_path()
@@ -106,53 +108,53 @@ def get(slug: str) -> Recipe | None:
 
 
 def _write_json(path: Path, data) -> None:
-    """Atomar schreiben – bei Abbruch bleibt keine halbe Datei zurueck."""
+    """Write atomically -- on abort no half-written file is left behind."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     tmp.replace(path)
 
 
-# --- Anlegen ----------------------------------------------------------------
+# --- Create -----------------------------------------------------------------
 
-def slugify(titel: str) -> str:
-    s = titel.strip().lower()
+def slugify(title: str) -> str:
+    s = title.strip().lower()
     s = s.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
     s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
-    return s or "rezept"
+    return s or "recipe"
 
 
-def add_recipe(titel: str, tags=None, dauer_minuten=None, portionen=None,
-               inhalt: str | None = None, slug: str | None = None) -> Recipe:
+def add_recipe(title: str, tags=None, duration_min=None, servings=None,
+               content: str | None = None, slug: str | None = None) -> Recipe:
     recipes = load_recipes()
-    slug = slug or slugify(titel)
+    slug = slug or slugify(title)
     if any(r.slug == slug for r in recipes):
         raise ValueError(f"Es gibt bereits ein Rezept mit dem Slug '{slug}'.")
     recipes_dir().mkdir(parents=True, exist_ok=True)
     recipe_file(slug).write_text(
-        inhalt if inhalt is not None else _vorlage(titel), encoding="utf-8"
+        content if content is not None else _template(title), encoding="utf-8"
     )
-    r = Recipe(slug=slug, titel=titel, tags=tags or [],
-               dauer_minuten=dauer_minuten, portionen=portionen)
+    r = Recipe(slug=slug, title=title, tags=tags or [],
+               duration_min=duration_min, servings=servings)
     recipes.append(r)
     save_recipes(recipes)
     return r
 
 
-def _vorlage(titel: str) -> str:
-    return f"# {titel}\n\n## Zutaten\n\n- \n\n## Zubereitung\n\n1. \n"
+def _template(title: str) -> str:
+    return f"# {title}\n\n## Zutaten\n\n- \n\n## Zubereitung\n\n1. \n"
 
 
-# --- Kategorien (Facetten) --------------------------------------------------
-# Tags sind in data/recipes.json bewusst eine flache Liste. Welcher Tag zu
-# welcher Kategorie gehoert, steht zentral in data/categories.json:
+# --- Categories (facets) ----------------------------------------------------
+# Per recipe, tags are deliberately a flat list in data/recipes.json. Which tag
+# belongs to which category lives centrally in data/categories.json:
 #   { "<key>": {"label": str, "tags": [str, ...]}, ... }
-# Die Reihenfolge im JSON ist die Anzeige-Reihenfolge. Ein Tag ohne Kategorie
-# gilt als "unsortiert" und landet in der gemeinsamen Gruppe "Sonstige".
+# The order in the JSON is the display order. A tag without a category counts
+# as "uncategorized" and ends up in the shared "Sonstige" group.
 
 def load_categories() -> dict:
-    """Kategorien-Definition aus data/categories.json (Reihenfolge erhalten).
-    Fehlt die Datei, ist das Ergebnis {} – dann ist jeder Tag unsortiert."""
+    """Category definition from data/categories.json (order preserved).
+    If the file is missing the result is {} -- then every tag is uncategorized."""
     p = categories_path()
     if not p.exists():
         return {}
@@ -160,7 +162,7 @@ def load_categories() -> dict:
 
 
 def _tag_to_category(categories: dict | None = None) -> dict[str, str]:
-    """Inverse Zuordnung tag(lowercase) -> kategorie-key."""
+    """Inverse mapping tag(lowercase) -> category key."""
     categories = load_categories() if categories is None else categories
     return {t.lower(): key
             for key, cat in categories.items()
@@ -168,395 +170,384 @@ def _tag_to_category(categories: dict | None = None) -> dict[str, str]:
 
 
 def tag_category(tag: str, categories: dict | None = None) -> str | None:
-    """Kategorie-Key eines Tags, oder None wenn unsortiert."""
+    """Category key of a tag, or None if uncategorized."""
     return _tag_to_category(categories).get(tag.lower())
 
 
 def tag_groups(only_used: bool = True) -> list[dict]:
-    """Kategorien mit ihren Tags in Anzeige-Reihenfolge – fuer die Tag-Leiste
-    und `recipe tags`. Gibt [{"key","label","tags":[...]}, ...] zurueck.
+    """Categories with their tags in display order -- for the tag bar and
+    `recipe tags`. Returns [{"key", "label", "tags": [...]}, ...].
 
-    only_used=True: nur Tags, die in Rezepten vorkommen; leere Kategorien
-    entfallen; tatsaechlich verwendete Tags ohne Kategorie kommen als Gruppe
-    "Sonstige" ans Ende. only_used=False: alle definierten Kategorien/Tags."""
+    only_used=True: only tags that occur in recipes; empty categories are
+    dropped; actually-used tags without a category come last as a "Sonstige"
+    group. only_used=False: all defined categories/tags."""
     categories = load_categories()
     used_names = sorted({t for r in load_recipes() for t in r.tags},
                         key=str.lower) if only_used else None
     used_lower = {t.lower() for t in used_names} if used_names is not None else None
 
-    gruppen: list[dict] = []
-    erfasst: set[str] = set()
+    groups: list[dict] = []
+    covered: set[str] = set()
     for key, cat in categories.items():
-        erfasst |= {t.lower() for t in cat.get("tags", [])}
+        covered |= {t.lower() for t in cat.get("tags", [])}
         tags = [t for t in cat.get("tags", [])
                 if used_lower is None or t.lower() in used_lower]
         if tags or used_lower is None:
-            gruppen.append({"key": key, "label": cat.get("label", key), "tags": tags})
+            groups.append({"key": key, "label": cat.get("label", key), "tags": tags})
 
     if used_names is not None:
-        rest = [t for t in used_names if t.lower() not in erfasst]
-        if rest:
-            gruppen.append({"key": "sonstige", "label": "Sonstige", "tags": rest})
-    return gruppen
+        leftover = [t for t in used_names if t.lower() not in covered]
+        if leftover:
+            groups.append({"key": "other", "label": "Sonstige", "tags": leftover})
+    return groups
 
 
-# --- Suche ------------------------------------------------------------------
+# --- Search -----------------------------------------------------------------
 
 def search(query: str = "", match: str = "any", tags: list[str] | None = None,
            max_time: int | None = None) -> list[Recipe]:
-    """Filtert ueber Metadaten (tags, max_time) und durchsucht bei `query`
-    zusaetzlich Titel, Tags UND den Markdown-Inhalt (also auch die Zutaten).
+    """Filter over metadata (tags, max_time) and, for `query`, additionally
+    search the title, tags AND the Markdown content (so the ingredients too).
 
-    Tag-Filter (Facetten): mehrere `tags` werden nach ihrer Kategorie gruppiert.
-    Ein Rezept passt, wenn es in JEDER ausgewaehlten Kategorie MINDESTENS EINEN
-    der gewaehlten Tags besitzt – also ODER innerhalb einer Kategorie und UND
-    ueber Kategorien hinweg. Tags ohne Kategorie bilden gemeinsam die Gruppe
-    "Sonstige" (untereinander ebenfalls ODER)."""
-    terme = [t.lower() for t in query.split()]
-    gruppen = _gruppiere_tags(tags or [])
-    treffer = []
+    Tag filter (facets): multiple `tags` are grouped by their category. A recipe
+    matches if it has AT LEAST ONE of the selected tags in EVERY selected
+    category -- i.e. OR within a category and AND across categories. Tags without
+    a category form one shared group (OR among themselves)."""
+    terms = [t.lower() for t in query.split()]
+    groups = _group_tags(tags or [])
+    hits = []
     for r in load_recipes():
-        if gruppen and not _passt_tags(r, gruppen):
+        if groups and not _matches_tags(r, groups):
             continue
-        if max_time is not None and (r.dauer_minuten is None or r.dauer_minuten > max_time):
+        if max_time is not None and (r.duration_min is None or r.duration_min > max_time):
             continue
-        if terme:
-            heuhaufen = f"{r.titel} {' '.join(r.tags)} {r.inhalt()}".lower()
-            ok = (all(t in heuhaufen for t in terme) if match == "all"
-                  else any(t in heuhaufen for t in terme))
+        if terms:
+            haystack = f"{r.title} {' '.join(r.tags)} {r.content()}".lower()
+            ok = (all(t in haystack for t in terms) if match == "all"
+                  else any(t in haystack for t in terms))
             if not ok:
                 continue
-        treffer.append(r)
-    return treffer
+        hits.append(r)
+    return hits
 
 
-def _gruppiere_tags(tags: list[str]) -> dict[str, set[str]]:
-    """Ausgewaehlte Tags nach Kategorie gruppieren: key -> {tag-lowercase, ...}.
-    Tags ohne Kategorie landen gemeinsam unter "__sonstige__"."""
+def _group_tags(tags: list[str]) -> dict[str, set[str]]:
+    """Group selected tags by category: key -> {tag-lowercase, ...}.
+    Tags without a category go together under "__other__"."""
     mapping = _tag_to_category()
-    gruppen: dict[str, set[str]] = {}
+    groups: dict[str, set[str]] = {}
     for t in tags:
         tl = t.lower()
-        gruppen.setdefault(mapping.get(tl, "__sonstige__"), set()).add(tl)
-    return gruppen
+        groups.setdefault(mapping.get(tl, "__other__"), set()).add(tl)
+    return groups
 
 
-def _passt_tags(r: Recipe, gruppen: dict[str, set[str]]) -> bool:
-    """ODER innerhalb einer Gruppe, UND ueber Gruppen hinweg."""
-    rezept_tags = {t.lower() for t in r.tags}
-    return all(rezept_tags & gewaehlt for gewaehlt in gruppen.values())
+def _matches_tags(r: Recipe, groups: dict[str, set[str]]) -> bool:
+    """OR within a group, AND across groups."""
+    recipe_tags = {t.lower() for t in r.tags}
+    return all(recipe_tags & selected for selected in groups.values())
 
 
-# --- Logbuch ----------------------------------------------------------------
+# --- Cooking log ------------------------------------------------------------
 
 def load_log(days: int | None = None) -> list[dict]:
     p = log_path()
-    eintraege = json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
+    entries = json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
     if days is not None:
-        grenze = (date.today() - timedelta(days=days)).isoformat()
-        eintraege = [e for e in eintraege if e["datum"] >= grenze]
-    return sorted(eintraege, key=lambda e: e["datum"])
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        entries = [e for e in entries if e["date"] >= cutoff]
+    return sorted(entries, key=lambda e: e["date"])
 
 
-def log_cooked(slug: str, datum: str | None = None) -> None:
+def log_cooked(slug: str, when: str | None = None) -> None:
     recipes = load_recipes()
     if not any(r.slug == slug for r in recipes):
         raise ValueError(f"Kein Rezept mit Slug '{slug}'.")
-    datum = datum or date.today().isoformat()
-    eintraege = load_log()
-    eintraege.append({"datum": datum, "slug": slug})
-    _write_json(log_path(), sorted(eintraege, key=lambda e: e["datum"]))
+    when = when or date.today().isoformat()
+    entries = load_log()
+    entries.append({"date": when, "slug": slug})
+    _write_json(log_path(), sorted(entries, key=lambda e: e["date"]))
     for r in recipes:
-        if r.slug == slug and (r.zuletzt_gekocht is None or datum > r.zuletzt_gekocht):
-            r.zuletzt_gekocht = datum
+        if r.slug == slug and (r.last_cooked is None or when > r.last_cooked):
+            r.last_cooked = when
     save_recipes(recipes)
 
 
-# --- Vorschlaege ------------------------------------------------------------
+# --- Suggestions ------------------------------------------------------------
 
 def suggest(days: int = 7, limit: int | None = None) -> list[Recipe]:
-    """Kandidaten fuers naechste Essen: alles, was in den letzten `days` Tagen
-    NICHT gekocht wurde – am laengsten nicht Gekochtes zuerst.
+    """Candidates for the next meal: everything NOT cooked in the last `days`
+    days -- longest-not-cooked first.
 
-    Bewusst simpel und regelbasiert: die eigentliche Entscheidung trifft der
-    Mensch oder ein Agent, der zusaetzlich `log`, `search` & `list` nutzt.
+    Deliberately simple and rule-based: the actual decision is made by a human
+    or an agent that additionally uses `log`, `search` & `list`.
     """
-    kuerzlich = {e["slug"] for e in load_log(days=days)}
-    rest = [r for r in load_recipes() if r.slug not in kuerzlich]
-    rest.sort(key=lambda r: r.zuletzt_gekocht or "")  # None/"" = am laengsten her
-    return rest[:limit] if limit else rest
+    recent = {e["slug"] for e in load_log(days=days)}
+    remaining = [r for r in load_recipes() if r.slug not in recent]
+    remaining.sort(key=lambda r: r.last_cooked or "")  # None/"" = longest ago
+    return remaining[:limit] if limit else remaining
 
 
-# --- Aendern / Loeschen -----------------------------------------------------
+# --- Update / delete --------------------------------------------------------
 
-def update_recipe(slug: str, titel: str | None = None, tags=None,
-                  dauer_minuten=None, portionen=None,
-                  inhalt: str | None = None) -> Recipe:
-    """Aktualisiert ein Rezept. None bedeutet 'unveraendert lassen'
-    (Ausnahme: tags=[] leert die Tags). `inhalt` ueberschreibt die .md."""
+def update_recipe(slug: str, title: str | None = None, tags=None,
+                  duration_min=None, servings=None,
+                  content: str | None = None) -> Recipe:
+    """Update a recipe. None means 'leave unchanged' (exception: tags=[] clears
+    the tags). `content` overwrites the .md file."""
     recipes = load_recipes()
-    ziel = next((r for r in recipes if r.slug == slug), None)
-    if ziel is None:
+    target = next((r for r in recipes if r.slug == slug), None)
+    if target is None:
         raise ValueError(f"Kein Rezept mit Slug '{slug}'.")
-    if titel is not None:
-        ziel.titel = titel
+    if title is not None:
+        target.title = title
     if tags is not None:
-        ziel.tags = tags
-    if dauer_minuten is not None:
-        ziel.dauer_minuten = dauer_minuten
-    if portionen is not None:
-        ziel.portionen = portionen
-    if inhalt is not None:
-        recipe_file(slug).write_text(inhalt, encoding="utf-8")
+        target.tags = tags
+    if duration_min is not None:
+        target.duration_min = duration_min
+    if servings is not None:
+        target.servings = servings
+    if content is not None:
+        recipe_file(slug).write_text(content, encoding="utf-8")
     save_recipes(recipes)
-    return ziel
+    return target
 
 
 def delete_recipe(slug: str) -> None:
-    """Entfernt Index-Eintrag und .md-Datei. Logbuch-Eintraege bleiben
-    als Historie erhalten."""
+    """Remove the index entry and the .md file. Log entries are kept as
+    history."""
     recipes = load_recipes()
-    rest = [r for r in recipes if r.slug != slug]
-    if len(rest) == len(recipes):
+    remaining = [r for r in recipes if r.slug != slug]
+    if len(remaining) == len(recipes):
         raise ValueError(f"Kein Rezept mit Slug '{slug}'.")
-    save_recipes(rest)
+    save_recipes(remaining)
     p = recipe_file(slug)
     if p.exists():
         p.unlink()
 
 
-# --- Konsistenz -------------------------------------------------------------
+# --- Consistency ------------------------------------------------------------
 
 def check() -> dict:
-    """Prueft, ob Index (recipes.json) und .md-Dateien zusammenpassen und ob
-    alle verwendeten Tags einer Kategorie (categories.json) zugeordnet sind."""
+    """Check whether the index (recipes.json) and the .md files match, and
+    whether every used tag is assigned to a category (categories.json)."""
     recipes = load_recipes()
-    indexiert = {r.slug for r in recipes}
-    vorhanden = {p.stem for p in recipes_dir().glob("*.md")} if recipes_dir().exists() else set()
+    indexed = {r.slug for r in recipes}
+    present = {p.stem for p in recipes_dir().glob("*.md")} if recipes_dir().exists() else set()
     mapping = _tag_to_category()
-    unsortiert = sorted({t for r in recipes for t in r.tags if t.lower() not in mapping})
+    uncategorized = sorted({t for r in recipes for t in r.tags if t.lower() not in mapping})
     return {
-        "anzahl_rezepte": len(indexiert),
-        "verwaiste_dateien": sorted(vorhanden - indexiert),   # .md ohne Index-Eintrag
-        "fehlende_dateien": sorted(indexiert - vorhanden),    # Index-Eintrag ohne .md
-        "unsortierte_tags": unsortiert,                       # Tags in keiner Kategorie
+        "recipe_count": len(indexed),
+        "orphaned_files": sorted(present - indexed),   # .md without index entry
+        "missing_files": sorted(indexed - present),    # index entry without .md
+        "uncategorized_tags": uncategorized,           # tags in no category
     }
 
 
 # ===========================================================================
-# Einkaufsliste  (Feature: Einkaufsliste + PWA, siehe docs/plan-einkaufsliste-pwa.md)
+# Shopping list  (feature: shopping list + PWA, see docs/plan-einkaufsliste-pwa.md)
 # ===========================================================================
 #
-# KONTRAKT (Phase 0). Datenmodell, Signaturen und Regeln stehen hier fest; die
-# Implementierung folgt in Phase 1 (Subagent 1A) bzw. fuer `einkauf_merge` in
-# Phase 2.1 (Subagent 2A). Bis dahin werfen die Funktionen NotImplementedError.
-#
-# Speicherort:  data/einkaufsliste.json   (Form: {"items": [ <item-dict>, ... ]})
-# Ein Item ist sync-faehig: `geaendert_am` (UTC-ISO) treibt beim Sync
-# "letzter gewinnt", `geloescht` ist ein Tombstone, damit Loeschungen
-# zwischen Geraeten propagieren. NICHTS wird hart geloescht.
+# Storage:  data/shopping_list.json   (shape: {"items": [ <item-dict>, ... ]})
+# An item is sync-capable: `updated_at` (UTC ISO) drives "last writer wins" on
+# sync, `deleted` is a tombstone so deletions propagate between devices.
+# NOTHING is ever hard-deleted.
 
 
 @dataclass
-class EinkaufItem:
-    """Ein Eintrag auf der Einkaufsliste (sync-faehig)."""
+class ShoppingItem:
+    """One entry on the shopping list (sync-capable)."""
     id: str
-    text: str                       # z.B. "200 g Spaghetti" (v1: ganze Zutat-Zeile)
-    menge: str = ""                 # optional, v1 meist leer (text enthaelt die Menge)
-    checked: bool = False           # abgehakt?
-    quelle: str | None = None       # slug des Rezepts, aus dem die Zutat stammt
-    erstellt_am: str = ""           # UTC-ISO, z.B. "2026-06-23T18:00:00Z"
-    geaendert_am: str = ""          # UTC-ISO – treibt "letzter gewinnt" beim Sync
-    geloescht: bool = False         # Tombstone fuer Sync (nie hart loeschen)
+    text: str                       # e.g. "200 g Spaghetti" (v1: whole ingredient line)
+    quantity: str = ""              # optional, v1 usually empty (text holds the amount)
+    checked: bool = False           # ticked off?
+    source: str | None = None       # slug of the recipe the ingredient came from
+    created_at: str = ""            # UTC ISO, e.g. "2026-06-23T18:00:00Z"
+    updated_at: str = ""            # UTC ISO -- drives "last writer wins" on sync
+    deleted: bool = False           # tombstone for sync (never hard-delete)
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "EinkaufItem":
-        erlaubt = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in d.items() if k in erlaubt})
+    def from_dict(cls, d: dict) -> "ShoppingItem":
+        allowed = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in d.items() if k in allowed})
 
 
-def _jetzt_iso() -> str:
-    """Aktueller UTC-Zeitstempel als ISO 8601 mit 'Z' (sekundengenau).
+def _now_iso() -> str:
+    """Current UTC timestamp as ISO 8601 with 'Z' (second precision).
 
-    Beispiel: '2026-06-23T18:00:00Z'. ISO-Strings dieser Form sind als Text
-    direkt vergleichbar – genau das braucht der Sync ("letzter gewinnt").
+    Example: '2026-06-23T18:00:00Z'. ISO strings of this form compare directly
+    as text -- exactly what the sync needs ("last writer wins").
     """
     return (datetime.now(timezone.utc).replace(microsecond=0)
             .isoformat().replace("+00:00", "Z"))
 
 
 def new_id() -> str:
-    """Neue eindeutige Item-id (uuid4-hex)."""
+    """New unique item id (uuid4 hex)."""
     return uuid.uuid4().hex
 
 
-# --- Zutaten-Parsing --------------------------------------------------------
+# --- Ingredient parsing -----------------------------------------------------
 
-def parse_zutaten(inhalt: str) -> list[str]:
-    """Zutaten-Zeilen aus dem Rezept-Markdown extrahieren.
+def parse_ingredients(content: str) -> list[str]:
+    """Extract ingredient lines from the recipe Markdown.
 
-    Regel (v1): Alle Bullet-Items ('-' oder '*') im Abschnitt unter der
-    Ueberschrift '## Zutaten', bis zur naechsten '##'-Ueberschrift. Pro Bullet
-    die GANZE Zeile (ohne Bullet-Zeichen und Rand-Whitespace) als ein Eintrag.
-    Leere Bullets werden uebersprungen. Gibt es keinen Zutaten-Abschnitt, ist
-    das Ergebnis [].
+    Rule (v1): all bullet items ('-' or '*') in the section under the heading
+    '## Zutaten', up to the next '##' heading. For each bullet the WHOLE line
+    (without the bullet char and surrounding whitespace) as one entry. Empty
+    bullets are skipped. If there is no ingredient section the result is [].
     """
-    zutaten: list[str] = []
-    im_abschnitt = False
-    for zeile in inhalt.splitlines():
-        s = zeile.strip()
+    ingredients: list[str] = []
+    in_section = False
+    for line in content.splitlines():
+        s = line.strip()
         if s == "## Zutaten":
-            im_abschnitt = True
+            in_section = True
             continue
-        if not im_abschnitt:
+        if not in_section:
             continue
-        if s.startswith("## "):       # naechste Ueberschrift beendet den Abschnitt
+        if s.startswith("## "):       # next heading ends the section
             break
         if s.startswith("-") or s.startswith("*"):
-            eintrag = s[1:].strip()
-            if eintrag:               # leere Bullets ueberspringen
-                zutaten.append(eintrag)
-    return zutaten
+            entry = s[1:].strip()
+            if entry:                 # skip empty bullets
+                ingredients.append(entry)
+    return ingredients
 
 
-# --- Laden / Speichern ------------------------------------------------------
+# --- Load / save ------------------------------------------------------------
 
-def einkauf_load() -> list[EinkaufItem]:
-    """Alle Items aus data/einkaufsliste.json laden – INKLUSIVE Tombstones
-    (geloescht=True). Existiert die Datei nicht, ist das Ergebnis []."""
-    p = einkauf_path()
+def shopping_load() -> list[ShoppingItem]:
+    """Load all items from data/shopping_list.json -- INCLUDING tombstones
+    (deleted=True). If the file does not exist the result is []."""
+    p = shopping_path()
     if not p.exists():
         return []
-    daten = json.loads(p.read_text(encoding="utf-8"))
-    return [EinkaufItem.from_dict(d) for d in daten.get("items", [])]
+    data = json.loads(p.read_text(encoding="utf-8"))
+    return [ShoppingItem.from_dict(d) for d in data.get("items", [])]
 
 
-def einkauf_save(items: list[EinkaufItem]) -> None:
-    """Items atomar nach data/einkaufsliste.json schreiben (nutze _write_json).
-    Dateiform: {"items": [ <item-dict>, ... ]}. Tombstones bleiben erhalten."""
-    _write_json(einkauf_path(), {"items": [i.to_dict() for i in items]})
+def shopping_save(items: list[ShoppingItem]) -> None:
+    """Write items atomically to data/shopping_list.json (uses _write_json).
+    File shape: {"items": [ <item-dict>, ... ]}. Tombstones are kept."""
+    _write_json(shopping_path(), {"items": [i.to_dict() for i in items]})
 
 
-# --- Veraendern -------------------------------------------------------------
+# --- Modify -----------------------------------------------------------------
 
-def einkauf_add(text: str, menge: str = "", quelle: str | None = None) -> EinkaufItem:
-    """Ein neues Item anlegen, speichern und zurueckgeben. Setzt id (new_id()),
-    erstellt_am und geaendert_am (= _jetzt_iso()), checked=False,
-    geloescht=False."""
-    jetzt = _jetzt_iso()
-    item = EinkaufItem(id=new_id(), text=text, menge=menge, checked=False,
-                       quelle=quelle, erstellt_am=jetzt, geaendert_am=jetzt,
-                       geloescht=False)
-    items = einkauf_load()
+def shopping_add(text: str, quantity: str = "", source: str | None = None) -> ShoppingItem:
+    """Create, save and return a new item. Sets id (new_id()), created_at and
+    updated_at (= _now_iso()), checked=False, deleted=False."""
+    now = _now_iso()
+    item = ShoppingItem(id=new_id(), text=text, quantity=quantity, checked=False,
+                        source=source, created_at=now, updated_at=now,
+                        deleted=False)
+    items = shopping_load()
     items.append(item)
-    einkauf_save(items)
+    shopping_save(items)
     return item
 
 
-def einkauf_add_rezept(slug: str) -> list[EinkaufItem]:
-    """Alle Zutaten eines Rezepts (parse_zutaten auf dessen .md) als Items auf
-    die Liste setzen, quelle=slug. Gibt die NEU hinzugefuegten Items zurueck.
-    ValueError, wenn es kein Rezept mit diesem slug gibt."""
+def shopping_add_recipe(slug: str) -> list[ShoppingItem]:
+    """Put all ingredients of a recipe (parse_ingredients on its .md) onto the
+    list, source=slug. Returns the NEWLY added items. ValueError if there is no
+    recipe with this slug."""
     r = get(slug)
     if r is None:
         raise ValueError(f"Kein Rezept mit Slug '{slug}'.")
-    items = einkauf_load()
-    neu: list[EinkaufItem] = []
-    for zutat in parse_zutaten(r.inhalt()):
-        jetzt = _jetzt_iso()
-        neu.append(EinkaufItem(id=new_id(), text=zutat, menge="", checked=False,
-                               quelle=slug, erstellt_am=jetzt, geaendert_am=jetzt,
-                               geloescht=False))
-    items.extend(neu)
-    einkauf_save(items)
-    return neu
+    items = shopping_load()
+    new_items: list[ShoppingItem] = []
+    for ingredient in parse_ingredients(r.content()):
+        now = _now_iso()
+        new_items.append(ShoppingItem(id=new_id(), text=ingredient, quantity="",
+                                      checked=False, source=slug, created_at=now,
+                                      updated_at=now, deleted=False))
+    items.extend(new_items)
+    shopping_save(items)
+    return new_items
 
 
-def einkauf_list(include_done: bool = True,
-                 include_deleted: bool = False) -> list[EinkaufItem]:
-    """Sichtbare Items. Tombstones (geloescht) standardmaessig ausgeblendet;
-    include_done=False blendet zusaetzlich erledigte (checked) aus.
-    Reihenfolge: nach erstellt_am aufsteigend (Einfuegereihenfolge)."""
-    items = [i for i in einkauf_load() if include_deleted or not i.geloescht]
+def shopping_list(include_done: bool = True,
+                  include_deleted: bool = False) -> list[ShoppingItem]:
+    """Visible items. Tombstones (deleted) hidden by default; include_done=False
+    additionally hides done (checked) ones. Order: by created_at ascending
+    (insertion order)."""
+    items = [i for i in shopping_load() if include_deleted or not i.deleted]
     if not include_done:
         items = [i for i in items if not i.checked]
-    items.sort(key=lambda i: i.erstellt_am)
+    items.sort(key=lambda i: i.created_at)
     return items
 
 
-def einkauf_toggle(item_id: str, checked: bool | None = None) -> EinkaufItem:
-    """Erledigt-Haekchen setzen. checked=None schaltet um; sonst wird der Wert
-    gesetzt. Aktualisiert geaendert_am und gibt das Item zurueck.
-    ValueError, wenn die id unbekannt ist oder das Item ein Tombstone ist."""
-    items = einkauf_load()
-    ziel = next((i for i in items if i.id == item_id and not i.geloescht), None)
-    if ziel is None:
+def shopping_toggle(item_id: str, checked: bool | None = None) -> ShoppingItem:
+    """Set the done checkmark. checked=None toggles; otherwise the value is set.
+    Updates updated_at and returns the item. ValueError if the id is unknown or
+    the item is a tombstone."""
+    items = shopping_load()
+    target = next((i for i in items if i.id == item_id and not i.deleted), None)
+    if target is None:
         raise ValueError(f"Kein Einkauf-Item mit id '{item_id}'.")
-    ziel.checked = (not ziel.checked) if checked is None else checked
-    ziel.geaendert_am = _jetzt_iso()
-    einkauf_save(items)
-    return ziel
+    target.checked = (not target.checked) if checked is None else checked
+    target.updated_at = _now_iso()
+    shopping_save(items)
+    return target
 
 
-def einkauf_remove(item_id: str) -> None:
-    """Item als Tombstone markieren: geloescht=True + geaendert_am aktualisieren
-    (NICHT hart aus der Datei loeschen, damit die Loeschung synchronisiert).
-    ValueError, wenn die id unbekannt ist."""
-    items = einkauf_load()
-    ziel = next((i for i in items if i.id == item_id), None)
-    if ziel is None:
+def shopping_remove(item_id: str) -> None:
+    """Mark item as a tombstone: deleted=True + update updated_at (do NOT hard-
+    delete from the file, so the deletion syncs). ValueError if the id is
+    unknown."""
+    items = shopping_load()
+    target = next((i for i in items if i.id == item_id), None)
+    if target is None:
         raise ValueError(f"Kein Einkauf-Item mit id '{item_id}'.")
-    ziel.geloescht = True
-    ziel.geaendert_am = _jetzt_iso()
-    einkauf_save(items)
+    target.deleted = True
+    target.updated_at = _now_iso()
+    shopping_save(items)
 
 
-def einkauf_clear_done() -> int:
-    """Alle erledigten (checked, noch nicht Tombstone) Items als Tombstone
-    markieren (geloescht=True + geaendert_am). Gibt die Anzahl der so
-    entfernten Items zurueck."""
-    items = einkauf_load()
-    anzahl = 0
+def shopping_clear_done() -> int:
+    """Mark all done (checked, not yet tombstone) items as a tombstone
+    (deleted=True + updated_at). Returns the number of items removed this way."""
+    items = shopping_load()
+    count = 0
     for i in items:
-        if i.checked and not i.geloescht:
-            i.geloescht = True
-            i.geaendert_am = _jetzt_iso()
-            anzahl += 1
-    if anzahl:
-        einkauf_save(items)
-    return anzahl
+        if i.checked and not i.deleted:
+            i.deleted = True
+            i.updated_at = _now_iso()
+            count += 1
+    if count:
+        shopping_save(items)
+    return count
 
 
-# --- Sync (Phase 2) ---------------------------------------------------------
+# --- Sync -------------------------------------------------------------------
 
-def einkauf_merge(remote_items: list[dict]) -> list[EinkaufItem]:
-    """Voll-State-Sync: remote_items (rohe Item-Dicts vom Client) in die lokale
-    Liste mergen, das Ergebnis speichern und zurueckgeben (inkl. Tombstones).
+def shopping_merge(remote_items: list[dict]) -> list[ShoppingItem]:
+    """Full-state sync: merge remote_items (raw item dicts from the client) into
+    the local list, save the result and return it (incl. tombstones).
 
-    Regel "letzter gewinnt": pro id gewinnt die Version mit dem groesseren
-    geaendert_am (die ISO-Strings sind als Text vergleichbar). Bei Gleichstand
-    bleibt die lokale Version. Ids, die nur remote existieren, werden
-    uebernommen; Tombstones (geloescht=True) propagieren wie jede andere
-    Aenderung.
-
-    Hinweis: Erst in Phase 2.1 (Subagent 2A) zu implementieren.
+    Rule "last writer wins": per id the version with the larger updated_at wins
+    (the ISO strings compare as text). On a tie the local version stays. Ids that
+    exist only remotely are taken over; tombstones (deleted=True) propagate like
+    any other change.
     """
-    # Lokaler Stand (inkl. Tombstones) als Quelle der Wahrheit, indiziert per id.
-    gemergt: dict[str, EinkaufItem] = {i.id: i for i in einkauf_load()}
+    # Local state (incl. tombstones) as the source of truth, indexed by id.
+    merged: dict[str, ShoppingItem] = {i.id: i for i in shopping_load()}
 
-    for roh in remote_items:
-        remote = EinkaufItem.from_dict(roh)
-        lokal = gemergt.get(remote.id)
-        # id nur remote -> uebernehmen.
-        # id beidseitig -> groesseres geaendert_am gewinnt (String-Vergleich);
-        # bei Gleichstand bleibt die lokale Version.
-        if lokal is None or remote.geaendert_am > lokal.geaendert_am:
-            gemergt[remote.id] = remote
-    # ids, die nur lokal existieren, bleiben unveraendert erhalten.
+    for raw in remote_items:
+        remote = ShoppingItem.from_dict(raw)
+        local = merged.get(remote.id)
+        # id only remote -> take it over.
+        # id on both sides -> larger updated_at wins (string compare);
+        # on a tie the local version stays.
+        if local is None or remote.updated_at > local.updated_at:
+            merged[remote.id] = remote
+    # ids that exist only locally stay unchanged.
 
-    ergebnis = list(gemergt.values())
-    einkauf_save(ergebnis)
-    return ergebnis
+    result = list(merged.values())
+    shopping_save(result)
+    return result

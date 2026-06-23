@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block content %}
+{# JS swap: when the client runs, it sets #shop-server to hidden and shows
+   #shop-client. This inline style keeps the page clean in the brief moment
+   before JS starts (no extra style.css needed). #}
+<style>
+  #shop-client[hidden] { display: none; }
+</style>
+
+<section class="page-head">
+  <p class="eyebrow">Vorrat &amp; Plan</p>
+  <h1 class="page-title">Einkaufsliste</h1>
+  <p class="lede">Was noch ins Körbchen muss — Zutaten aus Rezepten landen hier mit einem Klick.</p>
+</section>
+
+{# No-JS fallback: fully server-rendered and usable without JS. The client
+   (shopping-client.js) hides this block and renders into #shop-client with the
+   same CSS classes. #}
+<div id="shop-server">
+<form class="shop-add" method="post" action="/shopping/add">
+  <input class="shop-add-text" type="text" name="text" placeholder="Was brauchst du? z.B. 200 g Spaghetti" autocomplete="off" required autofocus>
+  <input class="shop-add-quantity" type="text" name="quantity" placeholder="Menge" autocomplete="off">
+  <button class="btn" type="submit">Hinzufügen</button>
+</form>
+
+{% if open_items or done_items %}
+<div class="shop-board">
+  <section class="shop-group">
+    <h2 class="shop-group-title">Offen <span class="shop-count">{{ open_items|length }}</span></h2>
+    {% if open_items %}
+    <ul class="shop-list">
+      {% for item in open_items %}
+      <li class="shop-item">
+        <form class="shop-check" method="post" action="/shopping/{{ item.id }}/toggle">
+          <button class="shop-box" type="submit" aria-label="„{{ item.text }}“ abhaken"></button>
+        </form>
+        <div class="shop-body">
+          <span class="shop-text">{{ item.text }}</span>
+          {% if item.quantity %}<span class="shop-quantity">{{ item.quantity }}</span>{% endif %}
+          {% if item.source %}<a class="shop-source" href="/recipe/{{ item.source }}">aus „{{ item.source }}“</a>{% endif %}
+        </div>
+        <form class="shop-remove" method="post" action="/shopping/{{ item.id }}/remove">
+          <button class="shop-x" type="submit" aria-label="„{{ item.text }}“ entfernen">✕</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="shop-empty">Alles erledigt — nichts mehr offen.</p>
+    {% endif %}
+  </section>
+
+  {% if done_items %}
+  <section class="shop-group shop-group-done">
+    <h2 class="shop-group-title">Erledigt <span class="shop-count">{{ done_items|length }}</span></h2>
+    <ul class="shop-list">
+      {% for item in done_items %}
+      <li class="shop-item is-done">
+        <form class="shop-check" method="post" action="/shopping/{{ item.id }}/toggle">
+          <button class="shop-box is-checked" type="submit" aria-label="Häkchen bei „{{ item.text }}“ entfernen">✓</button>
+        </form>
+        <div class="shop-body">
+          <span class="shop-text">{{ item.text }}</span>
+          {% if item.quantity %}<span class="shop-quantity">{{ item.quantity }}</span>{% endif %}
+          {% if item.source %}<a class="shop-source" href="/recipe/{{ item.source }}">aus „{{ item.source }}“</a>{% endif %}
+        </div>
+        <form class="shop-remove" method="post" action="/shopping/{{ item.id }}/remove">
+          <button class="shop-x" type="submit" aria-label="„{{ item.text }}“ entfernen">✕</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    <form class="shop-clear" method="post" action="/shopping/clear">
+      <button class="btn-text" type="submit">Erledigte entfernen</button>
+    </form>
+  </section>
+  {% endif %}
+</div>
+{% else %}
+<div class="empty">
+  <p class="empty-emoji">🧺</p>
+  <p>Die Einkaufsliste ist leer. Trag oben etwas ein oder schick die Zutaten eines Rezepts hierher.</p>
+</div>
+{% endif %}
+</div>{# /#shop-server #}
+
+{# Filled by the client (shopping-client.js); stays hidden until JS runs. #}
+<div id="shop-client" hidden></div>
+<script src="/static/shopping-client.js" defer></script>
+{% endblock %}

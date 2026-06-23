@@ -1,11 +1,11 @@
-"""End-to-End-Check der Web-UI mit Playwright.
+"""End-to-end check of the web UI with Playwright.
 
-Startet einen eigenen uvicorn-Server gegen eine WEGWERF-Kopie der Daten
-(RECIPE_HOME -> .testdata), klickt die App im echten Chromium durch, macht
-Screenshots und prueft die wichtigsten Flows. Die echten Beispieldaten bleiben
-unberuehrt.
+Starts its own uvicorn server against a THROWAWAY copy of the data
+(RECIPE_HOME -> .testdata), clicks through the app in real Chromium, takes
+screenshots and checks the most important flows. The real sample data stays
+untouched.
 
-Aufruf:  .venv/Scripts/python.exe scripts/browser_check.py
+Usage:  .venv/Scripts/python.exe scripts/browser_check.py
 """
 import os
 import shutil
@@ -31,7 +31,7 @@ BASE = f"http://127.0.0.1:{PORT}"
 
 SHOTS.mkdir(exist_ok=True)
 
-# --- frische Wegwerf-Daten ---
+# --- fresh throwaway data ---
 if TESTDATA.exists():
     shutil.rmtree(TESTDATA)
 TESTDATA.mkdir()
@@ -57,7 +57,7 @@ def wait_up(timeout=40):
             urllib.request.urlopen(BASE, timeout=1)
             return True
         except urllib.error.HTTPError:
-            return True  # Server antwortet (auch mit Fehlerseite) -> er laeuft
+            return True  # server responds (even with an error page) -> it is up
         except Exception:
             if srv.poll() is not None:
                 return False
@@ -66,176 +66,176 @@ def wait_up(timeout=40):
 
 try:
     if not wait_up():
-        print("!! Server nicht erreichbar (uvicorn-Start fehlgeschlagen)")
+        print("!! server not reachable (uvicorn start failed)")
         raise SystemExit(2)
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1280, "height": 900})
-        page.on("dialog", lambda d: d.accept())  # confirm() beim Loeschen
+        page.on("dialog", lambda d: d.accept())  # confirm() on delete
 
-        # Startseite
+        # Home page
         page.goto(BASE, wait_until="networkidle")
-        check("Gusto" in page.content(), "Startseite zeigt die Marke")
-        check(page.locator(".card").count() == 3, "3 Rezeptkarten sichtbar")
+        check("Gusto" in page.content(), "homepage shows the brand")
+        check(page.locator(".card").count() == 3, "3 recipe cards visible")
         page.screenshot(path=str(SHOTS / "01_home.png"), full_page=True)
 
-        # Suche (durchsucht auch Zutaten im Text) – Server-Route (No-JS-Pfad)
+        # Search (also searches ingredients in the text) -- server route (no-JS)
         page.goto(BASE + "/?q=kokos", wait_until="networkidle")
-        check(page.locator(".card").count() == 1, "Suche 'kokos' -> 1 Treffer (Dal)")
+        check(page.locator(".card").count() == 1, "search 'kokos' -> 1 hit (Dal)")
         page.screenshot(path=str(SHOTS / "02_search.png"), full_page=True)
 
-        # Live-Suche: tippen aktualisiert ohne Submit (und durchsucht Zutaten)
+        # Live search: typing updates without submit (and searches ingredients)
         page.goto(BASE, wait_until="networkidle")
         page.fill("input[name=q]", "kokos")
         page.wait_for_function("() => document.querySelectorAll('#results .card').length === 1")
-        check(page.locator("#results .card").count() == 1, "Live-Suche 'kokos' -> 1 Treffer (ohne Submit)")
-        check("Linsen-Dal" in page.content(), "Live-Suche findet Zutat im Text (Dal)")
+        check(page.locator("#results .card").count() == 1, "live search 'kokos' -> 1 hit (no submit)")
+        check("Linsen-Dal" in page.content(), "live search finds ingredient in text (Dal)")
         page.fill("input[name=q]", "")
         page.wait_for_function("() => document.querySelectorAll('#results .card').length === 3")
-        check(page.locator("#results .card").count() == 3, "Live-Suche geleert -> wieder 3 Treffer")
+        check(page.locator("#results .card").count() == 3, "live search cleared -> 3 hits again")
 
-        # --- Tag-Filter: Facetten / Mehrfachauswahl ---
+        # --- Tag filter: facets / multi-select ---
         page.goto(BASE, wait_until="networkidle")
-        check(page.locator(".taggroup").count() >= 3, "Tag-Leiste nach Kategorien gruppiert")
-        check(page.locator(".taggroup-label", has_text="Küche").count() == 1, "Kategorie 'Küche' sichtbar")
+        check(page.locator(".taggroup").count() >= 3, "tag bar grouped by category")
+        check(page.locator(".taggroup-label", has_text="Küche").count() == 1, "category 'Küche' visible")
 
-        # Einzel-Tag (wie bisher)
+        # Single tag (as before)
         page.goto(BASE + "/?tag=vegan", wait_until="networkidle")
-        check(page.locator(".card").count() == 1, "Tag-Filter 'vegan' -> 1 Treffer")
+        check(page.locator(".card").count() == 1, "tag filter 'vegan' -> 1 hit")
 
-        # ODER innerhalb einer Kategorie (Küche: italienisch ODER indisch)
+        # OR within a category (cuisine: italienisch OR indisch)
         page.goto(BASE + "/?tag=italienisch&tag=indisch", wait_until="networkidle")
-        check(page.locator(".card").count() == 2, "italienisch+indisch (ODER) -> 2 Treffer")
+        check(page.locator(".card").count() == 2, "italienisch+indisch (OR) -> 2 hits")
 
-        # UND ueber Kategorien (Küche=italienisch UND Art=pasta)
+        # AND across categories (cuisine=italienisch AND dish_type=pasta)
         page.goto(BASE + "/?tag=italienisch&tag=pasta", wait_until="networkidle")
-        check(page.locator(".card").count() == 1, "italienisch+pasta (UND) -> 1 Treffer (Carbonara)")
+        check(page.locator(".card").count() == 1, "italienisch+pasta (AND) -> 1 hit (Carbonara)")
 
-        # UND ueber Kategorien ohne Schnittmenge (vegetarisch UND pasta)
+        # AND across categories with no intersection (vegetarisch AND pasta)
         page.goto(BASE + "/?tag=vegetarisch&tag=pasta", wait_until="networkidle")
-        check(page.locator(".card").count() == 0, "vegetarisch+pasta (UND) -> 0 Treffer")
+        check(page.locator(".card").count() == 0, "vegetarisch+pasta (AND) -> 0 hits")
 
-        # Per Klick kombinieren (Toggle-Links, Auswahl bleibt erhalten)
+        # Combine by clicking (toggle links, selection is kept)
         page.goto(BASE, wait_until="networkidle")
         page.locator(".tagchip", has_text="indisch").first.click()
         page.wait_for_load_state("networkidle")
-        check(page.locator(".tagchip.is-on", has_text="indisch").count() == 1, "Klick: 'indisch' aktiv")
-        check(page.locator(".card").count() == 1, "Klick 'indisch' -> 1 Treffer")
+        check(page.locator(".tagchip.is-on", has_text="indisch").count() == 1, "click: 'indisch' active")
+        check(page.locator(".card").count() == 1, "click 'indisch' -> 1 hit")
         page.locator(".tagchip", has_text="italienisch").first.click()
         page.wait_for_load_state("networkidle")
-        check(page.locator(".tagchip.is-on").count() == 2, "Klick: zwei Tags gleichzeitig aktiv")
-        check(page.locator(".card").count() == 2, "indisch+italienisch -> 2 Treffer")
+        check(page.locator(".tagchip.is-on").count() == 2, "click: two tags active at once")
+        check(page.locator(".card").count() == 2, "indisch+italienisch -> 2 hits")
         page.screenshot(path=str(SHOTS / "02b_tagfilter.png"), full_page=True)
         page.locator(".tagchip.is-on", has_text="indisch").first.click()
         page.wait_for_load_state("networkidle")
-        check(page.locator(".card").count() == 1, "'indisch' wieder abgewählt -> 1 Treffer")
+        check(page.locator(".card").count() == 1, "'indisch' deselected again -> 1 hit")
 
-        # Rezeptseite
+        # Recipe page
         page.goto(BASE, wait_until="networkidle")
         page.locator(".card-title", has_text="Carbonara").click()
         page.wait_for_load_state("networkidle")
         check("Zutaten" in page.content() and "Zubereitung" in page.content(),
-              "Rezept zeigt Zutaten + Zubereitung")
-        check(page.locator(".recipe-body ol li").count() >= 4, "Schritte als Liste gerendert")
+              "recipe shows ingredients + steps")
+        check(page.locator(".recipe-body ol li").count() >= 4, "steps rendered as a list")
         page.screenshot(path=str(SHOTS / "03_recipe.png"), full_page=True)
 
-        # "Heute gekocht" -> Logbuch
+        # "Cooked today" -> log
         page.locator("button.btn", has_text="Heute gekocht").click()
         page.wait_for_load_state("networkidle")
-        page.goto(BASE + "/logbuch", wait_until="networkidle")
-        check(page.locator(".timeline li").count() >= 3, "Logbuch hat neuen Eintrag")
+        page.goto(BASE + "/log", wait_until="networkidle")
+        check(page.locator(".timeline li").count() >= 3, "log has a new entry")
         page.screenshot(path=str(SHOTS / "04_log.png"), full_page=True)
 
-        # Vorschlaege
-        page.goto(BASE + "/vorschlaege", wait_until="networkidle")
-        check("Was koche ich" in page.content(), "Vorschlagsseite laedt")
+        # Suggestions
+        page.goto(BASE + "/suggestions", wait_until="networkidle")
+        check("Was koche ich" in page.content(), "suggestions page loads")
         page.screenshot(path=str(SHOTS / "05_suggest.png"), full_page=True)
 
-        # Neues Rezept anlegen
-        page.goto(BASE + "/neu", wait_until="networkidle")
-        page.fill("input[name=titel]", "Test Pfannkuchen")
+        # Create a new recipe
+        page.goto(BASE + "/new", wait_until="networkidle")
+        page.fill("input[name=title]", "Test Pfannkuchen")
         page.fill("input[name=tags]", "test, suess")
-        page.fill("input[name=dauer]", "20")
-        page.fill("input[name=portionen]", "2")
-        page.fill("textarea[name=inhalt]",
+        page.fill("input[name=duration]", "20")
+        page.fill("input[name=servings]", "2")
+        page.fill("textarea[name=content]",
                   "## Zutaten\n\n- 2 Eier\n- 250 ml Milch\n- 150 g Mehl\n\n"
                   "## Zubereitung\n\n1. Alles verruehren.\n2. In der Pfanne backen.")
         page.locator("button.btn", has_text="Speichern").click()
         page.wait_for_load_state("networkidle")
-        check("Test Pfannkuchen" in page.content(), "Neues Rezept angelegt")
-        check(page.url.endswith("/rezept/test-pfannkuchen"), "Slug korrekt erzeugt")
+        check("Test Pfannkuchen" in page.content(), "new recipe created")
+        check(page.url.endswith("/recipe/test-pfannkuchen"), "slug generated correctly")
         page.screenshot(path=str(SHOTS / "06_new.png"), full_page=True)
 
-        # Bearbeiten (Slug bleibt stabil)
-        page.goto(BASE + "/rezept/test-pfannkuchen/bearbeiten", wait_until="networkidle")
-        page.fill("input[name=titel]", "Test Pfannkuchen Deluxe")
+        # Edit (slug stays stable)
+        page.goto(BASE + "/recipe/test-pfannkuchen/edit", wait_until="networkidle")
+        page.fill("input[name=title]", "Test Pfannkuchen Deluxe")
         page.locator("button.btn", has_text="Speichern").click()
         page.wait_for_load_state("networkidle")
-        check("Deluxe" in page.content(), "Rezept bearbeitet")
+        check("Deluxe" in page.content(), "recipe edited")
 
-        # Loeschen (raeumt das Testrezept wieder weg)
+        # Delete (clears the test recipe again)
         page.locator("button.btn-text", has_text="Löschen").click()
         page.wait_for_load_state("networkidle")
-        check("Test Pfannkuchen" not in page.content(), "Rezept geloescht")
+        check("Test Pfannkuchen" not in page.content(), "recipe deleted")
 
         # 404
-        resp = page.goto(BASE + "/rezept/gibtsnicht")
-        check(resp.status == 404, "Unbekanntes Rezept -> 404-Seite")
+        resp = page.goto(BASE + "/recipe/gibtsnicht")
+        check(resp.status == 404, "unknown recipe -> 404 page")
 
-        # --- Einkaufsliste (JS-Client uebernimmt: rendert in #eink-client) ---
+        # --- Shopping list (JS client takes over: renders into #shop-client) ---
         page.goto(BASE, wait_until="networkidle")
-        check(page.locator(".nav a", has_text="Einkauf").count() >= 1, "Nav-Link zur Einkaufsliste")
+        check(page.locator(".nav a", has_text="Einkauf").count() >= 1, "nav link to the shopping list")
 
-        # Zutaten eines Rezepts auf die Liste (Server-Form auf der Rezeptseite)
-        page.goto(BASE + "/rezept/spaghetti-carbonara", wait_until="networkidle")
-        page.locator("form[action$='/einkauf'] button").click()
+        # Put a recipe's ingredients onto the list (server form on the recipe page)
+        page.goto(BASE + "/recipe/spaghetti-carbonara", wait_until="networkidle")
+        page.locator("form[action$='/shopping'] button").click()
         page.wait_for_load_state("networkidle")
-        check(page.url.endswith("/einkauf"), "Knopf fuehrt auf /einkauf")
-        page.wait_for_function("() => document.querySelectorAll('#eink-client .eink-item').length === 6")
-        check(page.locator("#eink-client .eink-item").count() == 6, "6 Carbonara-Zutaten (Client)")
-        page.screenshot(path=str(SHOTS / "09_einkauf.png"), full_page=True)
+        check(page.url.endswith("/shopping"), "button leads to /shopping")
+        page.wait_for_function("() => document.querySelectorAll('#shop-client .shop-item').length === 6")
+        check(page.locator("#shop-client .shop-item").count() == 6, "6 Carbonara ingredients (client)")
+        page.screenshot(path=str(SHOTS / "09_shopping.png"), full_page=True)
 
-        # Manuell hinzufuegen (Client-Form, optimistisch + Hintergrund-Sync)
-        page.fill("#eink-client input[name=text]", "Backpapier")
-        page.fill("#eink-client input[name=menge]", "1 Rolle")
-        page.locator("#eink-client form.eink-add button").click()
-        page.wait_for_function("() => document.querySelectorAll('#eink-client .eink-item').length === 7")
-        check("Backpapier" in page.content(), "Manuelles Item sichtbar (Client)")
+        # Add manually (client form, optimistic + background sync)
+        page.fill("#shop-client input[name=text]", "Backpapier")
+        page.fill("#shop-client input[name=quantity]", "1 Rolle")
+        page.locator("#shop-client form.shop-add button").click()
+        page.wait_for_function("() => document.querySelectorAll('#shop-client .shop-item').length === 7")
+        check("Backpapier" in page.content(), "manual item visible (client)")
 
-        # Ein Item abhaken -> wandert nach 'Erledigt'
-        page.locator("#eink-client .eink-group:not(.eink-group-done) .eink-box").first.click()
-        page.wait_for_function("() => document.querySelectorAll('#eink-client .eink-group-done .eink-item').length === 1")
-        check(page.locator("#eink-client .eink-group-done .eink-item").count() == 1, "Ein Item ist erledigt (Client)")
+        # Tick one item off -> moves to "done"
+        page.locator("#shop-client .shop-group:not(.shop-group-done) .shop-box").first.click()
+        page.wait_for_function("() => document.querySelectorAll('#shop-client .shop-group-done .shop-item').length === 1")
+        check(page.locator("#shop-client .shop-group-done .shop-item").count() == 1, "one item is done (client)")
 
-        # Erledigte entfernen (Tombstone)
-        page.locator("#eink-client .eink-clear button").click()
-        page.wait_for_function("() => document.querySelectorAll('#eink-client .eink-group-done').length === 0")
-        check(page.locator("#eink-client .eink-item").count() == 6, "Wieder 6 offene Items (Client)")
-        page.screenshot(path=str(SHOTS / "10_einkauf_after.png"), full_page=True)
+        # Remove done (tombstone)
+        page.locator("#shop-client .shop-clear button").click()
+        page.wait_for_function("() => document.querySelectorAll('#shop-client .shop-group-done').length === 0")
+        check(page.locator("#shop-client .shop-item").count() == 6, "6 open items again (client)")
+        page.screenshot(path=str(SHOTS / "10_shopping_after.png"), full_page=True)
 
-        # No-JS-Fallback: server-gerenderte Liste funktioniert ohne JavaScript
-        # (zustandsunabhaengig: vorher/nachher statt fester Anzahl)
+        # No-JS fallback: server-rendered list works without JavaScript
+        # (state-independent: before/after instead of a fixed count)
         nojs = browser.new_context(java_script_enabled=False)
         njp = nojs.new_page()
-        njp.goto(BASE + "/einkauf", wait_until="domcontentloaded")
-        check(njp.locator("#eink-server form.eink-add").count() == 1, "No-JS: Server-Formular vorhanden")
-        vorher = njp.locator("#eink-server .eink-item").count()
-        njp.fill("#eink-server input[name=text]", "Senf")
-        njp.locator("#eink-server form.eink-add button").click()
+        njp.goto(BASE + "/shopping", wait_until="domcontentloaded")
+        check(njp.locator("#shop-server form.shop-add").count() == 1, "no-JS: server form present")
+        before = njp.locator("#shop-server .shop-item").count()
+        njp.fill("#shop-server input[name=text]", "Senf")
+        njp.locator("#shop-server form.shop-add button").click()
         njp.wait_for_load_state("domcontentloaded")
-        check(njp.locator("#eink-server .eink-item").count() == vorher + 1, "No-JS: hinzufuegen per Server-Form")
-        check("Senf" in njp.content(), "No-JS: neues Item sichtbar")
+        check(njp.locator("#shop-server .shop-item").count() == before + 1, "no-JS: add via server form")
+        check("Senf" in njp.content(), "no-JS: new item visible")
         nojs.close()
 
-        # Mobile-Ansichten
+        # Mobile views
         m = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2)
         m.goto(BASE, wait_until="networkidle")
         m.screenshot(path=str(SHOTS / "07_mobile_home.png"), full_page=True)
-        m.goto(BASE + "/rezept/rotes-linsen-dal", wait_until="networkidle")
+        m.goto(BASE + "/recipe/rotes-linsen-dal", wait_until="networkidle")
         m.screenshot(path=str(SHOTS / "08_mobile_recipe.png"), full_page=True)
-        m.goto(BASE + "/einkauf", wait_until="networkidle")
-        m.screenshot(path=str(SHOTS / "11_mobile_einkauf.png"), full_page=True)
+        m.goto(BASE + "/shopping", wait_until="networkidle")
+        m.screenshot(path=str(SHOTS / "11_mobile_shopping.png"), full_page=True)
 
         browser.close()
 finally:
@@ -247,8 +247,8 @@ finally:
 
 print()
 if fails:
-    print(f"{len(fails)} CHECK(S) FEHLGESCHLAGEN:")
+    print(f"{len(fails)} CHECK(S) FAILED:")
     for f in fails:
         print("   - " + f)
     sys.exit(1)
-print("ALLE CHECKS BESTANDEN.")
+print("ALL CHECKS PASSED.")

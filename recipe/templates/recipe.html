@@ -8,28 +8,28 @@
       {% for t in r.tags %}<a class="tag" href="/?tag={{ t|urlencode }}">{{ t }}</a>{% endfor %}
     </div>
     {% endif %}
-    <h1 class="recipe-title">{{ r.titel }}</h1>
+    <h1 class="recipe-title">{{ r.title }}</h1>
     <div class="recipe-meta">
-      {% if r.dauer_minuten %}<span><strong>{{ r.dauer_minuten }}</strong>&nbsp;Minuten</span>{% endif %}
-      {% if r.portionen %}<span><strong>{{ r.portionen }}</strong>&nbsp;Portionen</span>{% endif %}
-      <span>zuletzt&nbsp;gekocht:&nbsp;<strong>{{ r.zuletzt_gekocht or 'noch nie' }}</strong></span>
+      {% if r.duration_min %}<span><strong>{{ r.duration_min }}</strong>&nbsp;Minuten</span>{% endif %}
+      {% if r.servings %}<span><strong>{{ r.servings }}</strong>&nbsp;Portionen</span>{% endif %}
+      <span>zuletzt&nbsp;gekocht:&nbsp;<strong>{{ r.last_cooked or 'noch nie' }}</strong></span>
     </div>
     <div class="recipe-actions">
-      <form method="post" action="/rezept/{{ r.slug }}/gekocht">
+      <form method="post" action="/recipe/{{ r.slug }}/cooked">
         <button class="btn" type="submit">Heute gekocht ✓</button>
       </form>
-      <form method="post" action="/rezept/{{ r.slug }}/einkauf">
+      <form method="post" action="/recipe/{{ r.slug }}/shopping">
         <button class="btn-ghost" type="submit">Auf die Einkaufsliste</button>
       </form>
-      <a class="btn-ghost" href="/rezept/{{ r.slug }}/bearbeiten">Bearbeiten</a>
-      <form method="post" action="/rezept/{{ r.slug }}/loeschen"
-            onsubmit="return confirm('Rezept „{{ r.titel }}“ wirklich löschen?');">
+      <a class="btn-ghost" href="/recipe/{{ r.slug }}/edit">Bearbeiten</a>
+      <form method="post" action="/recipe/{{ r.slug }}/delete"
+            onsubmit="return confirm('Rezept „{{ r.title }}“ wirklich löschen?');">
         <button class="btn-text" type="submit">Löschen</button>
       </form>
     </div>
   </header>
   <div class="recipe-body">
-    {{ inhalt_html|safe }}
+    {{ content_html|safe }}
   </div>
 </article>
 {% endblock %}

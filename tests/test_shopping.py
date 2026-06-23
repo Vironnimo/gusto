@@ -1,0 +1,163 @@
+"""Hermetic tests for the shopping-list logic in recipe/core.py.
+
+Runnable WITHOUT pytest:  python tests/test_shopping.py
+
+IMPORTANT: RECIPE_HOME is set at the very top to a fresh temp directory BEFORE
+recipe.core is imported or any function is called. Otherwise the real data
+under recipes/ and data/ would be modified -- which is forbidden.
+"""
+import os
+import sys
+import tempfile
+
+# --- Hermetic: RECIPE_HOME to a throwaway directory, BEFORE the import ------
+os.environ["RECIPE_HOME"] = tempfile.mkdtemp(prefix="gusto-test-")
+
+# Project root on the path so `recipe` is importable no matter where the script
+# is started from.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from recipe import core  # noqa: E402
+
+RECIPE_MD = (
+    "# T\n"
+    "\n"
+    "## Zutaten\n"
+    "\n"
+    "- 200 g Spaghetti\n"
+    "- 100 g Speck\n"
+    "\n"
+    "## Zubereitung\n"
+    "\n"
+    "1. kochen"
+)
+
+checks = 0
+
+
+def check(cond, msg):
+    global checks
+    assert cond, msg
+    checks += 1
+
+
+def expect_valueerror(fn, *args, **kwargs):
+    try:
+        fn(*args, **kwargs)
+    except ValueError:
+        return
+    raise AssertionError(f"expected ValueError from {fn.__name__}, none raised.")
+
+
+def main():
+    # Safety net: we really work inside the temp directory.
+    check(str(core.project_root()).startswith(tempfile.gettempdir()),
+          "RECIPE_HOME does not point into the temp directory -- abort.")
+
+    # --- parse_ingredients --------------------------------------------------
+    check(core.parse_ingredients(RECIPE_MD) == ["200 g Spaghetti", "100 g Speck"],
+          "parse_ingredients does not read the two ingredients correctly.")
+    check(core.parse_ingredients("# Only title\n\nNo section here.") == [],
+          "parse_ingredients without an ingredient section must return [].")
+    # Stops at the next heading, skips empty bullets, '*' counts.
+    mixed = ("## Zutaten\n"
+             "- Mehl\n"
+             "* Zucker\n"
+             "-   \n"            # empty bullet -> skipped
+             "\n"
+             "## Zubereitung\n"
+             "- do not count\n")
+    check(core.parse_ingredients(mixed) == ["Mehl", "Zucker"],
+          "parse_ingredients: empty bullets/second section/'*' handled wrong.")
+
+    # Create a recipe (via the public core path, in the temp home).
+    core.add_recipe("T", content=RECIPE_MD, slug="t")
+
+    # --- load/save round-trip on an empty list ------------------------------
+    check(core.shopping_load() == [], "Fresh shopping list must be empty.")
+    check(core.shopping_list() == [], "Empty list -> shopping_list() == [].")
+
+    # --- shopping_add -------------------------------------------------------
+    a = core.shopping_add("Milch", quantity="1 L")
+    check(a.id and a.created_at and a.updated_at,
+          "shopping_add must set id/created_at/updated_at.")
+    check(a.checked is False and a.deleted is False,
+          "New item: checked and deleted must be False.")
+    check(a.text == "Milch" and a.quantity == "1 L" and a.source is None,
+          "shopping_add does not take over text/quantity/source correctly.")
+    check(len(core.shopping_load()) == 1, "After add there must be exactly 1 item.")
+
+    # load/save round-trip: stored values == read-back values.
+    loaded = core.shopping_load()[0]
+    check(loaded.to_dict() == a.to_dict(),
+          "load/save round-trip changes the item.")
+
+    # --- shopping_add_recipe ------------------------------------------------
+    new = core.shopping_add_recipe("t")
+    check([i.text for i in new] == ["200 g Spaghetti", "100 g Speck"],
+          "shopping_add_recipe returns the wrong ingredients.")
+    check(all(i.source == "t" for i in new),
+          "shopping_add_recipe must set source=slug.")
+    check(len(core.shopping_load()) == 3, "Expected 3 items total (1 + 2).")
+    expect_valueerror(core.shopping_add_recipe, "does-not-exist")
+
+    # --- shopping_list: order by created_at ---------------------------------
+    texts = [i.text for i in core.shopping_list()]
+    check(texts == ["Milch", "200 g Spaghetti", "100 g Speck"],
+          "shopping_list must sort by insertion order (created_at).")
+
+    # --- shopping_toggle ----------------------------------------------------
+    t1 = core.shopping_toggle(a.id)                # toggle -> True
+    check(t1.checked is True, "toggle(None) must flip from False to True.")
+    t2 = core.shopping_toggle(a.id)                # toggle -> False
+    check(t2.checked is False, "toggle(None) again must go back to False.")
+    t3 = core.shopping_toggle(a.id, checked=True)  # set explicitly
+    check(t3.checked is True, "toggle(checked=True) must set True.")
+    expect_valueerror(core.shopping_toggle, "unknown-id")
+
+    # --- shopping_list filter: done -----------------------------------------
+    check([i.text for i in core.shopping_list(include_done=False)]
+          == ["200 g Spaghetti", "100 g Speck"],
+          "include_done=False must hide done items.")
+    check(len(core.shopping_list(include_done=True)) == 3,
+          "include_done=True must show all (non-deleted) items.")
+
+    # --- shopping_remove: tombstone -----------------------------------------
+    spaghetti = next(i for i in core.shopping_load() if i.text == "200 g Spaghetti")
+    core.shopping_remove(spaghetti.id)
+    removed = next(i for i in core.shopping_load() if i.id == spaghetti.id)
+    check(removed.deleted is True,
+          "shopping_remove must mark the item as a tombstone.")
+    # The tombstone is present in load() but not in list() (default).
+    check(any(i.id == spaghetti.id for i in core.shopping_load()),
+          "Tombstone must still appear in shopping_load().")
+    check(not any(i.id == spaghetti.id for i in core.shopping_list()),
+          "Tombstone must NOT appear in shopping_list() (default).")
+    check(any(i.id == spaghetti.id
+              for i in core.shopping_list(include_deleted=True)),
+          "include_deleted=True must show tombstones.")
+    # Tombstones can no longer be toggled.
+    expect_valueerror(core.shopping_toggle, spaghetti.id)
+    expect_valueerror(core.shopping_remove, "unknown-id")
+
+    # --- shopping_clear_done ------------------------------------------------
+    # Currently done + non-tombstone: only "Milch" (a). Speck is open,
+    # Spaghetti is already a tombstone.
+    count = core.shopping_clear_done()
+    check(count == 1, f"clear_done should remove exactly 1 item, was {count}.")
+    milch = next(i for i in core.shopping_load() if i.id == a.id)
+    check(milch.deleted is True,
+          "clear_done must turn done items into tombstones.")
+    # Calling again removes nothing more.
+    check(core.shopping_clear_done() == 0,
+          "clear_done with no done items must return 0.")
+    # Exactly the open Speck item stays visible.
+    visible = core.shopping_list()
+    check([i.text for i in visible] == ["100 g Speck"],
+          "After clear_done only the open Speck item may be visible.")
+
+    print(f"OK - {checks} checks passed (RECIPE_HOME={core.project_root()})")
+
+
+if __name__ == "__main__":
+    main()

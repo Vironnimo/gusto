@@ -1,8 +1,8 @@
-"""Kommandozeile fuers Rezept-System.
+"""Command line for the recipe system.
 
-Duenne Huelle um recipe.core. Jedes Kommando versteht --json fuer eine
-maschinenlesbare Ausgabe (fuer Agents & Skripte); ohne --json wird huebsch
-fuers Terminal formatiert.
+Thin shell around recipe.core. Every command understands --json for machine-
+readable output (for agents & scripts); without --json it is formatted nicely
+for the terminal. User-facing output and --help texts stay German.
 """
 from __future__ import annotations
 
@@ -26,14 +26,14 @@ def _open_editor(path) -> None:
 
 
 def _collect_tags(values) -> list[str]:
-    """--tag kann mehrfach UND kommagetrennt kommen -> flache Tag-Liste."""
+    """--tag may be given multiple times AND comma-separated -> flat tag list."""
     out: list[str] = []
     for v in values or []:
         out.extend(t.strip() for t in v.split(",") if t.strip())
     return out
 
 
-def _ausgabe_liste(recipes, as_json: bool) -> None:
+def _print_list(recipes, as_json: bool) -> None:
     if as_json:
         _dump([r.to_dict() for r in recipes])
         return
@@ -42,40 +42,40 @@ def _ausgabe_liste(recipes, as_json: bool) -> None:
         return
     for r in recipes:
         meta = []
-        if r.dauer_minuten:
-            meta.append(f"{r.dauer_minuten} min")
-        if r.portionen:
-            meta.append(f"{r.portionen} P.")
+        if r.duration_min:
+            meta.append(f"{r.duration_min} min")
+        if r.servings:
+            meta.append(f"{r.servings} P.")
         if r.tags:
             meta.append(", ".join(r.tags))
         extra = "  ·  ".join(meta)
-        print(f"  {r.slug:<22} {r.titel}" + (f"   [{extra}]" if extra else ""))
+        print(f"  {r.slug:<22} {r.title}" + (f"   [{extra}]" if extra else ""))
 
 
-# --- Kommandos --------------------------------------------------------------
+# --- Commands ---------------------------------------------------------------
 
 def cmd_list(args):
     recipes = sorted(core.search(tags=_collect_tags(args.tag), max_time=args.max_time),
-                     key=lambda r: r.titel.lower())
-    _ausgabe_liste(recipes, args.json)
+                     key=lambda r: r.title.lower())
+    _print_list(recipes, args.json)
 
 
 def cmd_search(args):
     recipes = sorted(core.search(query=args.query, match=args.match,
                                  tags=_collect_tags(args.tag), max_time=args.max_time),
-                     key=lambda r: r.titel.lower())
-    _ausgabe_liste(recipes, args.json)
+                     key=lambda r: r.title.lower())
+    _print_list(recipes, args.json)
 
 
 def cmd_tags(args):
-    gruppen = core.tag_groups(only_used=not args.all)
+    groups = core.tag_groups(only_used=not args.all)
     if args.json:
-        _dump(gruppen)
+        _dump(groups)
         return
-    if not gruppen:
+    if not groups:
         print("Keine Tag-Kategorien definiert (data/categories.json fehlt?).")
         return
-    for g in gruppen:
+    for g in groups:
         print(f"{g['label']}:")
         print("  " + (", ".join(g["tags"]) if g["tags"] else "—"))
 
@@ -86,70 +86,70 @@ def cmd_show(args):
         sys.exit(f"Kein Rezept mit Slug '{args.slug}'.")
     if args.json:
         d = r.to_dict()
-        d["inhalt"] = r.inhalt()
+        d["content"] = r.content()
         _dump(d)
     else:
-        print(r.inhalt().rstrip())
+        print(r.content().rstrip())
 
 
 def cmd_new(args):
     tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
     try:
-        r = core.add_recipe(args.titel, tags=tags,
-                            dauer_minuten=args.dauer, portionen=args.portionen)
+        r = core.add_recipe(args.title, tags=tags,
+                            duration_min=args.duration, servings=args.servings)
     except ValueError as e:
         sys.exit(str(e))
     if args.json:
         _dump(r.to_dict())
     else:
-        print(f"Angelegt: {r.slug}  ->  {r.pfad}")
+        print(f"Angelegt: {r.slug}  ->  {r.path}")
     if args.edit:
-        _open_editor(r.pfad)
+        _open_editor(r.path)
 
 
 def cmd_edit(args):
     r = core.get(args.slug)
     if r is None:
         sys.exit(f"Kein Rezept mit Slug '{args.slug}'.")
-    _open_editor(r.pfad)
+    _open_editor(r.path)
 
 
 def cmd_cooked(args):
     try:
-        core.log_cooked(args.slug, datum=args.date)
+        core.log_cooked(args.slug, when=args.date)
     except ValueError as e:
         sys.exit(str(e))
-    datum = args.date or date.today().isoformat()
+    when = args.date or date.today().isoformat()
     if args.json:
-        _dump({"slug": args.slug, "datum": datum, "ok": True})
+        _dump({"slug": args.slug, "date": when, "ok": True})
     else:
-        print(f"Notiert: '{args.slug}' am {datum} gekocht.")
+        print(f"Notiert: '{args.slug}' am {when} gekocht.")
 
 
 def cmd_log(args):
-    eintraege = core.load_log(days=args.days)
+    entries = core.load_log(days=args.days)
     if args.json:
-        _dump(eintraege)
+        _dump(entries)
         return
-    if not eintraege:
+    if not entries:
         print("Logbuch ist leer.")
         return
-    titel = {r.slug: r.titel for r in core.load_recipes()}
-    for e in reversed(eintraege):  # neueste zuerst
-        print(f"  {e['datum']}   {titel.get(e['slug'], e['slug'])}")
+    titles = {r.slug: r.title for r in core.load_recipes()}
+    for e in reversed(entries):  # newest first
+        print(f"  {e['date']}   {titles.get(e['slug'], e['slug'])}")
 
 
 def cmd_suggest(args):
-    kandidaten = core.suggest(days=args.days, limit=args.limit)
+    candidates = core.suggest(days=args.days, limit=args.limit)
     if args.json:
-        _dump([r.to_dict() for r in kandidaten])
+        _dump([r.to_dict() for r in candidates])
         return
-    if not kandidaten:
+    if not candidates:
         print(f"Keine Vorschlaege – in den letzten {args.days} Tagen war schon alles dran.")
         return
     print(f"Vorschlaege (nicht in den letzten {args.days} Tagen gekocht):")
-    for r in kandidaten:
-        print(f"  {r.titel:<26} (zuletzt: {r.zuletzt_gekocht or 'noch nie'})")
+    for r in candidates:
+        print(f"  {r.title:<26} (zuletzt: {r.last_cooked or 'noch nie'})")
 
 
 def cmd_check(args):
@@ -157,15 +157,15 @@ def cmd_check(args):
     if args.json:
         _dump(res)
         return
-    print(f"Rezepte im Index: {res['anzahl_rezepte']}")
-    if res["verwaiste_dateien"]:
-        print("  .md ohne Index-Eintrag:", ", ".join(res["verwaiste_dateien"]))
-    if res["fehlende_dateien"]:
-        print("  Index-Eintrag ohne .md:", ", ".join(res["fehlende_dateien"]))
-    if res.get("unsortierte_tags"):
-        print("  Tags ohne Kategorie:", ", ".join(res["unsortierte_tags"]))
-    if not (res["verwaiste_dateien"] or res["fehlende_dateien"]
-            or res.get("unsortierte_tags")):
+    print(f"Rezepte im Index: {res['recipe_count']}")
+    if res["orphaned_files"]:
+        print("  .md ohne Index-Eintrag:", ", ".join(res["orphaned_files"]))
+    if res["missing_files"]:
+        print("  Index-Eintrag ohne .md:", ", ".join(res["missing_files"]))
+    if res.get("uncategorized_tags"):
+        print("  Tags ohne Kategorie:", ", ".join(res["uncategorized_tags"]))
+    if not (res["orphaned_files"] or res["missing_files"]
+            or res.get("uncategorized_tags")):
         print("  Alles konsistent.")
 
 
@@ -174,8 +174,8 @@ def cmd_set(args):
     if args.tags is not None:
         tags = [t.strip() for t in args.tags.split(",") if t.strip()]
     try:
-        r = core.update_recipe(args.slug, titel=args.titel, tags=tags,
-                               dauer_minuten=args.dauer, portionen=args.portionen)
+        r = core.update_recipe(args.slug, title=args.title, tags=tags,
+                               duration_min=args.duration, servings=args.servings)
     except ValueError as e:
         sys.exit(str(e))
     if args.json:
@@ -190,28 +190,28 @@ def cmd_delete(args):
     except ValueError as e:
         sys.exit(str(e))
     if args.json:
-        _dump({"slug": args.slug, "geloescht": True})
+        _dump({"slug": args.slug, "deleted": True})
     else:
         print(f"Geloescht: {args.slug}")
 
 
-# --- Einkaufsliste ----------------------------------------------------------
+# --- Shopping list ----------------------------------------------------------
 
-def _ausgabe_einkauf_item(item, as_json: bool, *, prefix: str = "") -> None:
+def _print_shopping_item(item, as_json: bool, *, prefix: str = "") -> None:
     if as_json:
         _dump(item.to_dict())
         return
     marker = "[x]" if item.checked else "[ ]"
-    zeile = f"{marker} {item.id}  {item.text}"
-    if item.menge:
-        zeile += f"  ({item.menge})"
-    if item.quelle:
-        zeile += f"  (aus {item.quelle})"
-    print(prefix + zeile)
+    line = f"{marker} {item.id}  {item.text}"
+    if item.quantity:
+        line += f"  ({item.quantity})"
+    if item.source:
+        line += f"  (aus {item.source})"
+    print(prefix + line)
 
 
-def cmd_einkauf_list(args):
-    items = core.einkauf_list(include_done=not args.offen)
+def cmd_shopping_list(args):
+    items = core.shopping_list(include_done=not args.pending)
     if args.json:
         _dump([i.to_dict() for i in items])
         return
@@ -219,23 +219,23 @@ def cmd_einkauf_list(args):
         print("Einkaufsliste ist leer.")
         return
     for i in items:
-        _ausgabe_einkauf_item(i, False, prefix="  ")
+        _print_shopping_item(i, False, prefix="  ")
 
 
-def cmd_einkauf_add(args):
+def cmd_shopping_add(args):
     try:
-        item = core.einkauf_add(args.text, menge=args.menge or "")
+        item = core.shopping_add(args.text, quantity=args.quantity or "")
     except ValueError as e:
         sys.exit(str(e))
     if args.json:
         _dump(item.to_dict())
     else:
-        _ausgabe_einkauf_item(item, False, prefix="Hinzugefuegt: ")
+        _print_shopping_item(item, False, prefix="Hinzugefuegt: ")
 
 
-def cmd_einkauf_rezept(args):
+def cmd_shopping_add_recipe(args):
     try:
-        items = core.einkauf_add_rezept(args.slug)
+        items = core.shopping_add_recipe(args.slug)
     except ValueError as e:
         sys.exit(str(e))
     if args.json:
@@ -244,45 +244,45 @@ def cmd_einkauf_rezept(args):
         print(f"{len(items)} Zutat(en) aus '{args.slug}' hinzugefuegt.")
 
 
-def cmd_einkauf_check(args):
+def cmd_shopping_check(args):
     try:
-        item = core.einkauf_toggle(args.id, checked=True)
+        item = core.shopping_toggle(args.id, checked=True)
     except ValueError as e:
         sys.exit(str(e))
     if args.json:
         _dump(item.to_dict())
     else:
-        _ausgabe_einkauf_item(item, False, prefix="Abgehakt: ")
+        _print_shopping_item(item, False, prefix="Abgehakt: ")
 
 
-def cmd_einkauf_uncheck(args):
+def cmd_shopping_uncheck(args):
     try:
-        item = core.einkauf_toggle(args.id, checked=False)
+        item = core.shopping_toggle(args.id, checked=False)
     except ValueError as e:
         sys.exit(str(e))
     if args.json:
         _dump(item.to_dict())
     else:
-        _ausgabe_einkauf_item(item, False, prefix="Wieder offen: ")
+        _print_shopping_item(item, False, prefix="Wieder offen: ")
 
 
-def cmd_einkauf_remove(args):
+def cmd_shopping_remove(args):
     try:
-        core.einkauf_remove(args.id)
+        core.shopping_remove(args.id)
     except ValueError as e:
         sys.exit(str(e))
     if args.json:
-        _dump({"id": args.id, "geloescht": True})
+        _dump({"id": args.id, "deleted": True})
     else:
         print(f"Entfernt: {args.id}")
 
 
-def cmd_einkauf_clear(args):
-    anzahl = core.einkauf_clear_done()
+def cmd_shopping_clear(args):
+    count = core.shopping_clear_done()
     if args.json:
-        _dump({"entfernt": anzahl})
+        _dump({"removed": count})
     else:
-        print(f"{anzahl} erledigte(s) Item(s) entfernt.")
+        print(f"{count} erledigte(s) Item(s) entfernt.")
 
 
 def cmd_serve(args):
@@ -308,12 +308,12 @@ def build_parser() -> argparse.ArgumentParser:
     base.add_argument("--json", action="store_true",
                       help="Maschinenlesbare Ausgabe (fuer Agents/Skripte).")
 
-    tag_hilfe = ("Nach Tag filtern; mehrfach oder kommagetrennt moeglich "
-                 "(--tag italienisch --tag pizza  bzw.  --tag italienisch,pizza). "
-                 "ODER innerhalb einer Kategorie, UND ueber Kategorien.")
+    tag_help = ("Nach Tag filtern; mehrfach oder kommagetrennt moeglich "
+                "(--tag italienisch --tag pizza  bzw.  --tag italienisch,pizza). "
+                "ODER innerhalb einer Kategorie, UND ueber Kategorien.")
 
     sp = sub.add_parser("list", parents=[base], help="Rezepte auflisten/filtern.")
-    sp.add_argument("--tag", action="append", metavar="TAG", help=tag_hilfe)
+    sp.add_argument("--tag", action="append", metavar="TAG", help=tag_help)
     sp.add_argument("--max-time", type=int, dest="max_time", help="Max. Dauer (Minuten).")
     sp.set_defaults(func=cmd_list)
 
@@ -322,7 +322,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("query", help='Suchbegriffe, z.B. "linsen kokos".')
     sp.add_argument("--match", choices=["any", "all"], default="any",
                     help="any: irgendein Begriff; all: alle Begriffe.")
-    sp.add_argument("--tag", action="append", metavar="TAG", help=tag_hilfe)
+    sp.add_argument("--tag", action="append", metavar="TAG", help=tag_help)
     sp.add_argument("--max-time", type=int, dest="max_time")
     sp.set_defaults(func=cmd_search)
 
@@ -337,10 +337,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_show)
 
     sp = sub.add_parser("new", parents=[base], help="Neues Rezept anlegen (.md + Index).")
-    sp.add_argument("titel")
+    sp.add_argument("title")
     sp.add_argument("--tags", help="Kommagetrennt, z.B. pasta,schnell")
-    sp.add_argument("--dauer", type=int, help="Dauer in Minuten.")
-    sp.add_argument("--portionen", type=int)
+    sp.add_argument("--duration", type=int, help="Dauer in Minuten.")
+    sp.add_argument("--servings", type=int)
     sp.add_argument("--edit", action="store_true", help="Datei danach im Editor oeffnen.")
     sp.set_defaults(func=cmd_new)
 
@@ -368,49 +368,49 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("set", parents=[base], help="Metadaten eines Rezepts aendern.")
     sp.add_argument("slug")
-    sp.add_argument("--titel")
+    sp.add_argument("--title")
     sp.add_argument("--tags", help="Kommagetrennt; ersetzt die bisherigen Tags.")
-    sp.add_argument("--dauer", type=int)
-    sp.add_argument("--portionen", type=int)
+    sp.add_argument("--duration", type=int)
+    sp.add_argument("--servings", type=int)
     sp.set_defaults(func=cmd_set)
 
     sp = sub.add_parser("delete", parents=[base], help="Rezept loeschen (.md + Index).")
     sp.add_argument("slug")
     sp.set_defaults(func=cmd_delete)
 
-    sp = sub.add_parser("einkauf", help="Einkaufsliste verwalten.")
-    esub = sp.add_subparsers(dest="einkauf_command", required=True)
+    sp = sub.add_parser("shopping", help="Einkaufsliste verwalten.")
+    esub = sp.add_subparsers(dest="shopping_command", required=True)
 
     ep = esub.add_parser("list", parents=[base], help="Einkaufsliste anzeigen.")
-    ep.add_argument("--offen", action="store_true",
+    ep.add_argument("--pending", action="store_true",
                     help="Nur offene (nicht abgehakte) Eintraege.")
-    ep.set_defaults(func=cmd_einkauf_list)
+    ep.set_defaults(func=cmd_shopping_list)
 
     ep = esub.add_parser("add", parents=[base], help="Eintrag hinzufuegen.")
     ep.add_argument("text", help='Was gekauft werden soll, z.B. "200 g Spaghetti".')
-    ep.add_argument("--menge", help="Optionale Mengenangabe.")
-    ep.set_defaults(func=cmd_einkauf_add)
+    ep.add_argument("--quantity", help="Optionale Mengenangabe.")
+    ep.set_defaults(func=cmd_shopping_add)
 
-    ep = esub.add_parser("rezept", parents=[base],
+    ep = esub.add_parser("add-recipe", parents=[base],
                          help="Alle Zutaten eines Rezepts auf die Liste setzen.")
     ep.add_argument("slug")
-    ep.set_defaults(func=cmd_einkauf_rezept)
+    ep.set_defaults(func=cmd_shopping_add_recipe)
 
     ep = esub.add_parser("check", parents=[base], help="Eintrag abhaken.")
     ep.add_argument("id")
-    ep.set_defaults(func=cmd_einkauf_check)
+    ep.set_defaults(func=cmd_shopping_check)
 
     ep = esub.add_parser("uncheck", parents=[base], help="Haekchen wieder entfernen.")
     ep.add_argument("id")
-    ep.set_defaults(func=cmd_einkauf_uncheck)
+    ep.set_defaults(func=cmd_shopping_uncheck)
 
     ep = esub.add_parser("remove", parents=[base], help="Eintrag entfernen.")
     ep.add_argument("id")
-    ep.set_defaults(func=cmd_einkauf_remove)
+    ep.set_defaults(func=cmd_shopping_remove)
 
     ep = esub.add_parser("clear", parents=[base],
                          help="Alle erledigten Eintraege entfernen.")
-    ep.set_defaults(func=cmd_einkauf_clear)
+    ep.set_defaults(func=cmd_shopping_clear)
 
     sp = sub.add_parser("serve", parents=[base], help="Web-Oberflaeche starten.")
     sp.add_argument("--host", default="0.0.0.0")
@@ -423,7 +423,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> None:
     try:
-        sys.stdout.reconfigure(encoding="utf-8")  # robuste Umlaute/JSON auf Windows
+        sys.stdout.reconfigure(encoding="utf-8")  # robust umlauts/JSON on Windows
     except Exception:
         pass
     args = build_parser().parse_args(argv)

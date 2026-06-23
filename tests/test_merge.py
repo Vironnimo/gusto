@@ -1,23 +1,23 @@
-"""Hermetische Tests fuer den Voll-State-Sync core.einkauf_merge.
+"""Hermetic tests for the full-state sync core.shopping_merge.
 
-Lauffaehig OHNE pytest:  python tests/test_merge.py
+Runnable WITHOUT pytest:  python tests/test_merge.py
 
-Deckt die Merge-Regel aus docs/sync-kontrakt.md ab ("letzter gewinnt" pro id +
-Tombstones, Voll-State).
+Covers the merge rule from docs/sync-kontrakt.md ("last writer wins" per id +
+tombstones, full state).
 
-WICHTIG: RECIPE_HOME wird ganz oben auf ein frisches Temp-Verzeichnis gesetzt,
-BEVOR recipe.core importiert oder eine Funktion aufgerufen wird. Sonst wuerden
-die echten Daten unter recipes/ und data/ veraendert – das ist verboten.
+IMPORTANT: RECIPE_HOME is set at the very top to a fresh temp directory BEFORE
+recipe.core is imported or any function is called. Otherwise the real data
+under recipes/ and data/ would be modified -- which is forbidden.
 """
 import os
 import sys
 import tempfile
 
-# --- Hermetik: RECIPE_HOME auf ein Wegwerf-Verzeichnis, VOR dem Import -------
+# --- Hermetic: RECIPE_HOME to a throwaway directory, BEFORE the import ------
 os.environ["RECIPE_HOME"] = tempfile.mkdtemp(prefix="gusto-merge-test-")
 
-# Projektwurzel in den Pfad, damit `recipe` importierbar ist, egal von wo aus
-# das Skript gestartet wird.
+# Project root on the path so `recipe` is importable no matter where the script
+# is started from.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from recipe import core  # noqa: E402
@@ -25,125 +25,125 @@ from recipe import core  # noqa: E402
 checks = 0
 
 
-def pruefe(bedingung, nachricht):
+def check(cond, msg):
     global checks
-    assert bedingung, nachricht
+    assert cond, msg
     checks += 1
 
 
-def item(id, geaendert_am, *, text="x", checked=False, geloescht=False,
-         erstellt_am="2026-06-23T18:00:00Z", menge="", quelle=None) -> dict:
-    """Ein rohes Item-Dict (so wie es vom Client kaeme)."""
+def item(id, updated_at, *, text="x", checked=False, deleted=False,
+         created_at="2026-06-23T18:00:00Z", quantity="", source=None) -> dict:
+    """A raw item dict (as it would come from the client)."""
     return {
-        "id": id, "text": text, "menge": menge, "checked": checked,
-        "quelle": quelle, "erstellt_am": erstellt_am,
-        "geaendert_am": geaendert_am, "geloescht": geloescht,
+        "id": id, "text": text, "quantity": quantity, "checked": checked,
+        "source": source, "created_at": created_at,
+        "updated_at": updated_at, "deleted": deleted,
     }
 
 
-def reset_lokal(items: list[dict]) -> None:
-    """Lokalen Stand frisch setzen (ueber einkauf_save)."""
-    core.einkauf_save([core.EinkaufItem.from_dict(d) for d in items])
+def reset_local(items: list[dict]) -> None:
+    """Set the local state freshly (via shopping_save)."""
+    core.shopping_save([core.ShoppingItem.from_dict(d) for d in items])
 
 
-def by_id(items: list[core.EinkaufItem]) -> dict[str, core.EinkaufItem]:
+def by_id(items: list[core.ShoppingItem]) -> dict[str, core.ShoppingItem]:
     return {i.id: i for i in items}
 
 
-# --- 1) Leeres lokal + remote-Items -> uebernommen --------------------------
-reset_lokal([])
-ergebnis = core.einkauf_merge([item("a", "2026-06-23T18:00:00Z", text="Milch")])
-m = by_id(ergebnis)
-pruefe(len(ergebnis) == 1, "leeres lokal: genau 1 Item nach Merge")
-pruefe("a" in m and m["a"].text == "Milch", "leeres lokal: remote-Item uebernommen")
+# --- 1) empty local + remote items -> taken over ----------------------------
+reset_local([])
+result = core.shopping_merge([item("a", "2026-06-23T18:00:00Z", text="Milch")])
+m = by_id(result)
+check(len(result) == 1, "empty local: exactly 1 item after merge")
+check("a" in m and m["a"].text == "Milch", "empty local: remote item taken over")
 
-# Rueckgabetyp ist EinkaufItem (nicht dict).
-pruefe(isinstance(ergebnis[0], core.EinkaufItem), "Rueckgabe besteht aus EinkaufItem")
-
-
-# --- 2) gleiche id, remote neuer (groesseres geaendert_am) -> remote gewinnt -
-reset_lokal([item("a", "2026-06-23T18:00:00Z", text="alt", checked=False)])
-ergebnis = core.einkauf_merge([item("a", "2026-06-23T19:00:00Z", text="neu", checked=True)])
-m = by_id(ergebnis)
-pruefe(len(ergebnis) == 1, "remote neuer: weiterhin 1 Item")
-pruefe(m["a"].text == "neu" and m["a"].checked is True, "remote neuer: remote gewinnt")
+# Return type is ShoppingItem (not dict).
+check(isinstance(result[0], core.ShoppingItem), "return consists of ShoppingItem")
 
 
-# --- 3) gleiche id, remote aelter -> lokal bleibt ---------------------------
-reset_lokal([item("a", "2026-06-23T19:00:00Z", text="lokal-neu")])
-ergebnis = core.einkauf_merge([item("a", "2026-06-23T18:00:00Z", text="remote-alt")])
-m = by_id(ergebnis)
-pruefe(m["a"].text == "lokal-neu", "remote aelter: lokale Version bleibt")
+# --- 2) same id, remote newer (larger updated_at) -> remote wins ------------
+reset_local([item("a", "2026-06-23T18:00:00Z", text="old", checked=False)])
+result = core.shopping_merge([item("a", "2026-06-23T19:00:00Z", text="new", checked=True)])
+m = by_id(result)
+check(len(result) == 1, "remote newer: still 1 item")
+check(m["a"].text == "new" and m["a"].checked is True, "remote newer: remote wins")
 
 
-# --- 4) Gleichstand geaendert_am -> lokal bleibt ----------------------------
-reset_lokal([item("a", "2026-06-23T18:00:00Z", text="lokal")])
-ergebnis = core.einkauf_merge([item("a", "2026-06-23T18:00:00Z", text="remote")])
-m = by_id(ergebnis)
-pruefe(m["a"].text == "lokal", "Gleichstand: lokale Version bleibt")
+# --- 3) same id, remote older -> local stays --------------------------------
+reset_local([item("a", "2026-06-23T19:00:00Z", text="local-new")])
+result = core.shopping_merge([item("a", "2026-06-23T18:00:00Z", text="remote-old")])
+m = by_id(result)
+check(m["a"].text == "local-new", "remote older: local version stays")
 
 
-# --- 5) remote-Tombstone neuer -> Item wird Tombstone -----------------------
-reset_lokal([item("a", "2026-06-23T18:00:00Z", text="da", geloescht=False)])
-ergebnis = core.einkauf_merge([item("a", "2026-06-23T19:00:00Z", geloescht=True)])
-m = by_id(ergebnis)
-pruefe(m["a"].geloescht is True, "remote-Tombstone neuer: Item wird Tombstone")
-# Tombstone ist Teil der Rueckgabe (nicht herausgefiltert).
-pruefe(len(ergebnis) == 1, "Tombstone bleibt in der Rueckgabe enthalten")
-
-# Gegenprobe: lokaler Tombstone, remote aelter+lebendig -> Tombstone bleibt.
-reset_lokal([item("a", "2026-06-23T19:00:00Z", geloescht=True)])
-ergebnis = core.einkauf_merge([item("a", "2026-06-23T18:00:00Z", geloescht=False)])
-m = by_id(ergebnis)
-pruefe(m["a"].geloescht is True, "lokaler Tombstone neuer: bleibt geloescht")
+# --- 4) tie on updated_at -> local stays ------------------------------------
+reset_local([item("a", "2026-06-23T18:00:00Z", text="local")])
+result = core.shopping_merge([item("a", "2026-06-23T18:00:00Z", text="remote")])
+m = by_id(result)
+check(m["a"].text == "local", "tie: local version stays")
 
 
-# --- 6) nur-lokale id bleibt erhalten ---------------------------------------
-reset_lokal([item("lokal-only", "2026-06-23T18:00:00Z", text="nur lokal")])
-ergebnis = core.einkauf_merge([item("remote-only", "2026-06-23T18:00:00Z", text="nur remote")])
-m = by_id(ergebnis)
-pruefe("lokal-only" in m, "nur-lokale id bleibt erhalten")
-pruefe("remote-only" in m, "nur-remote id wird uebernommen")
-pruefe(len(ergebnis) == 2, "Union beider ids im Ergebnis")
+# --- 5) remote tombstone newer -> item becomes tombstone --------------------
+reset_local([item("a", "2026-06-23T18:00:00Z", text="here", deleted=False)])
+result = core.shopping_merge([item("a", "2026-06-23T19:00:00Z", deleted=True)])
+m = by_id(result)
+check(m["a"].deleted is True, "remote tombstone newer: item becomes tombstone")
+# The tombstone is part of the return (not filtered out).
+check(len(result) == 1, "tombstone stays in the return")
+
+# Counter-check: local tombstone, remote older+alive -> tombstone stays.
+reset_local([item("a", "2026-06-23T19:00:00Z", deleted=True)])
+result = core.shopping_merge([item("a", "2026-06-23T18:00:00Z", deleted=False)])
+m = by_id(result)
+check(m["a"].deleted is True, "local tombstone newer: stays deleted")
 
 
-# --- 7) Rueckgabe enthaelt Tombstones (gemischter Stand) --------------------
-reset_lokal([
-    item("offen", "2026-06-23T18:00:00Z"),
-    item("tot", "2026-06-23T18:00:00Z", geloescht=True),
+# --- 6) local-only id is kept -----------------------------------------------
+reset_local([item("local-only", "2026-06-23T18:00:00Z", text="local only")])
+result = core.shopping_merge([item("remote-only", "2026-06-23T18:00:00Z", text="remote only")])
+m = by_id(result)
+check("local-only" in m, "local-only id is kept")
+check("remote-only" in m, "remote-only id is taken over")
+check(len(result) == 2, "union of both ids in the result")
+
+
+# --- 7) return contains tombstones (mixed state) ----------------------------
+reset_local([
+    item("open", "2026-06-23T18:00:00Z"),
+    item("dead", "2026-06-23T18:00:00Z", deleted=True),
 ])
-ergebnis = core.einkauf_merge([])
-m = by_id(ergebnis)
-pruefe("tot" in m and m["tot"].geloescht is True,
-       "leerer Remote-Stand: lokale Tombstones bleiben in der Rueckgabe")
-pruefe(len(ergebnis) == 2, "leerer Remote-Stand: lokaler Stand vollstaendig zurueck")
+result = core.shopping_merge([])
+m = by_id(result)
+check("dead" in m and m["dead"].deleted is True,
+      "empty remote state: local tombstones stay in the return")
+check(len(result) == 2, "empty remote state: full local state returned")
 
 
-# --- 8) Ergebnis ist persistiert (einkauf_load nach merge) ------------------
-reset_lokal([item("a", "2026-06-23T18:00:00Z", text="alt")])
-core.einkauf_merge([
-    item("a", "2026-06-23T19:00:00Z", text="neu"),
-    item("b", "2026-06-23T19:00:00Z", text="frisch", geloescht=True),
+# --- 8) result is persisted (shopping_load after merge) ---------------------
+reset_local([item("a", "2026-06-23T18:00:00Z", text="old")])
+core.shopping_merge([
+    item("a", "2026-06-23T19:00:00Z", text="new"),
+    item("b", "2026-06-23T19:00:00Z", text="fresh", deleted=True),
 ])
-geladen = by_id(core.einkauf_load())
-pruefe(geladen["a"].text == "neu", "persistiert: gemergte Aenderung auf Platte")
-pruefe("b" in geladen and geladen["b"].geloescht is True,
-       "persistiert: neuer remote-Tombstone auf Platte")
-pruefe(len(geladen) == 2, "persistiert: alle ids inkl. Tombstone auf Platte")
+loaded = by_id(core.shopping_load())
+check(loaded["a"].text == "new", "persisted: merged change on disk")
+check("b" in loaded and loaded["b"].deleted is True,
+      "persisted: new remote tombstone on disk")
+check(len(loaded) == 2, "persisted: all ids incl. tombstone on disk")
 
 
-# --- 9) Robustheit: unbekannte/fehlende Felder im Remote-Dict ---------------
-reset_lokal([])
-# 'extra_feld' ist unbekannt und muss ignoriert werden; fehlende Felder ->
-# Defaults aus EinkaufItem (from_dict).
-ergebnis = core.einkauf_merge([
-    {"id": "x", "text": "Brot", "geaendert_am": "2026-06-23T18:00:00Z",
-     "extra_feld": "ignoriert mich"},
+# --- 9) robustness: unknown/missing fields in the remote dict ---------------
+reset_local([])
+# 'extra_field' is unknown and must be ignored; missing fields -> defaults from
+# ShoppingItem (from_dict).
+result = core.shopping_merge([
+    {"id": "x", "text": "Brot", "updated_at": "2026-06-23T18:00:00Z",
+     "extra_field": "ignore me"},
 ])
-m = by_id(ergebnis)
-pruefe(m["x"].text == "Brot", "robust: bekannte Felder uebernommen")
-pruefe(m["x"].menge == "" and m["x"].checked is False and m["x"].geloescht is False,
-       "robust: fehlende Felder fallen auf Defaults zurueck")
+m = by_id(result)
+check(m["x"].text == "Brot", "robust: known fields taken over")
+check(m["x"].quantity == "" and m["x"].checked is False and m["x"].deleted is False,
+      "robust: missing fields fall back to defaults")
 
 
-print(f"OK - {checks} Checks bestanden (test_merge.py)")
+print(f"OK - {checks} checks passed (test_merge.py)")

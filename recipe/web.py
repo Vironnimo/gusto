@@ -1,7 +1,8 @@
-"""Web-Oberflaeche (FastAPI, server-gerendert).
+"""Web UI (FastAPI, server-rendered).
 
-Duenne Huelle um recipe.core – genau wie die CLI. Jede Aktion hier hat ihre
-Entsprechung im Core und damit in der CLI; es gibt kein Web-only-Feature.
+Thin shell around recipe.core -- just like the CLI. Every action here has its
+counterpart in the core and thus in the CLI; there is no web-only feature.
+Visible UI text lives in the templates and stays German.
 """
 from __future__ import annotations
 
@@ -24,10 +25,10 @@ app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 
 
-# --- Helfer -----------------------------------------------------------------
+# --- Helpers ----------------------------------------------------------------
 
 def _split_title(text: str) -> str:
-    """Entfernt die erste H1-Zeile (den Titel) – den zeigen wir separat."""
+    """Drop the first H1 line (the title) -- we show it separately."""
     out, dropped = [], False
     for ln in text.splitlines():
         if not dropped and ln.strip().startswith("# "):
@@ -51,121 +52,121 @@ def _tags(s: str | None):
 
 
 def _filter_href(q: str, tags: list[str]) -> str:
-    """Link auf die Rezeptliste mit gegebener Suche + Tag-Auswahl."""
+    """Link to the recipe list with the given search + tag selection."""
     params = ([("q", q)] if q else []) + [("tag", t) for t in tags]
     return "/?" + urlencode(params) if params else "/"
 
 
-def _tag_leiste(q: str, ausgewaehlt: list[str]) -> list[dict]:
-    """Gruppierte Tag-Chips fuer die Filterleiste. Jeder Chip kennt seinen
-    Toggle-Link, der seinen Tag zur Auswahl hinzufuegt oder daraus entfernt –
-    die uebrige Auswahl und die Suche bleiben erhalten."""
-    sel = {t.lower() for t in ausgewaehlt}
-    leiste = []
+def _tag_bar(q: str, selected: list[str]) -> list[dict]:
+    """Grouped tag chips for the filter bar. Each chip knows its toggle link,
+    which adds its tag to the selection or removes it -- the rest of the
+    selection and the search stay intact."""
+    sel = {t.lower() for t in selected}
+    bar = []
     for g in core.tag_groups(only_used=True):
         chips = []
         for name in g["tags"]:
             on = name.lower() in sel
-            neu = ([t for t in ausgewaehlt if t.lower() != name.lower()]
-                   if on else ausgewaehlt + [name])
-            chips.append({"name": name, "on": on, "href": _filter_href(q, neu)})
-        leiste.append({"label": g["label"], "chips": chips})
-    return leiste
+            new = ([t for t in selected if t.lower() != name.lower()]
+                   if on else selected + [name])
+            chips.append({"name": name, "on": on, "href": _filter_href(q, new)})
+        bar.append({"label": g["label"], "chips": chips})
+    return bar
 
 
-# --- Seiten -----------------------------------------------------------------
+# --- Pages ------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, q: str = "", tag: list[str] = Query(default=[])):
-    recipes = sorted(core.search(query=q, tags=tag), key=lambda r: r.titel.lower())
+    recipes = sorted(core.search(query=q, tags=tag), key=lambda r: r.title.lower())
     return templates.TemplateResponse(request, "list.html", {
-        "nav": "rezepte", "titel": "Rezepte",
+        "nav": "recipes", "title": "Rezepte",
         "recipes": recipes, "q": q,
-        "tag_leiste": _tag_leiste(q, tag),
-        "ausgewaehlt": bool(tag),
+        "tag_bar": _tag_bar(q, tag),
+        "selected": bool(tag),
         "reset_href": _filter_href(q, []),
     })
 
 
-@app.get("/rezept/{slug}", response_class=HTMLResponse)
-def rezept(request: Request, slug: str):
+@app.get("/recipe/{slug}", response_class=HTMLResponse)
+def recipe_detail(request: Request, slug: str):
     r = core.get(slug)
     if r is None:
         raise StarletteHTTPException(status_code=404)
     return templates.TemplateResponse(request, "recipe.html", {
-        "nav": "rezepte", "titel": r.titel,
-        "r": r, "inhalt_html": _render(r.inhalt()),
+        "nav": "recipes", "title": r.title,
+        "r": r, "content_html": _render(r.content()),
     })
 
 
-@app.get("/neu", response_class=HTMLResponse)
-def neu_form(request: Request):
-    form = {"titel": "", "tags": "", "dauer": "", "portionen": "",
-            "inhalt": "## Zutaten\n\n- \n\n## Zubereitung\n\n1. "}
+@app.get("/new", response_class=HTMLResponse)
+def new_form(request: Request):
+    form = {"title": "", "tags": "", "duration": "", "servings": "",
+            "content": "## Zutaten\n\n- \n\n## Zubereitung\n\n1. "}
     return templates.TemplateResponse(request, "form.html", {
-        "nav": "neu", "titel": "Neues Rezept",
-        "r": None, "form": form, "form_action": "/neu",
+        "nav": "new", "title": "Neues Rezept",
+        "r": None, "form": form, "form_action": "/new",
     })
 
 
-@app.post("/neu")
-def neu_speichern(request: Request, titel: str = Form(...), tags: str = Form(""),
-                  dauer: str = Form(""), portionen: str = Form(""),
-                  inhalt: str = Form("")):
-    content = f"# {titel.strip()}\n\n{inhalt.strip()}\n"
+@app.post("/new")
+def create(request: Request, title: str = Form(...), tags: str = Form(""),
+           duration: str = Form(""), servings: str = Form(""),
+           content: str = Form("")):
+    body = f"# {title.strip()}\n\n{content.strip()}\n"
     try:
-        r = core.add_recipe(titel.strip(), tags=_tags(tags),
-                            dauer_minuten=_int_or_none(dauer),
-                            portionen=_int_or_none(portionen), inhalt=content)
+        r = core.add_recipe(title.strip(), tags=_tags(tags),
+                            duration_min=_int_or_none(duration),
+                            servings=_int_or_none(servings), content=body)
     except ValueError as e:
-        form = {"titel": titel, "tags": tags, "dauer": dauer,
-                "portionen": portionen, "inhalt": inhalt.strip()}
+        form = {"title": title, "tags": tags, "duration": duration,
+                "servings": servings, "content": content.strip()}
         return templates.TemplateResponse(request, "form.html", {
-            "nav": "neu", "titel": "Neues Rezept",
-            "r": None, "form": form, "form_action": "/neu", "fehler": str(e),
+            "nav": "new", "title": "Neues Rezept",
+            "r": None, "form": form, "form_action": "/new", "error": str(e),
         }, status_code=400)
-    return RedirectResponse(f"/rezept/{r.slug}", status_code=303)
+    return RedirectResponse(f"/recipe/{r.slug}", status_code=303)
 
 
-@app.get("/rezept/{slug}/bearbeiten", response_class=HTMLResponse)
-def bearbeiten_form(request: Request, slug: str):
+@app.get("/recipe/{slug}/edit", response_class=HTMLResponse)
+def edit_form(request: Request, slug: str):
     r = core.get(slug)
     if r is None:
         raise StarletteHTTPException(status_code=404)
-    form = {"titel": r.titel, "tags": ", ".join(r.tags),
-            "dauer": r.dauer_minuten or "", "portionen": r.portionen or "",
-            "inhalt": _split_title(r.inhalt())}
+    form = {"title": r.title, "tags": ", ".join(r.tags),
+            "duration": r.duration_min or "", "servings": r.servings or "",
+            "content": _split_title(r.content())}
     return templates.TemplateResponse(request, "form.html", {
-        "nav": "rezepte", "titel": f"{r.titel} bearbeiten",
-        "r": r, "form": form, "form_action": f"/rezept/{slug}/bearbeiten",
+        "nav": "recipes", "title": f"{r.title} bearbeiten",
+        "r": r, "form": form, "form_action": f"/recipe/{slug}/edit",
     })
 
 
-@app.post("/rezept/{slug}/bearbeiten")
-def bearbeiten_speichern(slug: str, titel: str = Form(...), tags: str = Form(""),
-                         dauer: str = Form(""), portionen: str = Form(""),
-                         inhalt: str = Form("")):
-    content = f"# {titel.strip()}\n\n{inhalt.strip()}\n"
+@app.post("/recipe/{slug}/edit")
+def update(slug: str, title: str = Form(...), tags: str = Form(""),
+           duration: str = Form(""), servings: str = Form(""),
+           content: str = Form("")):
+    body = f"# {title.strip()}\n\n{content.strip()}\n"
     try:
-        core.update_recipe(slug, titel=titel.strip(), tags=_tags(tags),
-                           dauer_minuten=_int_or_none(dauer),
-                           portionen=_int_or_none(portionen), inhalt=content)
+        core.update_recipe(slug, title=title.strip(), tags=_tags(tags),
+                           duration_min=_int_or_none(duration),
+                           servings=_int_or_none(servings), content=body)
     except ValueError:
         raise StarletteHTTPException(status_code=404)
-    return RedirectResponse(f"/rezept/{slug}", status_code=303)
+    return RedirectResponse(f"/recipe/{slug}", status_code=303)
 
 
-@app.post("/rezept/{slug}/gekocht")
-def gekocht(slug: str):
+@app.post("/recipe/{slug}/cooked")
+def mark_cooked(slug: str):
     try:
         core.log_cooked(slug)
     except ValueError:
         raise StarletteHTTPException(status_code=404)
-    return RedirectResponse(f"/rezept/{slug}", status_code=303)
+    return RedirectResponse(f"/recipe/{slug}", status_code=303)
 
 
-@app.post("/rezept/{slug}/loeschen")
-def loeschen(slug: str):
+@app.post("/recipe/{slug}/delete")
+def delete_recipe_route(slug: str):
     try:
         core.delete_recipe(slug)
     except ValueError:
@@ -173,113 +174,105 @@ def loeschen(slug: str):
     return RedirectResponse("/", status_code=303)
 
 
-@app.get("/vorschlaege", response_class=HTMLResponse)
-def vorschlaege(request: Request, days: int = 7):
+@app.get("/suggestions", response_class=HTMLResponse)
+def suggestions(request: Request, days: int = 7):
     return templates.TemplateResponse(request, "suggest.html", {
-        "nav": "vorschlaege", "titel": "Was koche ich?",
-        "kandidaten": core.suggest(days=days), "days": days,
+        "nav": "suggestions", "title": "Was koche ich?",
+        "candidates": core.suggest(days=days), "days": days,
     })
 
 
-@app.get("/logbuch", response_class=HTMLResponse)
-def logbuch(request: Request):
-    eintraege = list(reversed(core.load_log()))
-    titel_map = {r.slug: r.titel for r in core.load_recipes()}
+@app.get("/log", response_class=HTMLResponse)
+def log_page(request: Request):
+    entries = list(reversed(core.load_log()))
+    title_map = {r.slug: r.title for r in core.load_recipes()}
     return templates.TemplateResponse(request, "log.html", {
-        "nav": "logbuch", "titel": "Logbuch",
-        "eintraege": eintraege, "titel_map": titel_map,
+        "nav": "log", "title": "Logbuch",
+        "entries": entries, "title_map": title_map,
     })
 
 
-# --- Einkaufsliste ----------------------------------------------------------
+# --- Shopping list ----------------------------------------------------------
 
-@app.get("/einkauf", response_class=HTMLResponse)
-def einkauf(request: Request):
-    items = core.einkauf_list()
-    offen = [i for i in items if not i.checked]
-    erledigt = [i for i in items if i.checked]
-    return templates.TemplateResponse(request, "einkauf.html", {
-        "nav": "einkauf", "titel": "Einkaufsliste",
-        "offen": offen, "erledigt": erledigt,
+@app.get("/shopping", response_class=HTMLResponse)
+def shopping_page(request: Request):
+    items = core.shopping_list()
+    open_items = [i for i in items if not i.checked]
+    done_items = [i for i in items if i.checked]
+    return templates.TemplateResponse(request, "shopping.html", {
+        "nav": "shopping", "title": "Einkaufsliste",
+        "open_items": open_items, "done_items": done_items,
     })
 
 
-@app.post("/einkauf/add")
-def einkauf_add(text: str = Form(...), menge: str = Form("")):
+@app.post("/shopping/add")
+def shopping_add_route(text: str = Form(...), quantity: str = Form("")):
     if text.strip():
-        core.einkauf_add(text.strip(), menge=menge.strip())
-    return RedirectResponse("/einkauf", status_code=303)
+        core.shopping_add(text.strip(), quantity=quantity.strip())
+    return RedirectResponse("/shopping", status_code=303)
 
 
-@app.post("/einkauf/{item_id}/toggle")
-def einkauf_toggle(item_id: str):
+@app.post("/shopping/{item_id}/toggle")
+def shopping_toggle_route(item_id: str):
     try:
-        core.einkauf_toggle(item_id)
+        core.shopping_toggle(item_id)
     except ValueError:
         raise StarletteHTTPException(status_code=404)
-    return RedirectResponse("/einkauf", status_code=303)
+    return RedirectResponse("/shopping", status_code=303)
 
 
-@app.post("/einkauf/{item_id}/remove")
-def einkauf_remove(item_id: str):
+@app.post("/shopping/{item_id}/remove")
+def shopping_remove_route(item_id: str):
     try:
-        core.einkauf_remove(item_id)
+        core.shopping_remove(item_id)
     except ValueError:
         raise StarletteHTTPException(status_code=404)
-    return RedirectResponse("/einkauf", status_code=303)
+    return RedirectResponse("/shopping", status_code=303)
 
 
-@app.post("/einkauf/clear")
-def einkauf_clear():
-    core.einkauf_clear_done()
-    return RedirectResponse("/einkauf", status_code=303)
+@app.post("/shopping/clear")
+def shopping_clear_route():
+    core.shopping_clear_done()
+    return RedirectResponse("/shopping", status_code=303)
 
 
-@app.post("/rezept/{slug}/einkauf")
-def rezept_einkauf(slug: str):
+@app.post("/recipe/{slug}/shopping")
+def recipe_to_shopping(slug: str):
     try:
-        core.einkauf_add_rezept(slug)
+        core.shopping_add_recipe(slug)
     except ValueError:
         raise StarletteHTTPException(status_code=404)
-    return RedirectResponse("/einkauf", status_code=303)
+    return RedirectResponse("/shopping", status_code=303)
 
 
-# --- Einkauf-Sync-API (Phase 2; Kontrakt: docs/sync-kontrakt.md) -------------
-# Voll-State-Sync als JSON fuer die PWA. Implementierung: Subagent 2A.
+# --- Shopping sync API (contract: docs/sync-kontrakt.md) --------------------
+# Full-state sync as JSON for the PWA.
 
-@app.get("/api/einkauf")
-def api_einkauf_get():
-    """Alle Items inkl. Tombstones als {"items": [<item-dict>, ...]}.
+@app.get("/api/shopping")
+def api_shopping_get():
+    """All items incl. tombstones as {"items": [<item-dict>, ...]}.
 
-    Read-only-Ausgangsstand fuer die PWA und fuer Agents/Skripte.
-    Implementierung (2A): JSONResponse({"items": [i.to_dict() for i in
-    core.einkauf_load()]}).
-    """
-    return JSONResponse({"items": [i.to_dict() for i in core.einkauf_load()]})
+    Read-only starting point for the PWA and for agents/scripts."""
+    return JSONResponse({"items": [i.to_dict() for i in core.shopping_load()]})
 
 
-@app.post("/api/einkauf/sync")
-async def api_einkauf_sync(request: Request):
-    """Voll-State-Sync. Body: {"items": [<item-dict>, ...]} (lokaler Stand des
-    Clients). Antwort: {"items": [...]} = serverseitig gemergter Gesamtstand
-    (core.einkauf_merge, "letzter gewinnt" + Tombstones).
-
-    Implementierung (2A): body = await request.json();
-    merged = core.einkauf_merge(body.get("items", []));
-    return JSONResponse({"items": [i.to_dict() for i in merged]}).
-    """
+@app.post("/api/shopping/sync")
+async def api_shopping_sync(request: Request):
+    """Full-state sync. Body: {"items": [<item-dict>, ...]} (the client's local
+    state). Response: {"items": [...]} = server-side merged total state
+    (core.shopping_merge, "last writer wins" + tombstones)."""
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "invalid JSON"}, status_code=400)
-    merged = core.einkauf_merge(body.get("items", []))
+    merged = core.shopping_merge(body.get("items", []))
     return JSONResponse({"items": [i.to_dict() for i in merged]})
 
 
-# --- PWA: Service-Worker am Root ausliefern ---------------------------------
-# Die Datei liegt unter static/, der SW MUSS aber vom Root aus registriert
-# werden, sonst ist sein Scope nur /static/ und er kann /einkauf & Co. nicht
-# offline bedienen.
+# --- PWA: serve the service worker from the root ----------------------------
+# The file lives under static/, but the SW MUST be registered from the root,
+# otherwise its scope is only /static/ and it cannot serve /shopping & co.
+# offline.
 
 @app.get("/sw.js", include_in_schema=False)
 def service_worker():
@@ -291,6 +284,6 @@ def service_worker():
 async def http_exception(request: Request, exc: StarletteHTTPException):
     if exc.status_code == 404:
         return templates.TemplateResponse(request, "404.html", {
-            "nav": "", "titel": "Nicht gefunden",
+            "nav": "", "title": "Nicht gefunden",
         }, status_code=404)
     return PlainTextResponse(str(exc.detail or exc.status_code), status_code=exc.status_code)

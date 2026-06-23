@@ -11,12 +11,12 @@
     <button type="submit">Suchen</button>
   </div>
   <div class="tagfilter" id="tagfilter">
-    <a href="{{ reset_href }}" class="tagchip tagchip-all {{ 'is-on' if not ausgewaehlt else '' }}">Alle</a>
-    {% for gruppe in tag_leiste %}
+    <a href="{{ reset_href }}" class="tagchip tagchip-all {{ 'is-on' if not selected else '' }}">Alle</a>
+    {% for group in tag_bar %}
     <div class="taggroup">
-      <span class="taggroup-label">{{ gruppe.label }}</span>
+      <span class="taggroup-label">{{ group.label }}</span>
       <div class="tagbar">
-        {% for chip in gruppe.chips %}
+        {% for chip in group.chips %}
         <a href="{{ chip.href }}" class="tagchip {{ 'is-on' if chip.on else '' }}">{{ chip.name }}</a>
         {% endfor %}
       </div>
@@ -30,14 +30,14 @@
 <ul class="cards">
   {% for r in recipes %}
   <li class="card" style="--i: {{ loop.index0 }}">
-    <a href="/rezept/{{ r.slug }}">
+    <a href="/recipe/{{ r.slug }}">
       <div class="card-top">
-        {% if r.dauer_minuten %}<span class="card-time">{{ r.dauer_minuten }} min</span>{% endif %}
+        {% if r.duration_min %}<span class="card-time">{{ r.duration_min }} min</span>{% endif %}
       </div>
-      <h2 class="card-title">{{ r.titel }}</h2>
+      <h2 class="card-title">{{ r.title }}</h2>
       <div class="card-meta">
-        {% if r.portionen %}<span>{{ r.portionen }} Portionen</span>{% endif %}
-        {% if r.zuletzt_gekocht %}<span>· zuletzt {{ r.zuletzt_gekocht }}</span>{% endif %}
+        {% if r.servings %}<span>{{ r.servings }} Portionen</span>{% endif %}
+        {% if r.last_cooked %}<span>· zuletzt {{ r.last_cooked }}</span>{% endif %}
       </div>
       {% if r.tags %}
       <div class="card-tags">
@@ -51,8 +51,8 @@
 {% else %}
 <div class="empty">
   <p class="empty-emoji">🍅</p>
-  <p>Keine Rezepte gefunden{% if q or ausgewaehlt %} für diese Suche{% endif %}.</p>
-  <a class="btn" href="/neu">Erstes Rezept anlegen</a>
+  <p>Keine Rezepte gefunden{% if q or selected %} für diese Suche{% endif %}.</p>
+  <a class="btn" href="/new">Erstes Rezept anlegen</a>
 </div>
 {% endif %}
 </div>

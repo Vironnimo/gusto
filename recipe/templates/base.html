@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ titel }} · Gusto</title>
+  <title>{{ title }} · Gusto</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='88'%3E%F0%9F%93%96%3C/text%3E%3C/svg%3E">
   <link rel="manifest" href="/static/manifest.webmanifest">
   <meta name="theme-color" content="#bf4528">
@@ -27,11 +27,11 @@
       <span class="brand-text">Gusto</span>
     </a>
     <nav class="nav">
-      <a href="/" class="{{ 'is-active' if nav == 'rezepte' else '' }}">Rezepte</a>
-      <a href="/vorschlaege" class="{{ 'is-active' if nav == 'vorschlaege' else '' }}">Vorschläge</a>
-      <a href="/einkauf" class="{{ 'is-active' if nav == 'einkauf' else '' }}">Einkauf</a>
-      <a href="/logbuch" class="{{ 'is-active' if nav == 'logbuch' else '' }}">Logbuch</a>
-      <a href="/neu" class="nav-cta">＋ Neu</a>
+      <a href="/" class="{{ 'is-active' if nav == 'recipes' else '' }}">Rezepte</a>
+      <a href="/suggestions" class="{{ 'is-active' if nav == 'suggestions' else '' }}">Vorschläge</a>
+      <a href="/shopping" class="{{ 'is-active' if nav == 'shopping' else '' }}">Einkauf</a>
+      <a href="/log" class="{{ 'is-active' if nav == 'log' else '' }}">Logbuch</a>
+      <a href="/new" class="nav-cta">＋ Neu</a>
     </nav>
   </header>
   <main class="wrap">

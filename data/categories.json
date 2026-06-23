@@ -1,18 +1,34 @@
 {
-  "kueche": {
+  "cuisine": {
     "label": "Küche",
-    "tags": ["italienisch", "tuerkisch", "indisch"]
+    "tags": [
+      "italienisch",
+      "tuerkisch",
+      "indisch"
+    ]
   },
-  "art": {
+  "dish_type": {
     "label": "Art",
-    "tags": ["pizza", "pasta"]
+    "tags": [
+      "pizza",
+      "pasta"
+    ]
   },
-  "ernaehrung": {
+  "diet": {
     "label": "Ernährung",
-    "tags": ["vegetarisch", "vegan", "halal"]
+    "tags": [
+      "vegetarisch",
+      "vegan",
+      "halal"
+    ]
   },
-  "eigenschaft": {
+  "trait": {
     "label": "Eigenschaft",
-    "tags": ["schnell", "einfach", "guenstig", "ofen"]
+    "tags": [
+      "schnell",
+      "einfach",
+      "guenstig",
+      "ofen"
+    ]
   }
 }

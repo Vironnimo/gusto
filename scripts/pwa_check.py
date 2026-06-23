@@ -1,17 +1,17 @@
-"""PWA-/Offline-/Sync-Check der Einkaufsliste mit Playwright.
+"""PWA / offline / sync check of the shopping list with Playwright.
 
-Ergaenzt scripts/browser_check.py um die Phase-2-Flows (PWA + Offline + Sync):
-- Sync-API (GET /api/einkauf, POST /api/einkauf/sync, "letzter gewinnt")
-- Offline: online laden -> set_offline(True) -> Haekchen optimistisch ->
-  wieder online -> Sync prueft, dass die Aenderung am Server ankommt
-- Zwei-Geraete-Merge (zwei Browser-Kontexte = zwei localStorage)
-- Manifest verlinkt/gueltig + Service-Worker ausgeliefert/aktiv + Offline-Reload
-  aus dem SW-Cache
+Extends scripts/browser_check.py with the phase-2 flows (PWA + offline + sync):
+- sync API (GET /api/shopping, POST /api/shopping/sync, "last writer wins")
+- offline: load online -> set_offline(True) -> tick optimistically -> back
+  online -> sync verifies the change reaches the server
+- two-device merge (two browser contexts = two localStorage)
+- manifest linked/valid + service worker served/active + offline reload from the
+  SW cache
 
-Wie browser_check.py laeuft alles gegen eine WEGWERF-Kopie der Daten
-(RECIPE_HOME -> .testdata-pwa); die echten Daten bleiben unberuehrt.
+Like browser_check.py everything runs against a THROWAWAY copy of the data
+(RECIPE_HOME -> .testdata-pwa); the real data stays untouched.
 
-Aufruf:  .venv/Scripts/python.exe scripts/pwa_check.py
+Usage:  .venv/Scripts/python.exe scripts/pwa_check.py
 """
 import json
 import os
@@ -36,9 +36,9 @@ ROOT = Path(__file__).resolve().parent.parent
 TESTDATA = ROOT / ".testdata-pwa"
 PORT = "8012"
 BASE = f"http://127.0.0.1:{PORT}"
-EINKAUF = TESTDATA / "data" / "einkaufsliste.json"
+SHOPPING = TESTDATA / "data" / "shopping_list.json"
 
-# --- frische Wegwerf-Daten ---
+# --- fresh throwaway data ---
 if TESTDATA.exists():
     shutil.rmtree(TESTDATA)
 TESTDATA.mkdir()
@@ -71,33 +71,33 @@ def wait_up(timeout=40):
             time.sleep(0.2)
     return False
 
-# --- Helfer ---------------------------------------------------------------
+# --- Helpers --------------------------------------------------------------
 
 def past_iso():
-    """Ein klar in der Vergangenheit liegender, serverkonformer Zeitstempel,
-    damit spaetere Client-Aenderungen beim Merge sicher gewinnen."""
+    """A clearly-in-the-past, server-compatible timestamp so later client
+    changes reliably win on merge."""
     return "2026-01-01T00:00:00Z"
 
 def now_iso():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 def mk(text, ts):
-    return {"id": text.lower(), "text": text, "menge": "", "checked": False,
-            "quelle": None, "erstellt_am": ts, "geaendert_am": ts, "geloescht": False}
+    return {"id": text.lower(), "text": text, "quantity": "", "checked": False,
+            "source": None, "created_at": ts, "updated_at": ts, "deleted": False}
 
-def reset_einkauf():
-    EINKAUF.write_text('{"items": []}\n', encoding="utf-8")
+def reset_shopping():
+    SHOPPING.write_text('{"items": []}\n', encoding="utf-8")
 
-def seed_einkauf(items):
-    EINKAUF.write_text(json.dumps({"items": items}, ensure_ascii=False), encoding="utf-8")
+def seed_shopping(items):
+    SHOPPING.write_text(json.dumps({"items": items}, ensure_ascii=False), encoding="utf-8")
 
 def api_get():
-    with urllib.request.urlopen(BASE + "/api/einkauf") as r:
+    with urllib.request.urlopen(BASE + "/api/shopping") as r:
         return json.loads(r.read())["items"]
 
 def api_sync(items):
     req = urllib.request.Request(
-        BASE + "/api/einkauf/sync",
+        BASE + "/api/shopping/sync",
         data=json.dumps({"items": items}).encode("utf-8"),
         headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req) as r:
@@ -134,92 +134,92 @@ def sw_ready(page, timeout_ms=6000):
 
 try:
     if not wait_up():
-        print("!! Server nicht erreichbar (uvicorn-Start fehlgeschlagen)")
+        print("!! server not reachable (uvicorn start failed)")
         raise SystemExit(2)
 
-    # --- 1) Sync-API direkt --------------------------------------------------
-    # Strikt steigende Zeitstempel, damit "letzter gewinnt" deterministisch ist.
-    reset_einkauf()
-    check(api_get() == [], "GET /api/einkauf: leere Liste am Start")
+    # --- 1) sync API directly ------------------------------------------------
+    # Strictly increasing timestamps so "last writer wins" is deterministic.
+    reset_shopping()
+    check(api_get() == [], "GET /api/shopping: empty list at start")
 
     def itm(ts, **kw):
-        base = {"id": "milch", "text": "Milch", "menge": "", "checked": False,
-                "quelle": None, "erstellt_am": ts, "geaendert_am": ts,
-                "geloescht": False}
+        base = {"id": "milch", "text": "Milch", "quantity": "", "checked": False,
+                "source": None, "created_at": ts, "updated_at": ts,
+                "deleted": False}
         base.update(kw)
         return base
 
     merged = api_sync([itm("2026-06-23T12:00:01Z")])
-    check(len(merged) == 1 and merged[0]["text"] == "Milch", "POST sync: neues Item uebernommen")
+    check(len(merged) == 1 and merged[0]["text"] == "Milch", "POST sync: new item taken over")
     merged = api_sync([itm("2026-06-23T12:00:02Z", checked=True)])
-    check(any(i["id"] == "milch" and i["checked"] for i in merged), "POST sync: neuere Version gewinnt")
+    check(any(i["id"] == "milch" and i["checked"] for i in merged), "POST sync: newer version wins")
     merged = api_sync([itm("2026-06-23T12:00:00Z", checked=False)])
-    check(any(i["id"] == "milch" and i["checked"] for i in merged), "POST sync: aeltere Version verliert")
-    merged = api_sync([itm("2026-06-23T12:00:03Z", geloescht=True)])
-    check(any(i["id"] == "milch" and i["geloescht"] for i in merged), "POST sync: Tombstone propagiert")
+    check(any(i["id"] == "milch" and i["checked"] for i in merged), "POST sync: older version loses")
+    merged = api_sync([itm("2026-06-23T12:00:03Z", deleted=True)])
+    check(any(i["id"] == "milch" and i["deleted"] for i in merged), "POST sync: tombstone propagates")
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
 
-        # --- 2) Offline: optimistisch abhaken, online -> Sync ----------------
-        reset_einkauf()
-        seed_einkauf([mk("Milch", past_iso()), mk("Brot", past_iso())])
+        # --- 2) offline: tick optimistically, online -> sync -----------------
+        reset_shopping()
+        seed_shopping([mk("Milch", past_iso()), mk("Brot", past_iso())])
         ctx = browser.new_context()
         page = ctx.new_page()
-        page.goto(BASE + "/einkauf", wait_until="networkidle")
-        check(wait_count(page, "#eink-client .eink-item", 2), "Online: 2 Items vom Server geladen")
+        page.goto(BASE + "/shopping", wait_until="networkidle")
+        check(wait_count(page, "#shop-client .shop-item", 2), "online: 2 items loaded from server")
 
         ctx.set_offline(True)
-        page.locator("#eink-client .eink-group:not(.eink-group-done) .eink-box").first.click()
-        check(wait_count(page, "#eink-client .eink-group-done .eink-item", 1),
-              "Offline: Haekchen optimistisch gesetzt (UI)")
+        page.locator("#shop-client .shop-group:not(.shop-group-done) .shop-box").first.click()
+        check(wait_count(page, "#shop-client .shop-group-done .shop-item", 1),
+              "offline: checkmark set optimistically (UI)")
         check(all(not i["checked"] for i in api_get()),
-              "Offline: Server noch unveraendert (kein Sync)")
+              "offline: server still unchanged (no sync)")
 
         ctx.set_offline(False)
         check(wait_server(lambda its: any(i["checked"] for i in its)),
-              "Wieder online: Haekchen zum Server gesynct")
+              "back online: checkmark synced to server")
         ctx.close()
 
-        # --- 3) Zwei-Geraete-Merge (zwei Kontexte = zwei localStorage) -------
-        reset_einkauf()
+        # --- 3) two-device merge (two contexts = two localStorage) -----------
+        reset_shopping()
         ca = browser.new_context(); a = ca.new_page()
         cb = browser.new_context(); b = cb.new_page()
-        a.goto(BASE + "/einkauf", wait_until="networkidle")
-        b.goto(BASE + "/einkauf", wait_until="networkidle")
+        a.goto(BASE + "/shopping", wait_until="networkidle")
+        b.goto(BASE + "/shopping", wait_until="networkidle")
 
-        a.fill("#eink-client input[name=text]", "Apfel")
-        a.locator("#eink-client form.eink-add button").click()
+        a.fill("#shop-client input[name=text]", "Apfel")
+        a.locator("#shop-client form.shop-add button").click()
         check(wait_server(lambda its: any(i["text"] == "Apfel" for i in its)),
-              "Geraet A: 'Apfel' am Server")
+              "device A: 'Apfel' on server")
 
-        b.fill("#eink-client input[name=text]", "Banane")
-        b.locator("#eink-client form.eink-add button").click()
+        b.fill("#shop-client input[name=text]", "Banane")
+        b.locator("#shop-client form.shop-add button").click()
         check(wait_server(lambda its: any(i["text"] == "Banane" for i in its)),
-              "Geraet B: 'Banane' am Server")
+              "device B: 'Banane' on server")
 
         a.reload(wait_until="networkidle")
         b.reload(wait_until="networkidle")
-        check(wait_count(a, "#eink-client .eink-item", 2), "Geraet A sieht beide Items")
-        check(wait_count(b, "#eink-client .eink-item", 2), "Geraet B sieht beide Items")
-        check("Banane" in a.content(), "Geraet A sieht 'Banane' (von B)")
-        check("Apfel" in b.content(), "Geraet B sieht 'Apfel' (von A)")
+        check(wait_count(a, "#shop-client .shop-item", 2), "device A sees both items")
+        check(wait_count(b, "#shop-client .shop-item", 2), "device B sees both items")
+        check("Banane" in a.content(), "device A sees 'Banane' (from B)")
+        check("Apfel" in b.content(), "device B sees 'Apfel' (from A)")
         ca.close(); cb.close()
 
-        # --- 4) Manifest + Service-Worker ------------------------------------
+        # --- 4) manifest + service worker ------------------------------------
         cp = browser.new_context(); pg = cp.new_page()
-        pg.goto(BASE + "/einkauf", wait_until="networkidle")
-        check(pg.locator("link[rel=manifest]").count() == 1, "Manifest ist verlinkt")
+        pg.goto(BASE + "/shopping", wait_until="networkidle")
+        check(pg.locator("link[rel=manifest]").count() == 1, "manifest is linked")
         with urllib.request.urlopen(BASE + "/static/manifest.webmanifest") as r:
             man = json.loads(r.read())
-        check(man.get("start_url") == "/einkauf" and len(man.get("icons", [])) >= 2,
-              "Manifest gueltig (start_url + Icons)")
+        check(man.get("start_url") == "/shopping" and len(man.get("icons", [])) >= 2,
+              "manifest valid (start_url + icons)")
         with urllib.request.urlopen(BASE + "/static/sw.js") as r:
             sw = r.read().decode("utf-8")
-        check("addEventListener" in sw and "caches" in sw, "Service-Worker wird ausgeliefert")
-        check(sw_ready(pg, 8000) is True, "Service-Worker registriert + aktiv")
+        check("addEventListener" in sw and "caches" in sw, "service worker is served")
+        check(sw_ready(pg, 8000) is True, "service worker registered + active")
 
-        # Offline-Reload: Seite kommt aus dem SW-Cache
+        # Offline reload: page comes from the SW cache
         cp.set_offline(True)
         served = False
         try:
@@ -227,9 +227,9 @@ try:
             served = resp is not None and resp.ok
         except Exception:
             served = False
-        check(served, "Offline-Reload wird aus dem SW-Cache bedient")
-        check(pg.locator("#eink-client, #eink-server").count() >= 1,
-              "Offline geladene Seite hat die Einkauf-Struktur")
+        check(served, "offline reload served from the SW cache")
+        check(pg.locator("#shop-client, #shop-server").count() >= 1,
+              "offline-loaded page has the shopping structure")
         cp.close()
 
         browser.close()
@@ -242,8 +242,8 @@ finally:
 
 print()
 if fails:
-    print(f"{len(fails)} CHECK(S) FEHLGESCHLAGEN:")
+    print(f"{len(fails)} CHECK(S) FAILED:")
     for f in fails:
         print("   - " + f)
     sys.exit(1)
-print("ALLE PWA-CHECKS BESTANDEN.")
+print("ALL PWA CHECKS PASSED.")

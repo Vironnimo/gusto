@@ -1,7 +1,7 @@
 {
   "name": "Gusto",
   "short_name": "Gusto",
-  "start_url": "/einkauf",
+  "start_url": "/shopping",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f6efe1",

@@ -6,14 +6,14 @@
   <p class="lede">Was zuletzt auf dem Tisch stand.</p>
 </section>
 
-{% if eintraege %}
+{% if entries %}
 <ol class="timeline">
-  {% for e in eintraege %}
+  {% for e in entries %}
   <li>
-    <span class="tl-date">{{ e.datum }}</span>
+    <span class="tl-date">{{ e.date }}</span>
     <span class="tl-dot"></span>
-    {% if e.slug in titel_map %}
-      <a class="tl-name" href="/rezept/{{ e.slug }}">{{ titel_map[e.slug] }}</a>
+    {% if e.slug in title_map %}
+      <a class="tl-name" href="/recipe/{{ e.slug }}">{{ title_map[e.slug] }}</a>
     {% else %}
       <span class="tl-name tl-gone">{{ e.slug }}</span>
     {% endif %}
