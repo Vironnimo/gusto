@@ -9,7 +9,7 @@ from pathlib import Path
 
 import markdown as md
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -218,6 +218,33 @@ def rezept_einkauf(slug: str):
     except ValueError:
         raise StarletteHTTPException(status_code=404)
     return RedirectResponse("/einkauf", status_code=303)
+
+
+# --- Einkauf-Sync-API (Phase 2; Kontrakt: docs/sync-kontrakt.md) -------------
+# Voll-State-Sync als JSON fuer die PWA. Implementierung: Subagent 2A.
+
+@app.get("/api/einkauf")
+def api_einkauf_get():
+    """Alle Items inkl. Tombstones als {"items": [<item-dict>, ...]}.
+
+    Read-only-Ausgangsstand fuer die PWA und fuer Agents/Skripte.
+    Implementierung (2A): JSONResponse({"items": [i.to_dict() for i in
+    core.einkauf_load()]}).
+    """
+    raise NotImplementedError("Phase 2.1 / Subagent 2A")
+
+
+@app.post("/api/einkauf/sync")
+async def api_einkauf_sync(request: Request):
+    """Voll-State-Sync. Body: {"items": [<item-dict>, ...]} (lokaler Stand des
+    Clients). Antwort: {"items": [...]} = serverseitig gemergter Gesamtstand
+    (core.einkauf_merge, "letzter gewinnt" + Tombstones).
+
+    Implementierung (2A): body = await request.json();
+    merged = core.einkauf_merge(body.get("items", []));
+    return JSONResponse({"items": [i.to_dict() for i in merged]}).
+    """
+    raise NotImplementedError("Phase 2.1 / Subagent 2A")
 
 
 @app.exception_handler(StarletteHTTPException)
