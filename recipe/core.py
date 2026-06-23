@@ -16,8 +16,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import uuid
 from dataclasses import dataclass, field, asdict, fields
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -48,6 +49,10 @@ def log_path() -> Path:
 
 def recipe_file(slug: str) -> Path:
     return recipes_dir() / f"{slug}.md"
+
+
+def einkauf_path() -> Path:
+    return data_dir() / "einkaufsliste.json"
 
 
 # --- Datenmodell ------------------------------------------------------------
@@ -246,3 +251,143 @@ def check() -> dict:
         "verwaiste_dateien": sorted(vorhanden - indexiert),   # .md ohne Index-Eintrag
         "fehlende_dateien": sorted(indexiert - vorhanden),    # Index-Eintrag ohne .md
     }
+
+
+# ===========================================================================
+# Einkaufsliste  (Feature: Einkaufsliste + PWA, siehe docs/plan-einkaufsliste-pwa.md)
+# ===========================================================================
+#
+# KONTRAKT (Phase 0). Datenmodell, Signaturen und Regeln stehen hier fest; die
+# Implementierung folgt in Phase 1 (Subagent 1A) bzw. fuer `einkauf_merge` in
+# Phase 2.1 (Subagent 2A). Bis dahin werfen die Funktionen NotImplementedError.
+#
+# Speicherort:  data/einkaufsliste.json   (Form: {"items": [ <item-dict>, ... ]})
+# Ein Item ist sync-faehig: `geaendert_am` (UTC-ISO) treibt beim Sync
+# "letzter gewinnt", `geloescht` ist ein Tombstone, damit Loeschungen
+# zwischen Geraeten propagieren. NICHTS wird hart geloescht.
+
+
+@dataclass
+class EinkaufItem:
+    """Ein Eintrag auf der Einkaufsliste (sync-faehig)."""
+    id: str
+    text: str                       # z.B. "200 g Spaghetti" (v1: ganze Zutat-Zeile)
+    menge: str = ""                 # optional, v1 meist leer (text enthaelt die Menge)
+    checked: bool = False           # abgehakt?
+    quelle: str | None = None       # slug des Rezepts, aus dem die Zutat stammt
+    erstellt_am: str = ""           # UTC-ISO, z.B. "2026-06-23T18:00:00Z"
+    geaendert_am: str = ""          # UTC-ISO – treibt "letzter gewinnt" beim Sync
+    geloescht: bool = False         # Tombstone fuer Sync (nie hart loeschen)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "EinkaufItem":
+        erlaubt = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in d.items() if k in erlaubt})
+
+
+def _jetzt_iso() -> str:
+    """Aktueller UTC-Zeitstempel als ISO 8601 mit 'Z' (sekundengenau).
+
+    Beispiel: '2026-06-23T18:00:00Z'. ISO-Strings dieser Form sind als Text
+    direkt vergleichbar – genau das braucht der Sync ("letzter gewinnt").
+    """
+    return (datetime.now(timezone.utc).replace(microsecond=0)
+            .isoformat().replace("+00:00", "Z"))
+
+
+def new_id() -> str:
+    """Neue eindeutige Item-id (uuid4-hex)."""
+    return uuid.uuid4().hex
+
+
+# --- Zutaten-Parsing --------------------------------------------------------
+
+def parse_zutaten(inhalt: str) -> list[str]:
+    """Zutaten-Zeilen aus dem Rezept-Markdown extrahieren.
+
+    Regel (v1): Alle Bullet-Items ('-' oder '*') im Abschnitt unter der
+    Ueberschrift '## Zutaten', bis zur naechsten '##'-Ueberschrift. Pro Bullet
+    die GANZE Zeile (ohne Bullet-Zeichen und Rand-Whitespace) als ein Eintrag.
+    Leere Bullets werden uebersprungen. Gibt es keinen Zutaten-Abschnitt, ist
+    das Ergebnis [].
+    """
+    raise NotImplementedError("Phase 1 / Subagent 1A")
+
+
+# --- Laden / Speichern ------------------------------------------------------
+
+def einkauf_load() -> list[EinkaufItem]:
+    """Alle Items aus data/einkaufsliste.json laden – INKLUSIVE Tombstones
+    (geloescht=True). Existiert die Datei nicht, ist das Ergebnis []."""
+    raise NotImplementedError("Phase 1 / Subagent 1A")
+
+
+def einkauf_save(items: list[EinkaufItem]) -> None:
+    """Items atomar nach data/einkaufsliste.json schreiben (nutze _write_json).
+    Dateiform: {"items": [ <item-dict>, ... ]}. Tombstones bleiben erhalten."""
+    raise NotImplementedError("Phase 1 / Subagent 1A")
+
+
+# --- Veraendern -------------------------------------------------------------
+
+def einkauf_add(text: str, menge: str = "", quelle: str | None = None) -> EinkaufItem:
+    """Ein neues Item anlegen, speichern und zurueckgeben. Setzt id (new_id()),
+    erstellt_am und geaendert_am (= _jetzt_iso()), checked=False,
+    geloescht=False."""
+    raise NotImplementedError("Phase 1 / Subagent 1A")
+
+
+def einkauf_add_rezept(slug: str) -> list[EinkaufItem]:
+    """Alle Zutaten eines Rezepts (parse_zutaten auf dessen .md) als Items auf
+    die Liste setzen, quelle=slug. Gibt die NEU hinzugefuegten Items zurueck.
+    ValueError, wenn es kein Rezept mit diesem slug gibt."""
+    raise NotImplementedError("Phase 1 / Subagent 1A")
+
+
+def einkauf_list(include_done: bool = True,
+                 include_deleted: bool = False) -> list[EinkaufItem]:
+    """Sichtbare Items. Tombstones (geloescht) standardmaessig ausgeblendet;
+    include_done=False blendet zusaetzlich erledigte (checked) aus.
+    Reihenfolge: nach erstellt_am aufsteigend (Einfuegereihenfolge)."""
+    raise NotImplementedError("Phase 1 / Subagent 1A")
+
+
+def einkauf_toggle(item_id: str, checked: bool | None = None) -> EinkaufItem:
+    """Erledigt-Haekchen setzen. checked=None schaltet um; sonst wird der Wert
+    gesetzt. Aktualisiert geaendert_am und gibt das Item zurueck.
+    ValueError, wenn die id unbekannt ist oder das Item ein Tombstone ist."""
+    raise NotImplementedError("Phase 1 / Subagent 1A")
+
+
+def einkauf_remove(item_id: str) -> None:
+    """Item als Tombstone markieren: geloescht=True + geaendert_am aktualisieren
+    (NICHT hart aus der Datei loeschen, damit die Loeschung synchronisiert).
+    ValueError, wenn die id unbekannt ist."""
+    raise NotImplementedError("Phase 1 / Subagent 1A")
+
+
+def einkauf_clear_done() -> int:
+    """Alle erledigten (checked, noch nicht Tombstone) Items als Tombstone
+    markieren (geloescht=True + geaendert_am). Gibt die Anzahl der so
+    entfernten Items zurueck."""
+    raise NotImplementedError("Phase 1 / Subagent 1A")
+
+
+# --- Sync (Phase 2) ---------------------------------------------------------
+
+def einkauf_merge(remote_items: list[dict]) -> list[EinkaufItem]:
+    """Voll-State-Sync: remote_items (rohe Item-Dicts vom Client) in die lokale
+    Liste mergen, das Ergebnis speichern und zurueckgeben (inkl. Tombstones).
+
+    Regel "letzter gewinnt": pro id gewinnt die Version mit dem groesseren
+    geaendert_am (die ISO-Strings sind als Text vergleichbar). Bei Gleichstand
+    bleibt die lokale Version. Ids, die nur remote existieren, werden
+    uebernommen; Tombstones (geloescht=True) propagieren wie jede andere
+    Aenderung.
+
+    Hinweis: Erst in Phase 2.1 (Subagent 2A) zu implementieren.
+    """
+    raise NotImplementedError("Phase 2.1 / Subagent 2A")
