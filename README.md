@@ -1,4 +1,4 @@
-# Küchenbuch
+# Gusto
 
 Ein kleines, **markdown-basiertes Rezept-System** zum Selbsthosten – gedacht
 für einen Raspberry Pi im lokalen Netzwerk, erreichbar von jedem Gerät.
@@ -9,7 +9,7 @@ für einen Raspberry Pi im lokalen Netzwerk, erreichbar von jedem Gerät.
   `data/recipes.json`, das Koch-Logbuch in `data/log.json`.
 - **Zwei gleichwertige Oberflächen über demselben Kern** (`recipe/core.py`):
   eine **CLI** (auch für Agents; Anleitung in [CLAUDE.md](CLAUDE.md) und als
-  Skill unter `skill/recipes/`) und eine schöne **Web-UI**. Es gibt kein
+  Skill unter `skill/gusto/`) und eine schöne **Web-UI**. Es gibt kein
   Feature, das nur die eine kann.
 
 ## Installation
@@ -61,17 +61,17 @@ recipe/templates/   Jinja2-Templates
 recipe/static/      CSS + JS
 deploy/             systemd-Unit für den Raspberry Pi
 scripts/            End-to-End-Test der Web-UI (Playwright)
-skill/recipes/      Skill zur Bedienung per CLI (für Agents)
+skill/gusto/      Skill zur Bedienung per CLI (für Agents)
 ```
 
 ## Auf dem Raspberry Pi (Autostart)
 
 1. Projekt nach z.B. `/home/pi/recipes` kopieren, venv anlegen,
    `pip install -e ".[web]"`.
-2. `deploy/kuechenbuch.service` an deine Pfade anpassen und einrichten:
+2. `deploy/gusto.service` an deine Pfade anpassen und einrichten:
    ```bash
-   sudo cp deploy/kuechenbuch.service /etc/systemd/system/
-   sudo systemctl enable --now kuechenbuch
+   sudo cp deploy/gusto.service /etc/systemd/system/
+   sudo systemctl enable --now gusto
    ```
 3. Erreichbar unter `http://<pi-hostname>.local:8000`.
 

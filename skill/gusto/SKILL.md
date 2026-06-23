@@ -1,7 +1,7 @@
 ---
-name: recipes
+name: gusto
 description: >-
-  Operate the Küchenbuch recipe system from the command line to answer cooking
+  Operate the Gusto recipe system from the command line to answer cooking
   questions and manage recipes. Trigger when the user (in the recipes repo)
   asks what to cook or eat ("was soll ich heute essen", "was koche ich heute",
   "what should I cook"), what to make with ingredients on hand ("was mache ich
@@ -13,11 +13,11 @@ description: >-
   parsing.
 ---
 
-# Küchenbuch — Rezept-System per CLI
+# Gusto — Rezept-System per CLI
 
 ## Overview
 
-The Küchenbuch is a self-hosted, markdown-based recipe system. Recipes are
+The Gusto is a self-hosted, markdown-based recipe system. Recipes are
 plain `.md` files; all metadata lives in JSON. The `recipe` CLI is the single
 interface — built so an agent operates it exactly like a human, and every
 command supports `--json`. The system stays deliberately simple: the *reasoning*

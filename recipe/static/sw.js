@@ -1,4 +1,4 @@
-// Service-Worker fuer Kuechenbuch (Einkaufsliste-PWA).
+// Service-Worker fuer Gusto (Einkaufsliste-PWA).
 // Strategie:
 //   install   -> App-Shell precachen + skipWaiting
 //   activate  -> alte Caches loeschen + clients.claim
@@ -6,7 +6,7 @@
 //                /api/...:     network-only (nicht cachen)
 //                sonst GET:    cache-first (Static)
 
-const CACHE = "kuechenbuch-v1";
+const CACHE = "gusto-v1";
 
 const APP_SHELL = [
   "/einkauf",

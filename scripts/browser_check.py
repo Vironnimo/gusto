@@ -76,7 +76,7 @@ try:
 
         # Startseite
         page.goto(BASE, wait_until="networkidle")
-        check("Küchenbuch" in page.content(), "Startseite zeigt die Marke")
+        check("Gusto" in page.content(), "Startseite zeigt die Marke")
         check(page.locator(".card").count() == 3, "3 Rezeptkarten sichtbar")
         page.screenshot(path=str(SHOTS / "01_home.png"), full_page=True)
 

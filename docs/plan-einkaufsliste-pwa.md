@@ -1,7 +1,7 @@
 # Umsetzungsplan: Einkaufsliste + PWA
 
 ## Ziel
-Integrierte Einkaufsliste in Küchenbuch. Zutaten eines Rezepts per Knopf (Web)
+Integrierte Einkaufsliste in Gusto. Zutaten eines Rezepts per Knopf (Web)
 bzw. per CLI/Agent auf die Liste setzen. Unterwegs **offline** nutzbar als
 **PWA**, die zu Hause im LAN mit dem Pi synchronisiert. Der Pi bleibt die
 einzige Quelle der Wahrheit. Datenfluss ist asymmetrisch: *Schreiben* zu Hause

@@ -290,7 +290,7 @@ def cmd_serve(args):
         import uvicorn
     except ImportError:
         sys.exit("Web-Abhaengigkeiten fehlen. Installiere sie mit:  pip install -e .[web]")
-    print(f"Kuechenbuch laeuft auf http://{args.host}:{args.port}  (Strg+C zum Beenden)")
+    print(f"Gusto laeuft auf http://{args.host}:{args.port}  (Strg+C zum Beenden)")
     uvicorn.run("recipe.web:app", host=args.host, port=args.port, reload=args.reload)
 
 

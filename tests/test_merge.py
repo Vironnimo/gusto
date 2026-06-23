@@ -14,7 +14,7 @@ import sys
 import tempfile
 
 # --- Hermetik: RECIPE_HOME auf ein Wegwerf-Verzeichnis, VOR dem Import -------
-os.environ["RECIPE_HOME"] = tempfile.mkdtemp(prefix="kuechenbuch-merge-test-")
+os.environ["RECIPE_HOME"] = tempfile.mkdtemp(prefix="gusto-merge-test-")
 
 # Projektwurzel in den Pfad, damit `recipe` importierbar ist, egal von wo aus
 # das Skript gestartet wird.

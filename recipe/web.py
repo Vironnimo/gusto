@@ -19,7 +19,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import core
 
 BASE = Path(__file__).resolve().parent
-app = FastAPI(title="Kuechenbuch")
+app = FastAPI(title="Gusto")
 app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 

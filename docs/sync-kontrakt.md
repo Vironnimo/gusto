@@ -67,7 +67,7 @@ in `core.einkauf_merge`. Implementieren:
 Beide liefern `application/json` (JSONResponse). Keine HTML-Redirects.
 
 ## Client-Store + Verhalten (Subagent 2C — `recipe/static/einkauf-client.js`, `recipe/templates/einkauf.html`)
-**localStorage-Key:** `kuechenbuch.einkauf`
+**localStorage-Key:** `gusto.einkauf`
 **Wert:** `JSON.stringify({ items: [<item>, ...] })` (gleiches Item-Schema).
 
 **Progressive Enhancement in `einkauf.html`:**
@@ -111,7 +111,7 @@ offen/erledigt gruppieren, nach `erstellt_am` aufsteigend.
 **`recipe/static/manifest.webmanifest`:**
 ```json
 {
-  "name": "Küchenbuch", "short_name": "Küchenbuch",
+  "name": "Gusto", "short_name": "Gusto",
   "start_url": "/einkauf", "scope": "/",
   "display": "standalone",
   "background_color": "#f6efe1", "theme_color": "#bf4528",
@@ -132,7 +132,7 @@ Größe ~55 % der Kantenlänge, im sicheren Bereich für „maskable"). Cremeton
 ok, muss aber nicht.
 
 **`recipe/static/sw.js`** — Service-Worker:
-- Versionierter Cache-Name (z.B. `kuechenbuch-v1`); im `activate` alte Caches
+- Versionierter Cache-Name (z.B. `gusto-v1`); im `activate` alte Caches
   löschen.
 - `install`: App-Shell **precachen** (Liste unten), dann `skipWaiting()`.
 - `fetch`:

@@ -1,4 +1,4 @@
-// einkauf-client.js — Offline-fähiger Client der Küchenbuch-Einkaufsliste.
+// einkauf-client.js — Offline-fähiger Client der Gusto-Einkaufsliste.
 //
 // Rendert die Liste aus localStorage (Quelle der Wahrheit lokal: der Pi),
 // mutiert optimistisch offline und synct im Hintergrund per Voll-State-POST
@@ -10,7 +10,7 @@
 (function () {
   "use strict";
 
-  var STORAGE_KEY = "kuechenbuch.einkauf";
+  var STORAGE_KEY = "gusto.einkauf";
   var SYNC_URL = "/api/einkauf/sync";
 
   // --- localStorage-Anbindung ------------------------------------------------

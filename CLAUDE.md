@@ -1,4 +1,4 @@
-# Küchenbuch — project context for Claude
+# Gusto — project context for Claude
 
 Self-hosted, **markdown-based recipe system** for home use. Goal: it runs on a
 Raspberry Pi and is reachable from any device on the local network. Built to
@@ -29,7 +29,7 @@ days.
    server yourself and give a clickable link — don't just explain how to start it.
 8. **Usage docs exist twice — keep the skill and CLAUDE.md in sync.** The usage
    documentation deliberately lives in two places: here (sections "Usage" /
-   "Typical tasks") AND in the skill under `skill/recipes/`. When the CLI or its
+   "Typical tasks") AND in the skill under `skill/gusto/`. When the CLI or its
    behavior changes, update **both** immediately — the skill must never go stale.
 
 ## Data model
@@ -116,8 +116,8 @@ content into `recipes/<slug>.md` (from code: `core.add_recipe(…, inhalt=…)`)
 - `recipe/web.py` — FastAPI app (server-rendered, Jinja2)
 - `recipe/templates/`, `recipe/static/` — UI + CSS/JS
 - `scripts/browser_check.py` — end-to-end browser test (Playwright)
-- `deploy/kuechenbuch.service` — systemd unit for the Pi
-- `skill/recipes/` — skill (SKILL.md + `references/cli.md`) for operating the
+- `deploy/gusto.service` — systemd unit for the Pi
+- `skill/gusto/` — skill (SKILL.md + `references/cli.md`) for operating the
   system via the CLI; mirrors "Usage" / "Typical tasks" — **keep in sync** (principle 8).
 
 ## Commits
@@ -141,7 +141,7 @@ content into `recipes/<slug>.md` (from code: `core.add_recipe(…, inhalt=…)`)
 
 ## Design
 
-"Küchenbuch": warm cookbook editorial, deliberately not a dashboard. Cream paper
+"Gusto": warm cookbook editorial, deliberately not a dashboard. Cream paper
 with fine grain, paprika red as accent, herb green. Fraunces (display serif) +
 Hanken Grotesk (text). Numbered steps with large serif numerals, cards with a
 staggered fade-in. UI and data fields are German.

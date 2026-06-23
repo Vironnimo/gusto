@@ -1,6 +1,6 @@
 {
-  "name": "Küchenbuch",
-  "short_name": "Küchenbuch",
+  "name": "Gusto",
+  "short_name": "Gusto",
   "start_url": "/einkauf",
   "scope": "/",
   "display": "standalone",

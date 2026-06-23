@@ -1,4 +1,4 @@
-# Küchenbuch CLI — Full Reference
+# Gusto CLI — Full Reference
 
 All commands: `python -m recipe <command>` (or `recipe <command>` after
 `pip install -e .`). Every command accepts `--json` for machine-readable output.

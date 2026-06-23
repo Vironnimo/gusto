@@ -1,4 +1,4 @@
-"""Generiert die PWA-Icons fuer Kuechenbuch.
+"""Generiert die PWA-Icons fuer Gusto.
 
 Vollflaechiger Akzent-Hintergrund (#bf4528) mit zentriertem, cremefarbenem
 Marken-Zeichen (U+2756, schwarze Raute mit Punkt). Groesse ~0.58*Kantenlaenge,
