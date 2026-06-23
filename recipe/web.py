@@ -6,9 +6,10 @@ Entsprechung im Core und damit in der CLI; es gibt kein Web-only-Feature.
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlencode
 
 import markdown as md
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, Query, Request
 from fastapi.responses import (HTMLResponse, RedirectResponse, PlainTextResponse,
                                JSONResponse, FileResponse)
 from fastapi.staticfiles import StaticFiles
@@ -49,18 +50,40 @@ def _tags(s: str | None):
     return [t.strip() for t in (s or "").split(",") if t.strip()]
 
 
-def _alle_tags():
-    return sorted({t for r in core.load_recipes() for t in r.tags})
+def _filter_href(q: str, tags: list[str]) -> str:
+    """Link auf die Rezeptliste mit gegebener Suche + Tag-Auswahl."""
+    params = ([("q", q)] if q else []) + [("tag", t) for t in tags]
+    return "/?" + urlencode(params) if params else "/"
+
+
+def _tag_leiste(q: str, ausgewaehlt: list[str]) -> list[dict]:
+    """Gruppierte Tag-Chips fuer die Filterleiste. Jeder Chip kennt seinen
+    Toggle-Link, der seinen Tag zur Auswahl hinzufuegt oder daraus entfernt –
+    die uebrige Auswahl und die Suche bleiben erhalten."""
+    sel = {t.lower() for t in ausgewaehlt}
+    leiste = []
+    for g in core.tag_groups(only_used=True):
+        chips = []
+        for name in g["tags"]:
+            on = name.lower() in sel
+            neu = ([t for t in ausgewaehlt if t.lower() != name.lower()]
+                   if on else ausgewaehlt + [name])
+            chips.append({"name": name, "on": on, "href": _filter_href(q, neu)})
+        leiste.append({"label": g["label"], "chips": chips})
+    return leiste
 
 
 # --- Seiten -----------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
-def index(request: Request, q: str = "", tag: str = ""):
-    recipes = sorted(core.search(query=q, tag=tag or None), key=lambda r: r.titel.lower())
+def index(request: Request, q: str = "", tag: list[str] = Query(default=[])):
+    recipes = sorted(core.search(query=q, tags=tag), key=lambda r: r.titel.lower())
     return templates.TemplateResponse(request, "list.html", {
         "nav": "rezepte", "titel": "Rezepte",
-        "recipes": recipes, "q": q, "tag": tag, "alle_tags": _alle_tags(),
+        "recipes": recipes, "q": q,
+        "tag_leiste": _tag_leiste(q, tag),
+        "ausgewaehlt": bool(tag),
+        "reset_href": _filter_href(q, []),
     })
 
 

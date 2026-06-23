@@ -25,6 +25,14 @@ def _open_editor(path) -> None:
     subprocess.call([editor, str(path)])
 
 
+def _collect_tags(values) -> list[str]:
+    """--tag kann mehrfach UND kommagetrennt kommen -> flache Tag-Liste."""
+    out: list[str] = []
+    for v in values or []:
+        out.extend(t.strip() for t in v.split(",") if t.strip())
+    return out
+
+
 def _ausgabe_liste(recipes, as_json: bool) -> None:
     if as_json:
         _dump([r.to_dict() for r in recipes])
@@ -47,16 +55,29 @@ def _ausgabe_liste(recipes, as_json: bool) -> None:
 # --- Kommandos --------------------------------------------------------------
 
 def cmd_list(args):
-    recipes = sorted(core.search(tag=args.tag, max_time=args.max_time),
+    recipes = sorted(core.search(tags=_collect_tags(args.tag), max_time=args.max_time),
                      key=lambda r: r.titel.lower())
     _ausgabe_liste(recipes, args.json)
 
 
 def cmd_search(args):
     recipes = sorted(core.search(query=args.query, match=args.match,
-                                 tag=args.tag, max_time=args.max_time),
+                                 tags=_collect_tags(args.tag), max_time=args.max_time),
                      key=lambda r: r.titel.lower())
     _ausgabe_liste(recipes, args.json)
+
+
+def cmd_tags(args):
+    gruppen = core.tag_groups(only_used=not args.all)
+    if args.json:
+        _dump(gruppen)
+        return
+    if not gruppen:
+        print("Keine Tag-Kategorien definiert (data/categories.json fehlt?).")
+        return
+    for g in gruppen:
+        print(f"{g['label']}:")
+        print("  " + (", ".join(g["tags"]) if g["tags"] else "—"))
 
 
 def cmd_show(args):
@@ -141,7 +162,10 @@ def cmd_check(args):
         print("  .md ohne Index-Eintrag:", ", ".join(res["verwaiste_dateien"]))
     if res["fehlende_dateien"]:
         print("  Index-Eintrag ohne .md:", ", ".join(res["fehlende_dateien"]))
-    if not res["verwaiste_dateien"] and not res["fehlende_dateien"]:
+    if res.get("unsortierte_tags"):
+        print("  Tags ohne Kategorie:", ", ".join(res["unsortierte_tags"]))
+    if not (res["verwaiste_dateien"] or res["fehlende_dateien"]
+            or res.get("unsortierte_tags")):
         print("  Alles konsistent.")
 
 
@@ -284,8 +308,12 @@ def build_parser() -> argparse.ArgumentParser:
     base.add_argument("--json", action="store_true",
                       help="Maschinenlesbare Ausgabe (fuer Agents/Skripte).")
 
+    tag_hilfe = ("Nach Tag filtern; mehrfach oder kommagetrennt moeglich "
+                 "(--tag italienisch --tag pizza  bzw.  --tag italienisch,pizza). "
+                 "ODER innerhalb einer Kategorie, UND ueber Kategorien.")
+
     sp = sub.add_parser("list", parents=[base], help="Rezepte auflisten/filtern.")
-    sp.add_argument("--tag", help="Nur Rezepte mit diesem Tag.")
+    sp.add_argument("--tag", action="append", metavar="TAG", help=tag_hilfe)
     sp.add_argument("--max-time", type=int, dest="max_time", help="Max. Dauer (Minuten).")
     sp.set_defaults(func=cmd_list)
 
@@ -294,9 +322,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("query", help='Suchbegriffe, z.B. "linsen kokos".')
     sp.add_argument("--match", choices=["any", "all"], default="any",
                     help="any: irgendein Begriff; all: alle Begriffe.")
-    sp.add_argument("--tag")
+    sp.add_argument("--tag", action="append", metavar="TAG", help=tag_hilfe)
     sp.add_argument("--max-time", type=int, dest="max_time")
     sp.set_defaults(func=cmd_search)
+
+    sp = sub.add_parser("tags", parents=[base],
+                        help="Tag-Kategorien (Facetten) anzeigen.")
+    sp.add_argument("--all", action="store_true",
+                    help="Alle definierten Kategorien/Tags (nicht nur verwendete).")
+    sp.set_defaults(func=cmd_tags)
 
     sp = sub.add_parser("show", parents=[base], help="Ein Rezept ausgeben.")
     sp.add_argument("slug")

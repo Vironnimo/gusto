@@ -80,14 +80,56 @@ try:
         check(page.locator(".card").count() == 3, "3 Rezeptkarten sichtbar")
         page.screenshot(path=str(SHOTS / "01_home.png"), full_page=True)
 
-        # Suche (durchsucht auch Zutaten im Text)
+        # Suche (durchsucht auch Zutaten im Text) – Server-Route (No-JS-Pfad)
         page.goto(BASE + "/?q=kokos", wait_until="networkidle")
         check(page.locator(".card").count() == 1, "Suche 'kokos' -> 1 Treffer (Dal)")
         page.screenshot(path=str(SHOTS / "02_search.png"), full_page=True)
 
-        # Tag-Filter
+        # Live-Suche: tippen aktualisiert ohne Submit (und durchsucht Zutaten)
+        page.goto(BASE, wait_until="networkidle")
+        page.fill("input[name=q]", "kokos")
+        page.wait_for_function("() => document.querySelectorAll('#results .card').length === 1")
+        check(page.locator("#results .card").count() == 1, "Live-Suche 'kokos' -> 1 Treffer (ohne Submit)")
+        check("Linsen-Dal" in page.content(), "Live-Suche findet Zutat im Text (Dal)")
+        page.fill("input[name=q]", "")
+        page.wait_for_function("() => document.querySelectorAll('#results .card').length === 3")
+        check(page.locator("#results .card").count() == 3, "Live-Suche geleert -> wieder 3 Treffer")
+
+        # --- Tag-Filter: Facetten / Mehrfachauswahl ---
+        page.goto(BASE, wait_until="networkidle")
+        check(page.locator(".taggroup").count() >= 3, "Tag-Leiste nach Kategorien gruppiert")
+        check(page.locator(".taggroup-label", has_text="Küche").count() == 1, "Kategorie 'Küche' sichtbar")
+
+        # Einzel-Tag (wie bisher)
         page.goto(BASE + "/?tag=vegan", wait_until="networkidle")
         check(page.locator(".card").count() == 1, "Tag-Filter 'vegan' -> 1 Treffer")
+
+        # ODER innerhalb einer Kategorie (Küche: italienisch ODER indisch)
+        page.goto(BASE + "/?tag=italienisch&tag=indisch", wait_until="networkidle")
+        check(page.locator(".card").count() == 2, "italienisch+indisch (ODER) -> 2 Treffer")
+
+        # UND ueber Kategorien (Küche=italienisch UND Art=pasta)
+        page.goto(BASE + "/?tag=italienisch&tag=pasta", wait_until="networkidle")
+        check(page.locator(".card").count() == 1, "italienisch+pasta (UND) -> 1 Treffer (Carbonara)")
+
+        # UND ueber Kategorien ohne Schnittmenge (vegetarisch UND pasta)
+        page.goto(BASE + "/?tag=vegetarisch&tag=pasta", wait_until="networkidle")
+        check(page.locator(".card").count() == 0, "vegetarisch+pasta (UND) -> 0 Treffer")
+
+        # Per Klick kombinieren (Toggle-Links, Auswahl bleibt erhalten)
+        page.goto(BASE, wait_until="networkidle")
+        page.locator(".tagchip", has_text="indisch").first.click()
+        page.wait_for_load_state("networkidle")
+        check(page.locator(".tagchip.is-on", has_text="indisch").count() == 1, "Klick: 'indisch' aktiv")
+        check(page.locator(".card").count() == 1, "Klick 'indisch' -> 1 Treffer")
+        page.locator(".tagchip", has_text="italienisch").first.click()
+        page.wait_for_load_state("networkidle")
+        check(page.locator(".tagchip.is-on").count() == 2, "Klick: zwei Tags gleichzeitig aktiv")
+        check(page.locator(".card").count() == 2, "indisch+italienisch -> 2 Treffer")
+        page.screenshot(path=str(SHOTS / "02b_tagfilter.png"), full_page=True)
+        page.locator(".tagchip.is-on", has_text="indisch").first.click()
+        page.wait_for_load_state("networkidle")
+        check(page.locator(".card").count() == 1, "'indisch' wieder abgewählt -> 1 Treffer")
 
         # Rezeptseite
         page.goto(BASE, wait_until="networkidle")

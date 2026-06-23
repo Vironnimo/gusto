@@ -47,6 +47,10 @@ def log_path() -> Path:
     return data_dir() / "log.json"
 
 
+def categories_path() -> Path:
+    return data_dir() / "categories.json"
+
+
 def recipe_file(slug: str) -> Path:
     return recipes_dir() / f"{slug}.md"
 
@@ -139,16 +143,80 @@ def _vorlage(titel: str) -> str:
     return f"# {titel}\n\n## Zutaten\n\n- \n\n## Zubereitung\n\n1. \n"
 
 
+# --- Kategorien (Facetten) --------------------------------------------------
+# Tags sind in data/recipes.json bewusst eine flache Liste. Welcher Tag zu
+# welcher Kategorie gehoert, steht zentral in data/categories.json:
+#   { "<key>": {"label": str, "tags": [str, ...]}, ... }
+# Die Reihenfolge im JSON ist die Anzeige-Reihenfolge. Ein Tag ohne Kategorie
+# gilt als "unsortiert" und landet in der gemeinsamen Gruppe "Sonstige".
+
+def load_categories() -> dict:
+    """Kategorien-Definition aus data/categories.json (Reihenfolge erhalten).
+    Fehlt die Datei, ist das Ergebnis {} – dann ist jeder Tag unsortiert."""
+    p = categories_path()
+    if not p.exists():
+        return {}
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def _tag_to_category(categories: dict | None = None) -> dict[str, str]:
+    """Inverse Zuordnung tag(lowercase) -> kategorie-key."""
+    categories = load_categories() if categories is None else categories
+    return {t.lower(): key
+            for key, cat in categories.items()
+            for t in cat.get("tags", [])}
+
+
+def tag_category(tag: str, categories: dict | None = None) -> str | None:
+    """Kategorie-Key eines Tags, oder None wenn unsortiert."""
+    return _tag_to_category(categories).get(tag.lower())
+
+
+def tag_groups(only_used: bool = True) -> list[dict]:
+    """Kategorien mit ihren Tags in Anzeige-Reihenfolge – fuer die Tag-Leiste
+    und `recipe tags`. Gibt [{"key","label","tags":[...]}, ...] zurueck.
+
+    only_used=True: nur Tags, die in Rezepten vorkommen; leere Kategorien
+    entfallen; tatsaechlich verwendete Tags ohne Kategorie kommen als Gruppe
+    "Sonstige" ans Ende. only_used=False: alle definierten Kategorien/Tags."""
+    categories = load_categories()
+    used_names = sorted({t for r in load_recipes() for t in r.tags},
+                        key=str.lower) if only_used else None
+    used_lower = {t.lower() for t in used_names} if used_names is not None else None
+
+    gruppen: list[dict] = []
+    erfasst: set[str] = set()
+    for key, cat in categories.items():
+        erfasst |= {t.lower() for t in cat.get("tags", [])}
+        tags = [t for t in cat.get("tags", [])
+                if used_lower is None or t.lower() in used_lower]
+        if tags or used_lower is None:
+            gruppen.append({"key": key, "label": cat.get("label", key), "tags": tags})
+
+    if used_names is not None:
+        rest = [t for t in used_names if t.lower() not in erfasst]
+        if rest:
+            gruppen.append({"key": "sonstige", "label": "Sonstige", "tags": rest})
+    return gruppen
+
+
 # --- Suche ------------------------------------------------------------------
 
-def search(query: str = "", match: str = "any", tag: str | None = None,
+def search(query: str = "", match: str = "any", tags: list[str] | None = None,
            max_time: int | None = None) -> list[Recipe]:
-    """Filtert ueber Metadaten (tag, max_time) und durchsucht bei `query`
-    zusaetzlich Titel, Tags UND den Markdown-Inhalt (also auch die Zutaten)."""
+    """Filtert ueber Metadaten (tags, max_time) und durchsucht bei `query`
+    zusaetzlich Titel, Tags UND den Markdown-Inhalt (also auch die Zutaten).
+
+    Tag-Filter (Facetten): mehrere `tags` werden nach ihrer Kategorie gruppiert.
+    Ein Rezept passt, wenn es in JEDER ausgewaehlten Kategorie MINDESTENS EINEN
+    der gewaehlten Tags besitzt – also ODER innerhalb einer Kategorie und UND
+    ueber Kategorien hinweg. Tags ohne Kategorie bilden gemeinsam die Gruppe
+    "Sonstige" (untereinander ebenfalls ODER)."""
     terme = [t.lower() for t in query.split()]
+    gruppen = _gruppiere_tags(tags or [])
     treffer = []
     for r in load_recipes():
-        if tag and tag.lower() not in [t.lower() for t in r.tags]:
+        if gruppen and not _passt_tags(r, gruppen):
             continue
         if max_time is not None and (r.dauer_minuten is None or r.dauer_minuten > max_time):
             continue
@@ -160,6 +228,23 @@ def search(query: str = "", match: str = "any", tag: str | None = None,
                 continue
         treffer.append(r)
     return treffer
+
+
+def _gruppiere_tags(tags: list[str]) -> dict[str, set[str]]:
+    """Ausgewaehlte Tags nach Kategorie gruppieren: key -> {tag-lowercase, ...}.
+    Tags ohne Kategorie landen gemeinsam unter "__sonstige__"."""
+    mapping = _tag_to_category()
+    gruppen: dict[str, set[str]] = {}
+    for t in tags:
+        tl = t.lower()
+        gruppen.setdefault(mapping.get(tl, "__sonstige__"), set()).add(tl)
+    return gruppen
+
+
+def _passt_tags(r: Recipe, gruppen: dict[str, set[str]]) -> bool:
+    """ODER innerhalb einer Gruppe, UND ueber Gruppen hinweg."""
+    rezept_tags = {t.lower() for t in r.tags}
+    return all(rezept_tags & gewaehlt for gewaehlt in gruppen.values())
 
 
 # --- Logbuch ----------------------------------------------------------------
@@ -243,13 +328,18 @@ def delete_recipe(slug: str) -> None:
 # --- Konsistenz -------------------------------------------------------------
 
 def check() -> dict:
-    """Prueft, ob Index (recipes.json) und .md-Dateien zusammenpassen."""
-    indexiert = {r.slug for r in load_recipes()}
+    """Prueft, ob Index (recipes.json) und .md-Dateien zusammenpassen und ob
+    alle verwendeten Tags einer Kategorie (categories.json) zugeordnet sind."""
+    recipes = load_recipes()
+    indexiert = {r.slug for r in recipes}
     vorhanden = {p.stem for p in recipes_dir().glob("*.md")} if recipes_dir().exists() else set()
+    mapping = _tag_to_category()
+    unsortiert = sorted({t for r in recipes for t in r.tags if t.lower() not in mapping})
     return {
         "anzahl_rezepte": len(indexiert),
         "verwaiste_dateien": sorted(vorhanden - indexiert),   # .md ohne Index-Eintrag
         "fehlende_dateien": sorted(indexiert - vorhanden),    # Index-Eintrag ohne .md
+        "unsortierte_tags": unsortiert,                       # Tags in keiner Kategorie
     }
 
 

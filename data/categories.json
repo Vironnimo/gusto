@@ -1,0 +1,18 @@
+{
+  "kueche": {
+    "label": "Küche",
+    "tags": ["italienisch", "tuerkisch", "indisch"]
+  },
+  "art": {
+    "label": "Art",
+    "tags": ["pizza", "pasta"]
+  },
+  "ernaehrung": {
+    "label": "Ernährung",
+    "tags": ["vegetarisch", "vegan", "halal"]
+  },
+  "eigenschaft": {
+    "label": "Eigenschaft",
+    "tags": ["schnell", "einfach", "guenstig", "ofen"]
+  }
+}
