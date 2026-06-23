@@ -141,12 +141,46 @@ try:
         resp = page.goto(BASE + "/rezept/gibtsnicht")
         check(resp.status == 404, "Unbekanntes Rezept -> 404-Seite")
 
+        # --- Einkaufsliste ---
+        page.goto(BASE, wait_until="networkidle")
+        check(page.locator(".nav a", has_text="Einkauf").count() >= 1, "Nav-Link zur Einkaufsliste")
+
+        # Zutaten eines Rezepts auf die Einkaufsliste schicken
+        page.goto(BASE + "/rezept/spaghetti-carbonara", wait_until="networkidle")
+        page.locator("form[action$='/einkauf'] button").click()
+        page.wait_for_load_state("networkidle")
+        check(page.url.endswith("/einkauf"), "Knopf fuehrt auf /einkauf")
+        check(page.locator(".eink-item").count() == 6, "6 Carbonara-Zutaten auf der Liste")
+        page.screenshot(path=str(SHOTS / "09_einkauf.png"), full_page=True)
+
+        # Manuell etwas hinzufuegen
+        page.fill("input[name=text]", "Backpapier")
+        page.fill("input[name=menge]", "1 Rolle")
+        page.locator("form.eink-add button[type=submit]").click()
+        page.wait_for_load_state("networkidle")
+        check(page.locator(".eink-item").count() == 7, "Manuelles Item hinzugefuegt -> 7")
+        check("Backpapier" in page.content(), "Manuelles Item sichtbar")
+
+        # Ein Item abhaken -> wandert nach 'Erledigt'
+        page.locator(".eink-group:not(.eink-group-done) .eink-box").first.click()
+        page.wait_for_load_state("networkidle")
+        check(page.locator(".eink-group-done .eink-item").count() == 1, "Ein Item ist erledigt")
+
+        # Erledigte entfernen (Tombstone, bleibt aus der Ansicht)
+        page.locator("form.eink-clear button").click()
+        page.wait_for_load_state("networkidle")
+        check(page.locator(".eink-group-done").count() == 0, "Keine Erledigt-Gruppe mehr")
+        check(page.locator(".eink-item").count() == 6, "Wieder 6 offene Items")
+        page.screenshot(path=str(SHOTS / "10_einkauf_after.png"), full_page=True)
+
         # Mobile-Ansichten
         m = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2)
         m.goto(BASE, wait_until="networkidle")
         m.screenshot(path=str(SHOTS / "07_mobile_home.png"), full_page=True)
         m.goto(BASE + "/rezept/rotes-linsen-dal", wait_until="networkidle")
         m.screenshot(path=str(SHOTS / "08_mobile_recipe.png"), full_page=True)
+        m.goto(BASE + "/einkauf", wait_until="networkidle")
+        m.screenshot(path=str(SHOTS / "11_mobile_einkauf.png"), full_page=True)
 
         browser.close()
 finally:

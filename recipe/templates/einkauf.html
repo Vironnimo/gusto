@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow">Vorrat &amp; Plan</p>
+  <h1 class="page-title">Einkaufsliste</h1>
+  <p class="lede">Was noch ins Körbchen muss — Zutaten aus Rezepten landen hier mit einem Klick.</p>
+</section>
+
+<form class="eink-add" method="post" action="/einkauf/add">
+  <input class="eink-add-text" type="text" name="text" placeholder="Was brauchst du? z.B. 200 g Spaghetti" autocomplete="off" required autofocus>
+  <input class="eink-add-menge" type="text" name="menge" placeholder="Menge" autocomplete="off">
+  <button class="btn" type="submit">Hinzufügen</button>
+</form>
+
+{% if offen or erledigt %}
+<div class="eink-board">
+  <section class="eink-group">
+    <h2 class="eink-group-title">Offen <span class="eink-count">{{ offen|length }}</span></h2>
+    {% if offen %}
+    <ul class="eink-list">
+      {% for item in offen %}
+      <li class="eink-item">
+        <form class="eink-check" method="post" action="/einkauf/{{ item.id }}/toggle">
+          <button class="eink-box" type="submit" aria-label="„{{ item.text }}“ abhaken"></button>
+        </form>
+        <div class="eink-body">
+          <span class="eink-text">{{ item.text }}</span>
+          {% if item.menge %}<span class="eink-menge">{{ item.menge }}</span>{% endif %}
+          {% if item.quelle %}<a class="eink-quelle" href="/rezept/{{ item.quelle }}">aus „{{ item.quelle }}“</a>{% endif %}
+        </div>
+        <form class="eink-remove" method="post" action="/einkauf/{{ item.id }}/remove">
+          <button class="eink-x" type="submit" aria-label="„{{ item.text }}“ entfernen">✕</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="eink-leer">Alles erledigt — nichts mehr offen.</p>
+    {% endif %}
+  </section>
+
+  {% if erledigt %}
+  <section class="eink-group eink-group-done">
+    <h2 class="eink-group-title">Erledigt <span class="eink-count">{{ erledigt|length }}</span></h2>
+    <ul class="eink-list">
+      {% for item in erledigt %}
+      <li class="eink-item is-done">
+        <form class="eink-check" method="post" action="/einkauf/{{ item.id }}/toggle">
+          <button class="eink-box is-checked" type="submit" aria-label="Häkchen bei „{{ item.text }}“ entfernen">✓</button>
+        </form>
+        <div class="eink-body">
+          <span class="eink-text">{{ item.text }}</span>
+          {% if item.menge %}<span class="eink-menge">{{ item.menge }}</span>{% endif %}
+          {% if item.quelle %}<a class="eink-quelle" href="/rezept/{{ item.quelle }}">aus „{{ item.quelle }}“</a>{% endif %}
+        </div>
+        <form class="eink-remove" method="post" action="/einkauf/{{ item.id }}/remove">
+          <button class="eink-x" type="submit" aria-label="„{{ item.text }}“ entfernen">✕</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    <form class="eink-clear" method="post" action="/einkauf/clear">
+      <button class="btn-text" type="submit">Erledigte entfernen</button>
+    </form>
+  </section>
+  {% endif %}
+</div>
+{% else %}
+<div class="empty">
+  <p class="empty-emoji">🧺</p>
+  <p>Die Einkaufsliste ist leer. Trag oben etwas ein oder schick die Zutaten eines Rezepts hierher.</p>
+</div>
+{% endif %}
+{% endblock %}

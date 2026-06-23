@@ -171,3 +171,49 @@ a.tl-name:hover{color:var(--accent)}
   .timeline li{grid-template-columns:5rem auto; gap:1rem}
   .tl-dot{left:calc(5.5rem - 5px)}
 }
+
+/* ---- Einkaufsliste ---- */
+.eink-add{display:grid; grid-template-columns:1fr auto auto; gap:.5rem; margin-bottom:2.2rem; max-width:680px}
+.eink-add input{font:inherit; padding:.8rem 1rem; border:1.5px solid var(--line-strong); border-radius:10px; background:var(--paper-card); color:var(--ink)}
+.eink-add input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(191,69,40,.13)}
+.eink-add-menge{width:7rem}
+.eink-add .btn{white-space:nowrap}
+
+.eink-board{display:grid; gap:2.4rem; max-width:680px}
+.eink-group-title{font-family:var(--serif); font-weight:700; font-size:1.5rem; letter-spacing:-.01em; display:flex; align-items:center; gap:.6rem; margin-bottom:1rem}
+.eink-group-title::after{content:""; flex:1; height:1px; background:var(--line)}
+.eink-count{font-family:var(--sans); font-weight:700; font-size:.8rem; color:var(--ink-soft); background:rgba(95,107,67,.13); border-radius:999px; padding:.1rem .55rem; line-height:1.5}
+.eink-group-done .eink-count{background:rgba(0,0,0,.05)}
+
+.eink-list{list-style:none; display:grid; gap:.5rem}
+.eink-item{display:flex; align-items:center; gap:.9rem; background:var(--paper-card); border:1px solid var(--line); border-radius:var(--radius); padding:.7rem .9rem; transition:border-color .15s, box-shadow .15s}
+.eink-item:hover{border-color:var(--line-strong); box-shadow:var(--shadow)}
+
+.eink-check{display:flex; flex:0 0 auto}
+.eink-box{width:1.55rem; height:1.55rem; flex:0 0 auto; border:2px solid var(--line-strong); border-radius:7px; background:var(--paper); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; font-size:.95rem; font-weight:800; color:#fff; line-height:1; transition:all .15s}
+.eink-box:hover{border-color:var(--olive)}
+.eink-box.is-checked{background:var(--olive); border-color:var(--olive)}
+.eink-box.is-checked:hover{background:var(--accent); border-color:var(--accent)}
+
+.eink-body{flex:1; display:flex; flex-wrap:wrap; align-items:baseline; gap:.3rem .7rem; min-width:0}
+.eink-text{font-weight:600; font-size:1.02rem; color:var(--ink)}
+.eink-menge{font-size:.85rem; font-weight:700; color:var(--olive); text-transform:uppercase; letter-spacing:.04em}
+.eink-quelle{font-size:.82rem; color:var(--ink-soft); font-style:italic}
+a.eink-quelle:hover{color:var(--accent)}
+
+.eink-remove{display:flex; flex:0 0 auto}
+.eink-x{font:inherit; font-size:1rem; line-height:1; width:1.9rem; height:1.9rem; flex:0 0 auto; border:none; border-radius:8px; background:transparent; color:var(--ink-soft); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; transition:all .15s}
+.eink-x:hover{background:rgba(191,69,40,.1); color:var(--accent)}
+
+.eink-item.is-done{background:transparent; border-color:var(--line)}
+.eink-item.is-done .eink-text{text-decoration:line-through; color:var(--ink-soft); font-weight:500}
+.eink-item.is-done .eink-menge{color:var(--ink-soft)}
+
+.eink-leer{color:var(--ink-soft); font-style:italic; padding:.4rem 0}
+.eink-clear{margin-top:1rem}
+
+@media (max-width:560px){
+  .eink-add{grid-template-columns:1fr auto}
+  .eink-add-text{grid-column:1 / -1}
+  .eink-add-menge{width:auto}
+}

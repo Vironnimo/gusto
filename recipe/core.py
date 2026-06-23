@@ -314,7 +314,22 @@ def parse_zutaten(inhalt: str) -> list[str]:
     Leere Bullets werden uebersprungen. Gibt es keinen Zutaten-Abschnitt, ist
     das Ergebnis [].
     """
-    raise NotImplementedError("Phase 1 / Subagent 1A")
+    zutaten: list[str] = []
+    im_abschnitt = False
+    for zeile in inhalt.splitlines():
+        s = zeile.strip()
+        if s == "## Zutaten":
+            im_abschnitt = True
+            continue
+        if not im_abschnitt:
+            continue
+        if s.startswith("## "):       # naechste Ueberschrift beendet den Abschnitt
+            break
+        if s.startswith("-") or s.startswith("*"):
+            eintrag = s[1:].strip()
+            if eintrag:               # leere Bullets ueberspringen
+                zutaten.append(eintrag)
+    return zutaten
 
 
 # --- Laden / Speichern ------------------------------------------------------
@@ -322,13 +337,17 @@ def parse_zutaten(inhalt: str) -> list[str]:
 def einkauf_load() -> list[EinkaufItem]:
     """Alle Items aus data/einkaufsliste.json laden – INKLUSIVE Tombstones
     (geloescht=True). Existiert die Datei nicht, ist das Ergebnis []."""
-    raise NotImplementedError("Phase 1 / Subagent 1A")
+    p = einkauf_path()
+    if not p.exists():
+        return []
+    daten = json.loads(p.read_text(encoding="utf-8"))
+    return [EinkaufItem.from_dict(d) for d in daten.get("items", [])]
 
 
 def einkauf_save(items: list[EinkaufItem]) -> None:
     """Items atomar nach data/einkaufsliste.json schreiben (nutze _write_json).
     Dateiform: {"items": [ <item-dict>, ... ]}. Tombstones bleiben erhalten."""
-    raise NotImplementedError("Phase 1 / Subagent 1A")
+    _write_json(einkauf_path(), {"items": [i.to_dict() for i in items]})
 
 
 # --- Veraendern -------------------------------------------------------------
@@ -337,14 +356,33 @@ def einkauf_add(text: str, menge: str = "", quelle: str | None = None) -> Einkau
     """Ein neues Item anlegen, speichern und zurueckgeben. Setzt id (new_id()),
     erstellt_am und geaendert_am (= _jetzt_iso()), checked=False,
     geloescht=False."""
-    raise NotImplementedError("Phase 1 / Subagent 1A")
+    jetzt = _jetzt_iso()
+    item = EinkaufItem(id=new_id(), text=text, menge=menge, checked=False,
+                       quelle=quelle, erstellt_am=jetzt, geaendert_am=jetzt,
+                       geloescht=False)
+    items = einkauf_load()
+    items.append(item)
+    einkauf_save(items)
+    return item
 
 
 def einkauf_add_rezept(slug: str) -> list[EinkaufItem]:
     """Alle Zutaten eines Rezepts (parse_zutaten auf dessen .md) als Items auf
     die Liste setzen, quelle=slug. Gibt die NEU hinzugefuegten Items zurueck.
     ValueError, wenn es kein Rezept mit diesem slug gibt."""
-    raise NotImplementedError("Phase 1 / Subagent 1A")
+    r = get(slug)
+    if r is None:
+        raise ValueError(f"Kein Rezept mit Slug '{slug}'.")
+    items = einkauf_load()
+    neu: list[EinkaufItem] = []
+    for zutat in parse_zutaten(r.inhalt()):
+        jetzt = _jetzt_iso()
+        neu.append(EinkaufItem(id=new_id(), text=zutat, menge="", checked=False,
+                               quelle=slug, erstellt_am=jetzt, geaendert_am=jetzt,
+                               geloescht=False))
+    items.extend(neu)
+    einkauf_save(items)
+    return neu
 
 
 def einkauf_list(include_done: bool = True,
@@ -352,28 +390,54 @@ def einkauf_list(include_done: bool = True,
     """Sichtbare Items. Tombstones (geloescht) standardmaessig ausgeblendet;
     include_done=False blendet zusaetzlich erledigte (checked) aus.
     Reihenfolge: nach erstellt_am aufsteigend (Einfuegereihenfolge)."""
-    raise NotImplementedError("Phase 1 / Subagent 1A")
+    items = [i for i in einkauf_load() if include_deleted or not i.geloescht]
+    if not include_done:
+        items = [i for i in items if not i.checked]
+    items.sort(key=lambda i: i.erstellt_am)
+    return items
 
 
 def einkauf_toggle(item_id: str, checked: bool | None = None) -> EinkaufItem:
     """Erledigt-Haekchen setzen. checked=None schaltet um; sonst wird der Wert
     gesetzt. Aktualisiert geaendert_am und gibt das Item zurueck.
     ValueError, wenn die id unbekannt ist oder das Item ein Tombstone ist."""
-    raise NotImplementedError("Phase 1 / Subagent 1A")
+    items = einkauf_load()
+    ziel = next((i for i in items if i.id == item_id and not i.geloescht), None)
+    if ziel is None:
+        raise ValueError(f"Kein Einkauf-Item mit id '{item_id}'.")
+    ziel.checked = (not ziel.checked) if checked is None else checked
+    ziel.geaendert_am = _jetzt_iso()
+    einkauf_save(items)
+    return ziel
 
 
 def einkauf_remove(item_id: str) -> None:
     """Item als Tombstone markieren: geloescht=True + geaendert_am aktualisieren
     (NICHT hart aus der Datei loeschen, damit die Loeschung synchronisiert).
     ValueError, wenn die id unbekannt ist."""
-    raise NotImplementedError("Phase 1 / Subagent 1A")
+    items = einkauf_load()
+    ziel = next((i for i in items if i.id == item_id), None)
+    if ziel is None:
+        raise ValueError(f"Kein Einkauf-Item mit id '{item_id}'.")
+    ziel.geloescht = True
+    ziel.geaendert_am = _jetzt_iso()
+    einkauf_save(items)
 
 
 def einkauf_clear_done() -> int:
     """Alle erledigten (checked, noch nicht Tombstone) Items als Tombstone
     markieren (geloescht=True + geaendert_am). Gibt die Anzahl der so
     entfernten Items zurueck."""
-    raise NotImplementedError("Phase 1 / Subagent 1A")
+    items = einkauf_load()
+    anzahl = 0
+    for i in items:
+        if i.checked and not i.geloescht:
+            i.geloescht = True
+            i.geaendert_am = _jetzt_iso()
+            anzahl += 1
+    if anzahl:
+        einkauf_save(items)
+    return anzahl
 
 
 # --- Sync (Phase 2) ---------------------------------------------------------

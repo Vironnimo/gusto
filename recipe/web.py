@@ -167,6 +167,59 @@ def logbuch(request: Request):
     })
 
 
+# --- Einkaufsliste ----------------------------------------------------------
+
+@app.get("/einkauf", response_class=HTMLResponse)
+def einkauf(request: Request):
+    items = core.einkauf_list()
+    offen = [i for i in items if not i.checked]
+    erledigt = [i for i in items if i.checked]
+    return templates.TemplateResponse(request, "einkauf.html", {
+        "nav": "einkauf", "titel": "Einkaufsliste",
+        "offen": offen, "erledigt": erledigt,
+    })
+
+
+@app.post("/einkauf/add")
+def einkauf_add(text: str = Form(...), menge: str = Form("")):
+    if text.strip():
+        core.einkauf_add(text.strip(), menge=menge.strip())
+    return RedirectResponse("/einkauf", status_code=303)
+
+
+@app.post("/einkauf/{item_id}/toggle")
+def einkauf_toggle(item_id: str):
+    try:
+        core.einkauf_toggle(item_id)
+    except ValueError:
+        raise StarletteHTTPException(status_code=404)
+    return RedirectResponse("/einkauf", status_code=303)
+
+
+@app.post("/einkauf/{item_id}/remove")
+def einkauf_remove(item_id: str):
+    try:
+        core.einkauf_remove(item_id)
+    except ValueError:
+        raise StarletteHTTPException(status_code=404)
+    return RedirectResponse("/einkauf", status_code=303)
+
+
+@app.post("/einkauf/clear")
+def einkauf_clear():
+    core.einkauf_clear_done()
+    return RedirectResponse("/einkauf", status_code=303)
+
+
+@app.post("/rezept/{slug}/einkauf")
+def rezept_einkauf(slug: str):
+    try:
+        core.einkauf_add_rezept(slug)
+    except ValueError:
+        raise StarletteHTTPException(status_code=404)
+    return RedirectResponse("/einkauf", status_code=303)
+
+
 @app.exception_handler(StarletteHTTPException)
 async def http_exception(request: Request, exc: StarletteHTTPException):
     if exc.status_code == 404:

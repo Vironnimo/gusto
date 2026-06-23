@@ -18,6 +18,9 @@
       <form method="post" action="/rezept/{{ r.slug }}/gekocht">
         <button class="btn" type="submit">Heute gekocht ✓</button>
       </form>
+      <form method="post" action="/rezept/{{ r.slug }}/einkauf">
+        <button class="btn-ghost" type="submit">Auf die Einkaufsliste</button>
+      </form>
       <a class="btn-ghost" href="/rezept/{{ r.slug }}/bearbeiten">Bearbeiten</a>
       <form method="post" action="/rezept/{{ r.slug }}/loeschen"
             onsubmit="return confirm('Rezept „{{ r.titel }}“ wirklich löschen?');">

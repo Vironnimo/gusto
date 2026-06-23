@@ -171,6 +171,96 @@ def cmd_delete(args):
         print(f"Geloescht: {args.slug}")
 
 
+# --- Einkaufsliste ----------------------------------------------------------
+
+def _ausgabe_einkauf_item(item, as_json: bool, *, prefix: str = "") -> None:
+    if as_json:
+        _dump(item.to_dict())
+        return
+    marker = "[x]" if item.checked else "[ ]"
+    zeile = f"{marker} {item.id}  {item.text}"
+    if item.menge:
+        zeile += f"  ({item.menge})"
+    if item.quelle:
+        zeile += f"  (aus {item.quelle})"
+    print(prefix + zeile)
+
+
+def cmd_einkauf_list(args):
+    items = core.einkauf_list(include_done=not args.offen)
+    if args.json:
+        _dump([i.to_dict() for i in items])
+        return
+    if not items:
+        print("Einkaufsliste ist leer.")
+        return
+    for i in items:
+        _ausgabe_einkauf_item(i, False, prefix="  ")
+
+
+def cmd_einkauf_add(args):
+    try:
+        item = core.einkauf_add(args.text, menge=args.menge or "")
+    except ValueError as e:
+        sys.exit(str(e))
+    if args.json:
+        _dump(item.to_dict())
+    else:
+        _ausgabe_einkauf_item(item, False, prefix="Hinzugefuegt: ")
+
+
+def cmd_einkauf_rezept(args):
+    try:
+        items = core.einkauf_add_rezept(args.slug)
+    except ValueError as e:
+        sys.exit(str(e))
+    if args.json:
+        _dump([i.to_dict() for i in items])
+    else:
+        print(f"{len(items)} Zutat(en) aus '{args.slug}' hinzugefuegt.")
+
+
+def cmd_einkauf_check(args):
+    try:
+        item = core.einkauf_toggle(args.id, checked=True)
+    except ValueError as e:
+        sys.exit(str(e))
+    if args.json:
+        _dump(item.to_dict())
+    else:
+        _ausgabe_einkauf_item(item, False, prefix="Abgehakt: ")
+
+
+def cmd_einkauf_uncheck(args):
+    try:
+        item = core.einkauf_toggle(args.id, checked=False)
+    except ValueError as e:
+        sys.exit(str(e))
+    if args.json:
+        _dump(item.to_dict())
+    else:
+        _ausgabe_einkauf_item(item, False, prefix="Wieder offen: ")
+
+
+def cmd_einkauf_remove(args):
+    try:
+        core.einkauf_remove(args.id)
+    except ValueError as e:
+        sys.exit(str(e))
+    if args.json:
+        _dump({"id": args.id, "geloescht": True})
+    else:
+        print(f"Entfernt: {args.id}")
+
+
+def cmd_einkauf_clear(args):
+    anzahl = core.einkauf_clear_done()
+    if args.json:
+        _dump({"entfernt": anzahl})
+    else:
+        print(f"{anzahl} erledigte(s) Item(s) entfernt.")
+
+
 def cmd_serve(args):
     try:
         import uvicorn
@@ -253,6 +343,40 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("delete", parents=[base], help="Rezept loeschen (.md + Index).")
     sp.add_argument("slug")
     sp.set_defaults(func=cmd_delete)
+
+    sp = sub.add_parser("einkauf", help="Einkaufsliste verwalten.")
+    esub = sp.add_subparsers(dest="einkauf_command", required=True)
+
+    ep = esub.add_parser("list", parents=[base], help="Einkaufsliste anzeigen.")
+    ep.add_argument("--offen", action="store_true",
+                    help="Nur offene (nicht abgehakte) Eintraege.")
+    ep.set_defaults(func=cmd_einkauf_list)
+
+    ep = esub.add_parser("add", parents=[base], help="Eintrag hinzufuegen.")
+    ep.add_argument("text", help='Was gekauft werden soll, z.B. "200 g Spaghetti".')
+    ep.add_argument("--menge", help="Optionale Mengenangabe.")
+    ep.set_defaults(func=cmd_einkauf_add)
+
+    ep = esub.add_parser("rezept", parents=[base],
+                         help="Alle Zutaten eines Rezepts auf die Liste setzen.")
+    ep.add_argument("slug")
+    ep.set_defaults(func=cmd_einkauf_rezept)
+
+    ep = esub.add_parser("check", parents=[base], help="Eintrag abhaken.")
+    ep.add_argument("id")
+    ep.set_defaults(func=cmd_einkauf_check)
+
+    ep = esub.add_parser("uncheck", parents=[base], help="Haekchen wieder entfernen.")
+    ep.add_argument("id")
+    ep.set_defaults(func=cmd_einkauf_uncheck)
+
+    ep = esub.add_parser("remove", parents=[base], help="Eintrag entfernen.")
+    ep.add_argument("id")
+    ep.set_defaults(func=cmd_einkauf_remove)
+
+    ep = esub.add_parser("clear", parents=[base],
+                         help="Alle erledigten Eintraege entfernen.")
+    ep.set_defaults(func=cmd_einkauf_clear)
 
     sp = sub.add_parser("serve", parents=[base], help="Web-Oberflaeche starten.")
     sp.add_argument("--host", default="0.0.0.0")
