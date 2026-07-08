@@ -53,16 +53,29 @@ English.)
   `shopping clear`.
 
 **Shopping list as a Telegram checklist**
-The tappable checkboxes live in the Telegram *client app* (its inline-keyboard +
-`callback_query` handling — not Gusto). Gusto only supplies the data via the CLI:
-- Render from `recipe shopping list --json` (a flat array): ⬜ for `checked:false`,
-  ✅ for `true`. `--pending` drops the checked ones.
-- A tap on item `<id>` toggles it: `recipe shopping check <id>` /
-  `uncheck <id>` (no `toggle` command — decide from the current `checked`); both
-  return the updated item. Unknown `id` → exit 1.
-- Add from chat: `recipe shopping add "<text>"`. Clear done:
-  `recipe shopping clear` → `{ "removed": N }`.
-- Full contract for the client side: `docs/telegram-shopping-handoff.md`.
+You (the agent) run the whole thing yourself: post the list into a Telegram chat
+as tappable buttons via vBot's `channel_send` tool. vBot's bundled **checklist**
+extension flips the tapped item's glyph ⬜↔✅ in the message automatically
+(instant, no agent round-trip). Building, posting and every durable change are
+yours; Gusto stays the source of truth.
+- **Build** from `recipe shopping list --json` (flat array). One button per item:
+  label `⬜ <text>` when `checked:false`, `✅ <text>` when `true` — the glyph must
+  be **leading** (the extension flips a leading ⬜/✅, so `⬜ Eier`, never `Eier ⬜`).
+  `data` = `chk:<id>` (the 32-hex id → 36 bytes, well under Telegram's 64-byte cap).
+- **Post** with `channel_send`: `channel_id` (your Telegram channel),
+  `platform_target` (chat/group id; omit to reuse the session's last reply target),
+  `message` (e.g. `🛒 Einkaufsliste`), and `buttons` as rows of `{label, data}`, e.g.
+  `[[{"label":"⬜ 200 g Spaghetti","data":"chk:a0438161…"}],[{"label":"✅ Eier","data":"chk:4479aa91…"}]]`.
+  (`buttons` can't be combined with `file_paths`.)
+- **Manage** (then re-render by posting a fresh list): add `recipe shopping add
+  "<text>"`; check/uncheck in Gusto `recipe shopping check|uncheck <id>` (no
+  `toggle` — decide from `checked`; unknown id → exit 1); clear done
+  `recipe shopping clear` → `{ "removed": N }`; open-only
+  `recipe shopping list --pending --json`. A rebuild (`add-recipe`) mints new ids
+  → send a fresh list, don't reuse the old buttons.
+- **The tap flip is visual only** — it edits the message, not Gusto's `checked`
+  state. Render from `recipe shopping list` and run `check`/`uncheck`/`clear`
+  yourself to keep Gusto aligned. Background: `docs/telegram-shopping-handoff.md`.
 
 ## Data model
 
@@ -81,6 +94,9 @@ manual edit run `recipe check`.
 - Don't hand-write a `.md` without an index entry — use `recipe new`, or add the
   entry and run `recipe check`.
 - Tags are facets: multiple `--tag`, OR within a category, AND across.
+- Checklist buttons: the ⬜/✅ glyph must be **leading** in the label, or the tap
+  flip silently does nothing. A tap flips the message only — it never writes to
+  Gusto; keep Gusto in sync via `check`/`uncheck`/`clear` yourself.
 - Never propose or build MCP — forbidden in this project.
 
 ## Full reference
