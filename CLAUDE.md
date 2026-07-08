@@ -169,6 +169,9 @@ service worker).
   ready (`recipe shopping …`, verified); the Telegram client (inline-keyboard +
   `callback_query`) is built in the agent app. Contract:
   [docs/telegram-shopping-handoff.md](docs/telegram-shopping-handoff.md).
+  Fallback if Telegram gets too fiddly: the existing **PWA over HTTPS in the LAN**
+  (DuckDNS + Caddy, no app code needed) — ready-to-grab guide in
+  [docs/https-pwa-option.md](docs/https-pwa-option.md).
 
 **Under discussion / planned:**
 - Agent-managed recipe images.
