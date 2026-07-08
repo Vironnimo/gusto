@@ -43,13 +43,15 @@ All commands: `python -m recipe <command>` (or `recipe <command>` after
 
 ### Shopping list (`shopping`)
 
-- `shopping list [--pending] [--json]` — `--pending` = only unchecked items.
-- `shopping add "<text>" [--quantity M] [--json]`
+- `shopping list [--pending] [--json]` — a **flat array** of items (checked ones
+  included, marked `checked:true`); `--pending` = only unchecked.
+- `shopping add "<text>" [--quantity M] [--json]` — returns the created item.
 - `shopping add-recipe <slug> [--json]` — add all ingredients of a recipe
-  (`source = slug`).
-- `shopping check <id> [--json]` / `shopping uncheck <id> [--json]`
+  (`source = slug`); returns the array of created items.
+- `shopping check <id> [--json]` / `shopping uncheck <id> [--json]` — return the
+  updated item; an unknown `id` prints to stderr and exits `1`.
 - `shopping remove <id> [--json]` — tombstone (sync-safe; never hard-deleted).
-- `shopping clear [--json]` — tombstone all checked items.
+- `shopping clear [--json]` — tombstone all checked items; returns `{ "removed": N }`.
 
 ### Server
 
@@ -100,12 +102,18 @@ Shopping-list item:
 
 ```json
 {
-  "id": "ab12cd…", "text": "200 g Spaghetti", "quantity": "",
-  "checked": false, "source": "spaghetti-carbonara",
+  "id": "a04381611b2740d5944abc58993c2643", "text": "200 g Spaghetti",
+  "quantity": "", "checked": false, "source": "spaghetti-carbonara",
   "created_at": "2026-06-23T18:00:00Z", "updated_at": "2026-06-23T18:00:00Z",
   "deleted": false
 }
 ```
+
+`id` is 32-hex, stable and unique. `list`/`list --pending` return a **flat JSON
+array** (no `{items}` wrapper); `check`/`uncheck`/`add` return a single item;
+`add-recipe` an array; `clear` returns `{ "removed": N }`. Rendering the list as
+a tappable **Telegram checklist** (inline-keyboard + `callback_query` in the
+client app): see `docs/telegram-shopping-handoff.md`.
 
 ## Tag facets in detail
 

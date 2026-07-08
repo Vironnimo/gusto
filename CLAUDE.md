@@ -106,6 +106,14 @@ vegetarisch --json` — OR within a category, AND across categories.
 **Digitize a recipe:** `recipe new "Title" --tags … --duration …`, then write the
 content into `recipes/<slug>.md` (from code: `core.add_recipe(…, content=…)`).
 
+**Shopping list as a Telegram checklist:** the tappable checkboxes are rendered
+by the Telegram client app (inline-keyboard + `callback_query` — not Gusto).
+Gusto only supplies data via the CLI: render from `recipe shopping list --json`
+(a flat array; ⬜/✅ from `checked`), a tap toggles via `recipe shopping
+check|uncheck <id>` (no `toggle` — decide from `checked`), add via `recipe
+shopping add`, clear done via `recipe shopping clear`. Client-side contract:
+[docs/telegram-shopping-handoff.md](docs/telegram-shopping-handoff.md).
+
 ## Important files
 
 - `recipe/core.py` — all logic (load/save, search, log, suggestions)
@@ -155,6 +163,12 @@ incl. offline-capable **PWA**: service worker (app-shell cache, offline fallback
 [docs/sync-kontrakt.md](docs/sync-kontrakt.md). Tests: `scripts/browser_check.py`
 (web incl. no-JS fallback) + `scripts/pwa_check.py` (offline, two-device merge,
 service worker).
+
+**In progress:**
+- **Telegram shopping checklist** (tap-to-check on the phone) — Gusto side is
+  ready (`recipe shopping …`, verified); the Telegram client (inline-keyboard +
+  `callback_query`) is built in the agent app. Contract:
+  [docs/telegram-shopping-handoff.md](docs/telegram-shopping-handoff.md).
 
 **Under discussion / planned:**
 - Agent-managed recipe images.

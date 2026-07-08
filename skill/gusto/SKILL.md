@@ -52,6 +52,18 @@ English.)
   `shopping list [--pending]`, `shopping check|uncheck|remove <id>`,
   `shopping clear`.
 
+**Shopping list as a Telegram checklist**
+The tappable checkboxes live in the Telegram *client app* (its inline-keyboard +
+`callback_query` handling — not Gusto). Gusto only supplies the data via the CLI:
+- Render from `recipe shopping list --json` (a flat array): ⬜ for `checked:false`,
+  ✅ for `true`. `--pending` drops the checked ones.
+- A tap on item `<id>` toggles it: `recipe shopping check <id>` /
+  `uncheck <id>` (no `toggle` command — decide from the current `checked`); both
+  return the updated item. Unknown `id` → exit 1.
+- Add from chat: `recipe shopping add "<text>"`. Clear done:
+  `recipe shopping clear` → `{ "removed": N }`.
+- Full contract for the client side: `docs/telegram-shopping-handoff.md`.
+
 ## Data model
 
 - `recipes/<slug>.md` — recipe content, no frontmatter.
