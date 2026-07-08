@@ -106,13 +106,15 @@ vegetarisch --json` — OR within a category, AND across categories.
 **Digitize a recipe:** `recipe new "Title" --tags … --duration …`, then write the
 content into `recipes/<slug>.md` (from code: `core.add_recipe(…, content=…)`).
 
-**Shopping list as a Telegram checklist:** the tappable checkboxes are rendered
-by the Telegram client app (inline-keyboard + `callback_query` — not Gusto).
-Gusto only supplies data via the CLI: render from `recipe shopping list --json`
-(a flat array; ⬜/✅ from `checked`), a tap toggles via `recipe shopping
-check|uncheck <id>` (no `toggle` — decide from `checked`), add via `recipe
-shopping add`, clear done via `recipe shopping clear`. Client-side contract:
-[docs/telegram-shopping-handoff.md](docs/telegram-shopping-handoff.md).
+**Shopping list as a Telegram checklist:** the agent posts the list via vBot's
+`channel_send` tool (inline-keyboard) — one `chk:<id>` button per item (leading
+⬜/✅ from `checked`) plus a final `run:done` "Fertig" button. Item taps flip the
+glyph visually (vBot's checklist extension — no Gusto write); the **Fertig** tap
+wakes the agent with the current button state, which then syncs Gusto (`recipe
+shopping check|uncheck <id>` per item; no `toggle` — decide from the ⬜/✅ glyph)
+and confirms in chat. "Fertig" saves the checked-state (add `recipe shopping
+clear` if it should also remove bought items). Full round-trip in the skill
+(`skill/gusto/SKILL.md`); client history: [docs/telegram-shopping-handoff.md](docs/telegram-shopping-handoff.md).
 
 ## Important files
 

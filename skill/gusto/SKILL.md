@@ -53,29 +53,45 @@ English.)
   `shopping clear`.
 
 **Shopping list as a Telegram checklist**
-You (the agent) run the whole thing yourself: post the list into a Telegram chat
-as tappable buttons via vBot's `channel_send` tool. vBot's bundled **checklist**
-extension flips the tapped item's glyph ⬜↔✅ in the message automatically
-(instant, no agent round-trip). Building, posting and every durable change are
-yours; Gusto stays the source of truth.
-- **Build** from `recipe shopping list --json` (flat array). One button per item:
-  label `⬜ <text>` when `checked:false`, `✅ <text>` when `true` — the glyph must
-  be **leading** (the extension flips a leading ⬜/✅, so `⬜ Eier`, never `Eier ⬜`).
-  `data` = `chk:<id>` (the 32-hex id → 36 bytes, well under Telegram's 64-byte cap).
+You (the agent) run the whole thing yourself via vBot's `channel_send` tool; Gusto
+stays the source of truth. The keyboard has **two kinds of buttons**:
+- **Item buttons** (`data = chk:<id>`) — vBot's bundled **checklist** extension
+  flips the tapped item's **leading** glyph ⬜↔✅ in the message instantly (no agent
+  round-trip). This is **visual only**: it does **not** write to Gusto.
+- **One "Fertig" button** (`data = run:done`) — tapping it **wakes you** with the
+  message's current button state so you sync it to Gusto in one shot. This is the
+  *only* path from a tap back to Gusto (the `chk` flips never reach you).
+
+- **Build** from `recipe shopping list --json` (flat array). One button per item,
+  label `⬜ <text>` when `checked:false`, `✅ <text>` when `true` — glyph **leading**
+  (`⬜ Eier`, never `Eier ⬜`), `data` = `chk:<id>` (32-hex id → 36 bytes, under the
+  64-byte cap). Add a **final row** with the submit button
+  `{"label":"Fertig ✅","data":"run:done"}` (the payload is ignored — the state
+  comes from the keyboard).
 - **Post** with `channel_send`: `channel_id` (your Telegram channel),
   `platform_target` (chat/group id; omit to reuse the session's last reply target),
   `message` (e.g. `🛒 Einkaufsliste`), and `buttons` as rows of `{label, data}`, e.g.
-  `[[{"label":"⬜ 200 g Spaghetti","data":"chk:a0438161…"}],[{"label":"✅ Eier","data":"chk:4479aa91…"}]]`.
+  `[[{"label":"⬜ 200 g Spaghetti","data":"chk:a04381…"}],[{"label":"✅ Eier","data":"chk:4479aa…"}],[{"label":"Fertig ✅","data":"run:done"}]]`.
   (`buttons` can't be combined with `file_paths`.)
+- **On the "Fertig" tap you are woken** with a system note that lists the current
+  buttons, e.g. `- "✅ 200 g Spaghetti" (chk:a04381…)` / `- "⬜ Eier" (chk:4479aa…)`
+  / `- "Fertig ✅" (run:done)`. Read the state from the `chk:` lines — **leading ✅**
+  = checked, **leading ⬜** = unchecked, id = the `chk:<id>` data; ignore the `run:`
+  button (it's the trigger, not an item). Then **make Gusto match**: per item
+  `recipe shopping check <id>` if ✅ else `recipe shopping uncheck <id>` (idempotent;
+  unknown id → exit 1, so check the code). Diff against `recipe shopping list --json`
+  first to skip no-ops if you like. Finally **confirm in chat** (e.g. "✅ In Gusto
+  übernommen."). vBot **auto-closes the keyboard** on this tap (the buttons vanish),
+  so your chat confirmation is the feedback — if the closed message should still show
+  the list, also put the item lines in the `message` text, not only in buttons.
+- **"Fertig" saves the current checked-state to Gusto; it does not remove bought
+  items.** To make "Fertig" also clear the bought ones, additionally run
+  `recipe shopping clear` (tombstones all checked) after the sync.
 - **Manage** (then re-render by posting a fresh list): add `recipe shopping add
-  "<text>"`; check/uncheck in Gusto `recipe shopping check|uncheck <id>` (no
-  `toggle` — decide from `checked`; unknown id → exit 1); clear done
-  `recipe shopping clear` → `{ "removed": N }`; open-only
+  "<text>"`; clear done `recipe shopping clear` → `{ "removed": N }`; open-only
   `recipe shopping list --pending --json`. A rebuild (`add-recipe`) mints new ids
-  → send a fresh list, don't reuse the old buttons.
-- **The tap flip is visual only** — it edits the message, not Gusto's `checked`
-  state. Render from `recipe shopping list` and run `check`/`uncheck`/`clear`
-  yourself to keep Gusto aligned. Background: `docs/telegram-shopping-handoff.md`.
+  → send a fresh list, don't reuse the old buttons. Background:
+  `docs/telegram-shopping-handoff.md`.
 
 ## Data model
 
@@ -94,9 +110,10 @@ manual edit run `recipe check`.
 - Don't hand-write a `.md` without an index entry — use `recipe new`, or add the
   entry and run `recipe check`.
 - Tags are facets: multiple `--tag`, OR within a category, AND across.
-- Checklist buttons: the ⬜/✅ glyph must be **leading** in the label, or the tap
-  flip silently does nothing. A tap flips the message only — it never writes to
-  Gusto; keep Gusto in sync via `check`/`uncheck`/`clear` yourself.
+- Checklist buttons: the ⬜/✅ glyph must be **leading** in the label, or the `chk`
+  flip silently does nothing. A `chk` tap flips the message only — it never writes
+  to Gusto; the **Fertig** button (`run:done`) is the single point that syncs the
+  state to Gusto. Always include a Fertig button, or no tap ever reaches Gusto.
 - Never propose or build MCP — forbidden in this project.
 
 ## Full reference
