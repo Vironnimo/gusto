@@ -7,7 +7,7 @@ dependencies = []
 
 [project.optional-dependencies]
 # Werden erst fuer die Web-UI gebraucht:
-web = ["fastapi", "uvicorn[standard]", "jinja2", "markdown"]
+web = ["fastapi", "uvicorn[standard]", "jinja2", "markdown", "python-multipart"]
 
 [project.scripts]
 recipe = "recipe.cli:main"
