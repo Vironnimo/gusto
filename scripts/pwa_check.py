@@ -158,6 +158,14 @@ try:
     merged = api_sync([itm("2026-06-23T12:00:03Z", deleted=True)])
     check(any(i["id"] == "milch" and i["deleted"] for i in merged), "POST sync: tombstone propagates")
 
+    # New millisecond timestamps must compare correctly against old stored
+    # second-precision values during the backwards-compatible transition.
+    reset_shopping()
+    api_sync([itm("2026-06-23T12:00:00Z", checked=False)])
+    merged = api_sync([itm("2026-06-23T12:00:00.001Z", checked=True)])
+    check(any(i["id"] == "milch" and i["checked"] for i in merged),
+          "POST sync: millisecond update beats old same-second value")
+
     with sync_playwright() as p:
         browser = p.chromium.launch()
 
@@ -192,6 +200,12 @@ try:
         a.locator("#shop-client form.shop-add button").click()
         check(wait_server(lambda its: any(i["text"] == "Apfel" for i in its)),
               "device A: 'Apfel' on server")
+
+        # Immediate follow-up mutations used to reuse the same second and
+        # could leave client and server disagreeing indefinitely.
+        a.locator("#shop-client .shop-item", has_text="Apfel").locator(".shop-box").click()
+        check(wait_server(lambda its: any(i["text"] == "Apfel" and i["checked"] for i in its)),
+              "rapid add-then-check reaches the server")
 
         b.fill("#shop-client input[name=text]", "Banane")
         b.locator("#shop-client form.shop-add button").click()

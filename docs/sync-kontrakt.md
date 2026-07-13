@@ -25,18 +25,19 @@ Ein Item ist exakt das Dict von `core.EinkaufItem.to_dict()`:
   "quantity": "",
   "checked": false,
   "source": "spaghetti-carbonara",   // oder null
-  "created_at": "2026-06-23T18:00:00Z",
-  "updated_at": "2026-06-23T18:00:00Z",
+  "created_at": "2026-06-23T18:00:00.123Z",
+  "updated_at": "2026-06-23T18:00:00.124Z",
   "deleted": false
 }
 ```
 
 ### Zeitstempel-Format (KRITISCH)
-UTC, **sekundengenau**, literal `Z`, **keine Millisekunden**:
-`YYYY-MM-DDTHH:MM:SSZ`. Nur so sind die Strings direkt vergleichbar (das ist
-die Grundlage von "letzter gewinnt").
-- Server: `core._jetzt_iso()` erzeugt genau dieses Format.
-- Client (JS): `new Date().toISOString().replace(/\.\d{3}Z$/, "Z")`.
+UTC mit **Millisekunden**, literal `Z`:
+`YYYY-MM-DDTHH:MM:SS.sssZ`. Bereits gespeicherte sekundengenaue Zeitstempel
+bleiben gültig. Server und Client vergleichen die Zeitstempel als geparste
+Zeitwerte, nicht als rohe Strings. Bei mehreren Änderungen desselben Items
+innerhalb einer Millisekunde wird der neue Wert künstlich um mindestens 1 ms
+erhöht; dadurch bleibt auch "hinzufügen und sofort abhaken" eindeutig.
 
 ### id
 Opaker, eindeutiger String. Server: `uuid4().hex`. Client für neue Items:

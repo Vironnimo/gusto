@@ -6,7 +6,7 @@
 //                /api/...:     network-only (do not cache)
 //                other GET:    cache-first (static)
 
-const CACHE = "gusto-v2";
+const CACHE = "gusto-v3";
 
 const APP_SHELL = [
   "/shopping",

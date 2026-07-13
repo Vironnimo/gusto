@@ -40,8 +40,8 @@ Festlegen, als Stubs committen, BEVOR Phase 1 startet:
   { "items": [ {
       "id": "uuid", "text": "200 g Spaghetti", "quantity": "200 g",
       "checked": false, "source": "spaghetti-carbonara",
-      "created_at": "2026-06-23T18:00:00Z",
-      "updated_at": "2026-06-23T18:00:00Z",
+      "created_at": "2026-06-23T18:00:00.123Z",
+      "updated_at": "2026-06-23T18:00:00.123Z",
       "deleted": false
   } ] }
   ```

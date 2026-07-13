@@ -41,8 +41,8 @@ Item-Form:
   "quantity": "",
   "checked": false,
   "source": "spaghetti-carbonara",
-  "created_at": "2026-07-08T19:25:38Z",
-  "updated_at": "2026-07-08T19:25:38Z",
+  "created_at": "2026-07-08T19:25:38.123Z",
+  "updated_at": "2026-07-08T19:25:38.123Z",
   "deleted": false
 }
 ```

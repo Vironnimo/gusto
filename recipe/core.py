@@ -375,14 +375,39 @@ class ShoppingItem:
         return cls(**{k: v for k, v in d.items() if k in allowed})
 
 
-def _now_iso() -> str:
-    """Current UTC timestamp as ISO 8601 with 'Z' (second precision).
+def _parse_iso(value: str) -> datetime | None:
+    """Parse an ISO timestamp used by the shopping sync.
 
-    Example: '2026-06-23T18:00:00Z'. ISO strings of this form compare directly
-    as text -- exactly what the sync needs ("last writer wins").
+    Both the former second-precision format and the current millisecond format
+    are accepted so existing data remains compatible.
     """
-    return (datetime.now(timezone.utc).replace(microsecond=0)
-            .isoformat().replace("+00:00", "Z"))
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _version_key(value: str) -> tuple:
+    """Comparable sync version; valid ISO values beat malformed legacy data."""
+    parsed = _parse_iso(value)
+    return (1, parsed) if parsed is not None else (0, value)
+
+
+def _now_iso(after: str | None = None) -> str:
+    """Current UTC timestamp with milliseconds and a literal ``Z``.
+
+    When ``after`` belongs to the same item, the result is guaranteed to be
+    newer. This prevents a rapid add-then-toggle sequence from producing two
+    indistinguishable versions while remaining compatible with old timestamps.
+    """
+    now = datetime.now(timezone.utc)
+    previous = _parse_iso(after or "")
+    if previous is not None and now <= previous:
+        now = previous + timedelta(milliseconds=1)
+    return now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def new_id() -> str:
@@ -491,7 +516,7 @@ def shopping_toggle(item_id: str, checked: bool | None = None) -> ShoppingItem:
     if target is None:
         raise ValueError(f"Kein Einkauf-Item mit id '{item_id}'.")
     target.checked = (not target.checked) if checked is None else checked
-    target.updated_at = _now_iso()
+    target.updated_at = _now_iso(target.updated_at)
     shopping_save(items)
     return target
 
@@ -505,7 +530,7 @@ def shopping_remove(item_id: str) -> None:
     if target is None:
         raise ValueError(f"Kein Einkauf-Item mit id '{item_id}'.")
     target.deleted = True
-    target.updated_at = _now_iso()
+    target.updated_at = _now_iso(target.updated_at)
     shopping_save(items)
 
 
@@ -517,7 +542,7 @@ def shopping_clear_done() -> int:
     for i in items:
         if i.checked and not i.deleted:
             i.deleted = True
-            i.updated_at = _now_iso()
+            i.updated_at = _now_iso(i.updated_at)
             count += 1
     if count:
         shopping_save(items)
@@ -530,10 +555,10 @@ def shopping_merge(remote_items: list[dict]) -> list[ShoppingItem]:
     """Full-state sync: merge remote_items (raw item dicts from the client) into
     the local list, save the result and return it (incl. tombstones).
 
-    Rule "last writer wins": per id the version with the larger updated_at wins
-    (the ISO strings compare as text). On a tie the local version stays. Ids that
-    exist only remotely are taken over; tombstones (deleted=True) propagate like
-    any other change.
+    Rule "last writer wins": per id the version with the later ISO timestamp
+    wins. Old second-precision and new millisecond timestamps are both accepted.
+    On a tie the local version stays. Ids that exist only remotely are taken
+    over; tombstones (deleted=True) propagate like any other change.
     """
     # Local state (incl. tombstones) as the source of truth, indexed by id.
     merged: dict[str, ShoppingItem] = {i.id: i for i in shopping_load()}
@@ -542,9 +567,9 @@ def shopping_merge(remote_items: list[dict]) -> list[ShoppingItem]:
         remote = ShoppingItem.from_dict(raw)
         local = merged.get(remote.id)
         # id only remote -> take it over.
-        # id on both sides -> larger updated_at wins (string compare);
+        # id on both sides -> later updated_at wins;
         # on a tie the local version stays.
-        if local is None or remote.updated_at > local.updated_at:
+        if local is None or _version_key(remote.updated_at) > _version_key(local.updated_at):
             merged[remote.id] = remote
     # ids that exist only locally stay unchanged.
 

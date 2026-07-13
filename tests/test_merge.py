@@ -132,7 +132,25 @@ check("b" in loaded and loaded["b"].deleted is True,
 check(len(loaded) == 2, "persisted: all ids incl. tombstone on disk")
 
 
-# --- 9) robustness: unknown/missing fields in the remote dict ---------------
+# --- 9) mixed precision: milliseconds are compared as timestamps -----------
+reset_local([item("a", "2026-06-23T18:00:00Z", text="second precision")])
+result = core.shopping_merge([
+    item("a", "2026-06-23T18:00:00.001Z", text="one millisecond newer"),
+])
+m = by_id(result)
+check(m["a"].text == "one millisecond newer",
+      "millisecond timestamp must beat an old same-second timestamp")
+
+
+# --- 10) a rapid local mutation always advances the version ----------------
+reset_local([item("rapid", "2099-01-01T00:00:00.000Z", checked=False)])
+changed = core.shopping_toggle("rapid", checked=True)
+check(changed.updated_at == "2099-01-01T00:00:00.001Z",
+      "rapid mutation must advance at least one millisecond")
+check(changed.checked is True, "rapid mutation must preserve the actual change")
+
+
+# --- 11) robustness: unknown/missing fields in the remote dict --------------
 reset_local([])
 # 'extra_field' is unknown and must be ignored; missing fields -> defaults from
 # ShoppingItem (from_dict).

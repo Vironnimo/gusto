@@ -37,9 +37,23 @@
     }
   }
 
-  // Server-compatible timestamp: UTC, second precision, literal Z, no ms.
-  function nowIso() {
-    return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  // Server-compatible timestamp: UTC with milliseconds and a literal Z.
+  // For repeated changes to one item, always advance by at least 1 ms so an
+  // immediate add-then-toggle cannot produce an ambiguous sync version.
+  function nowIso(after) {
+    var now = Date.now();
+    var previous = Date.parse(after || "");
+    if (!isNaN(previous) && now <= previous) now = previous + 1;
+    return new Date(now).toISOString();
+  }
+
+  function isNewer(candidate, current) {
+    var candidateMs = Date.parse(candidate || "");
+    var currentMs = Date.parse(current || "");
+    if (!isNaN(candidateMs) && !isNaN(currentMs)) {
+      return candidateMs > currentMs;
+    }
+    return (candidate || "") > (current || "");
   }
 
   // --- Rendering -------------------------------------------------------------
@@ -281,7 +295,7 @@
     for (var i = 0; i < items.length; i++) {
       if (items[i].id === id) {
         items[i].checked = !items[i].checked;
-        items[i].updated_at = nowIso();
+        items[i].updated_at = nowIso(items[i].updated_at);
         break;
       }
     }
@@ -295,7 +309,7 @@
     for (var i = 0; i < items.length; i++) {
       if (items[i].id === id) {
         items[i].deleted = true;
-        items[i].updated_at = nowIso();
+        items[i].updated_at = nowIso(items[i].updated_at);
         break;
       }
     }
@@ -306,11 +320,10 @@
 
   function clearDone() {
     var items = loadItems();
-    var now = nowIso();
     items.forEach(function (it) {
       if (it.checked && !it.deleted) {
         it.deleted = true;
-        it.updated_at = now;
+        it.updated_at = nowIso(it.updated_at);
       }
     });
     saveItems(items);
@@ -335,7 +348,7 @@
     local.forEach(function (it) { byId[it.id] = it; });
     incoming.forEach(function (rem) {
       var cur = byId[rem.id];
-      if (!cur || (rem.updated_at || "") > (cur.updated_at || "")) {
+      if (!cur || isNewer(rem.updated_at, cur.updated_at)) {
         byId[rem.id] = rem;
       }
     });

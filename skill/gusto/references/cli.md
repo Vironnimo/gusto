@@ -104,7 +104,7 @@ Shopping-list item:
 {
   "id": "a04381611b2740d5944abc58993c2643", "text": "200 g Spaghetti",
   "quantity": "", "checked": false, "source": "spaghetti-carbonara",
-  "created_at": "2026-06-23T18:00:00Z", "updated_at": "2026-06-23T18:00:00Z",
+  "created_at": "2026-06-23T18:00:00.123Z", "updated_at": "2026-06-23T18:00:00.123Z",
   "deleted": false
 }
 ```
