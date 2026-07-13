@@ -1,0 +1,49 @@
+# Shopping
+
+The shopping domain owns the shared shopping list, ingredient import, offline mutations, and full-state synchronization between browser clients and the server.
+
+## Overview
+
+Server-side rules and persistence live in the shopping section of `gusto/core.py`. `gusto/web.py` provides HTML fallbacks and the sync API, while `gusto/static/shopping-client.js` owns the offline browser copy and optimistic interaction. Recipe lookup and ingredient content come from the catalog domain.
+
+## Terms
+
+No cross-cutting terms for this domain are currently defined in `.vorch/GLOSSARY.md`.
+
+### Tombstone
+
+**Definition:** A shopping item retained with `deleted=true` so a deletion can propagate to other devices. It is hidden from normal lists but remains part of synchronization state.
+
+### Sync version
+
+**Definition:** An item's `updated_at` UTC timestamp, compared per id to choose the last writer. Current writers use millisecond precision and must advance beyond that item's previous value.
+
+## Data Model
+
+`data/shopping_list.json` has the shape `{ "items": [...] }`. Each item has a unique id, text, optional quantity, checked state, optional source recipe slug, creation and update timestamps, and deletion state. Visible list order is ascending `created_at`; tombstones are hidden unless explicitly requested.
+
+The browser stores the same full item array, including tombstones, under `localStorage` key `gusto.shopping`.
+
+## Interfaces
+
+Core operations load and save full state, add individual entries, import ingredients from a recipe, list visible entries, set or toggle checked state, tombstone entries, clear completed entries, and merge a remote full state.
+
+The CLI exposes these through `gusto shopping list|add|add-recipe|check|uncheck|remove|clear`; explicit check and uncheck are idempotent and suited to agents synchronizing an external checklist.
+
+The web provides server-rendered `/shopping` forms when JavaScript is unavailable. With JavaScript, the client hides that fallback, mutates local state first, and synchronizes in the background. `GET /api/shopping` returns all server items including tombstones; `POST /api/shopping/sync` accepts `{ "items": [...] }` and returns the merged full state.
+
+## Sync Contract
+
+- Merge is per item id. The version with the later valid `updated_at` wins; equal versions keep the receiving side's current value.
+- Items present on only one side are retained, so every exchange uploads and returns full state rather than a delta.
+- Tombstones participate like any other version and are never hard-deleted by shopping operations.
+- Both legacy second-precision and current millisecond timestamps are accepted. Valid timestamps outrank malformed legacy values on the server.
+- The browser merges a response into its current state instead of overwriting it, preserving mutations made while a request was in flight. A queued follow-up sync handles changes during an active sync.
+
+## Constraints & Gotchas
+
+- Ingredient import recognizes only non-empty `-` or `*` bullets under the exact `## Zutaten` heading and stops at the next H2.
+- Offline and failed syncs deliberately preserve local state. The browser retries on the next mutation, queued follow-up, initialization, or `online` event.
+- The service worker uses network-only handling for the sync API and recipe media. Navigations are network-first with the cached shopping page as fallback; other same-origin static GETs are cache-first.
+- Update the cache version when changing cached assets or offline shell behavior.
+- Verify core behavior with `tests/test_shopping.py` and `tests/test_merge.py`; verify offline, two-device, API, manifest, and service-worker behavior with `scripts/pwa_check.py`.
