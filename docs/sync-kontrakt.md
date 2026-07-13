@@ -55,7 +55,7 @@ Voll-State, pro `id`:
 Ergebnis enthält **alle** ids (inkl. Tombstones), wird gespeichert und
 zurückgegeben.
 
-## API (Subagent 2A — `recipe/web.py` API-Abschnitt + `core.shopping_merge`)
+## API (Subagent 2A — `gusto/web.py` API-Abschnitt + `core.shopping_merge`)
 Die Stubs stehen bereits in `web.py` (`/api/shopping`, `/api/shopping/sync`) und
 in `core.shopping_merge`. Implementieren:
 
@@ -67,7 +67,7 @@ in `core.shopping_merge`. Implementieren:
 
 Beide liefern `application/json` (JSONResponse). Keine HTML-Redirects.
 
-## Client-Store + Verhalten (Subagent 2C — `recipe/static/shopping-client.js`, `recipe/templates/shopping.html`)
+## Client-Store + Verhalten (Subagent 2C — `gusto/static/shopping-client.js`, `gusto/templates/shopping.html`)
 **localStorage-Key:** `gusto.shopping`
 **Wert:** `JSON.stringify({ items: [<item>, ...] })` (gleiches Item-Schema).
 
@@ -109,7 +109,7 @@ offen/erledigt gruppieren, nach `created_at` aufsteigend.
 `POST {items: []}` mit dem Server-Stand befüllt.)
 
 ## PWA-Schale (Subagent 2B — `manifest.webmanifest`, Icons, `sw.js`, `base.html`)
-**`recipe/static/manifest.webmanifest`:**
+**`gusto/static/manifest.webmanifest`:**
 ```json
 {
   "name": "Gusto", "short_name": "Gusto",
@@ -125,14 +125,14 @@ offen/erledigt gruppieren, nach `created_at` aufsteigend.
 }
 ```
 
-**Icons** (`recipe/static/icons/icon-192.png`, `icon-512.png`): mit Pillow
+**Icons** (`gusto/static/icons/icon-192.png`, `icon-512.png`): mit Pillow
 generieren (ist installiert). Vollflächiger Akzent-Hintergrund (#bf4528),
 zentriert das cremefarbene Marken-Zeichen `❖` (Font `seguisym.ttf` hat es;
 Größe ~55 % der Kantenlänge, im sicheren Bereich für „maskable"). Cremeton
-`#fcf7ec`. Ein kleines Generator-Skript in `recipe/static/icons/` ablegen ist
+`#fcf7ec`. Ein kleines Generator-Skript in `gusto/static/icons/` ablegen ist
 ok, muss aber nicht.
 
-**`recipe/static/sw.js`** — Service-Worker:
+**`gusto/static/sw.js`** — Service-Worker:
 - Versionierter Cache-Name (z.B. `gusto-v2`); im `activate` alte Caches
   löschen.
 - `install`: App-Shell **precachen** (Liste unten), dann `skipWaiting()`.
@@ -157,7 +157,7 @@ ok, muss aber nicht.
 (Google-Fonts sind cross-origin und werden NICHT precached; offline greifen
 die System-Font-Fallbacks aus `style.css`.)
 
-**`recipe/templates/base.html`** (nur 2B):
+**`gusto/templates/base.html`** (nur 2B):
 - `<link rel="manifest" href="/static/manifest.webmanifest">`
 - `<meta name="theme-color" content="#bf4528">`
 - Apple-Touch-Icon: `<link rel="apple-touch-icon" href="/static/icons/icon-192.png">`
@@ -167,9 +167,9 @@ die System-Font-Fallbacks aus `style.css`.)
 ## Datei-Eigentum (disjunkt!)
 | Subagent | Exklusiv |
 |---|---|
-| 2A | `recipe/core.py` (NUR `shopping_merge`), `recipe/web.py` (NUR die zwei `/api/...`-Stubs ausfüllen) |
-| 2B | `recipe/static/manifest.webmanifest`, `recipe/static/sw.js`, `recipe/static/icons/*`, `recipe/templates/base.html` |
-| 2C | `recipe/static/shopping-client.js` (neu), `recipe/templates/shopping.html` |
+| 2A | `gusto/core.py` (NUR `shopping_merge`), `gusto/web.py` (NUR die zwei `/api/...`-Stubs ausfüllen) |
+| 2B | `gusto/static/manifest.webmanifest`, `gusto/static/sw.js`, `gusto/static/icons/*`, `gusto/templates/base.html` |
+| 2C | `gusto/static/shopping-client.js` (neu), `gusto/templates/shopping.html` |
 
-Keine zwei Subagents fassen dieselbe Datei an. `recipe/static/app.js` bleibt
+Keine zwei Subagents fassen dieselbe Datei an. `gusto/static/app.js` bleibt
 unverändert.

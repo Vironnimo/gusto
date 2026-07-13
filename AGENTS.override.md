@@ -19,7 +19,7 @@ Before doing anything else in every Session, read `.vorch/PROJECT.md` and `.vorc
    today?" / "what do I do with these ingredients?", and the agent uses the CLI
    to answer.
 2. **One source of truth, several thin shells.** All logic lives in
-   `recipe/core.py`. The CLI (`recipe/cli.py`) and web (`recipe/web.py`) are only
+   `gusto/core.py`. The CLI (`gusto/cli.py`) and web (`gusto/web.py`) are only
    shells around it. **Never** build a feature only in the web UI — always in
    core + CLI first. Every CLI command understands `--json`.
 3. **Recipes are pure Markdown files. NO frontmatter.** Metadata lives
@@ -48,15 +48,15 @@ Before doing anything else in every Session, read `.vorch/PROJECT.md` and `.vorc
 | `data/categories.json` | Tag categories (facets): `{ "<key>": {"label", "tags": [...]} }`. Maps the flat tags to categories (order = display order). |
 | `data/log.json` | Cooking log: `[{ "date": "YYYY-MM-DD", "slug": ... }]`. |
 
-`recipe new` writes both the .md AND the index entry. If a .md is created by
-hand, add the entry in `data/recipes.json` and run `recipe check`. When saving
+`gusto new` writes both the .md AND the index entry. If a .md is created by
+hand, add the entry in `data/recipes.json` and run `gusto check`. When saving
 from the web, the first line of the .md is always rewritten as `# {title}` (the
 title is its own form field, not in the body).
 
 Per recipe, tags stay a **flat list**; their category lives centrally in
 `data/categories.json` (so recipe tags stay clean). Tag filters are **facets**:
 `--tag`/`?tag=` can be repeated, **OR within** a category and **AND across**
-categories. Tags without a category are reported by `recipe check` as
+categories. Tags without a category are reported by `gusto check` as
 "unsorted"; then sort the tag into `categories.json`.
 
 ## Usage
@@ -64,82 +64,82 @@ categories. Tags without a category are reported by `recipe check` as
 ```bash
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[web]"        # the pure CLI needs no dependencies
-recipe serve                   # web on 0.0.0.0:8000 (across the LAN)
-python -m recipe <command>     # CLI, if not installed
+gusto serve                   # web on 0.0.0.0:8000 (across the LAN)
+python -m gusto <command>     # CLI, if not installed
 ```
 
-All commands understand `--json` (machine-readable, for agents). `RECIPE_HOME`
+All commands understand `--json` (machine-readable, for agents). `GUSTO_HOME`
 (env) relocates the full recipe store (`recipes/` + `images/` + `data/`), handy
 on the Pi.
 
 ```
-recipe list   [--tag T ...] [--max-time N]    Filter; --tag repeatable/comma-separated
-recipe search "<terms>" [--match any|all] [--tag T ...]   Full-text (incl. ingredients)
-recipe tags   [--all]                          Show tag categories (facets)
-recipe show   <slug>                          Print a recipe (--json: incl. content)
-recipe new    "<Title>" [--tags a,b] [--duration N] [--servings N]
-recipe edit   <slug>                          Open the .md in the editor
-recipe cooked <slug> [--date YYYY-MM-DD]      Record in the cooking log
-recipe log    [--days N]                       Show the cooking log
-recipe set    <slug> [--title ...] [--tags a,b] [--duration N] [--servings N]
-recipe delete <slug>                           Delete a recipe
-recipe suggest [--days N] [--limit N]          Candidates for the next meal
-recipe check                                   Consistency index <-> .md (+ unsorted tags)
-recipe serve  [--host H] [--port N]            Start the web UI (LAN)
+gusto list   [--tag T ...] [--max-time N]    Filter; --tag repeatable/comma-separated
+gusto search "<terms>" [--match any|all] [--tag T ...]   Full-text (incl. ingredients)
+gusto tags   [--all]                          Show tag categories (facets)
+gusto show   <slug>                          Print a recipe (--json: incl. content)
+gusto new    "<Title>" [--tags a,b] [--duration N] [--servings N]
+gusto edit   <slug>                          Open the .md in the editor
+gusto cooked <slug> [--date YYYY-MM-DD]      Record in the cooking log
+gusto log    [--days N]                       Show the cooking log
+gusto set    <slug> [--title ...] [--tags a,b] [--duration N] [--servings N]
+gusto delete <slug>                           Delete a recipe
+gusto suggest [--days N] [--limit N]          Candidates for the next meal
+gusto check                                   Consistency index <-> .md (+ unsorted tags)
+gusto serve  [--host H] [--port N]            Start the web UI (LAN)
 
-recipe image list <slug>                       Show cover and gallery images
-recipe image add <slug> <path> [--role R] [--caption TEXT] [--cover]
-recipe image set <slug> <id> [--role R] [--caption TEXT]
-recipe image cover <slug> <id>                 Select the top image
-recipe image remove <slug> <id>                Delete one stored image
+gusto image list <slug>                       Show cover and gallery images
+gusto image add <slug> <path> [--role R] [--caption TEXT] [--cover]
+gusto image set <slug> <id> [--role R] [--caption TEXT]
+gusto image cover <slug> <id>                 Select the top image
+gusto image remove <slug> <id>                Delete one stored image
 
-recipe shopping list [--pending]                  Show the shopping list
-recipe shopping add "<text>" [--quantity M]        Add an entry
-recipe shopping add-recipe <slug>                   All ingredients of a recipe -> list
-recipe shopping check|uncheck <id>              Check / uncheck an entry
-recipe shopping remove <id>                     Remove an entry (tombstone)
-recipe shopping clear                           Remove done (checked) entries
+gusto shopping list [--pending]                  Show the shopping list
+gusto shopping add "<text>" [--quantity M]        Add an entry
+gusto shopping add-recipe <slug>                   All ingredients of a recipe -> list
+gusto shopping check|uncheck <id>              Check / uncheck an entry
+gusto shopping remove <id>                     Remove an entry (tombstone)
+gusto shopping clear                           Remove done (checked) entries
 ```
 
 ## Typical tasks (agent)
 
 **"What should I eat today?"**
-1. `recipe log --days 7 --json` → what was cooked recently.
-2. `recipe suggest --json` → what hasn't been cooked for a while.
+1. `gusto log --days 7 --json` → what was cooked recently.
+2. `gusto suggest --json` → what hasn't been cooked for a while.
 3. Decide with variety (not pasta three times in a row); honor time/diet via
    `--max-time` / `--tag`. `suggest` is deliberately simple — the "intelligence"
    comes from the agent combining `log`, `search` and `list`.
 
 **"What can I make with these ingredients?"**
-- `recipe search "haehnchen paprika" --match any --json` — also searches the
+- `gusto search "haehnchen paprika" --match any --json` — also searches the
   ingredients in the text of the `.md` files.
 
-**Filter by tags (facets):** `recipe list --tag italienisch --tag pizza --tag
+**Filter by tags (facets):** `gusto list --tag italienisch --tag pizza --tag
 vegetarisch --json` — OR within a category, AND across categories.
 
 **Transfer a recipe from images:** inspect the supplied images yourself, create
-or update the recipe content, then attach every useful image with `recipe image
+or update the recipe content, then attach every useful image with `gusto image
 add <slug> <path> --role <purpose> --caption "…"`. Gusto copies and owns the
 files. Recipes can have any number of images; the first is the default cover,
-and `--cover` or `recipe image cover` selects a different top image. Roles such
+and `--cover` or `gusto image cover` selects a different top image. Roles such
 as `result`, `ingredients`, or `step` are descriptive and remain open-ended.
 
 **Shopping list as a Telegram checklist:** the agent posts the list via vBot's
 `channel_send` tool (inline-keyboard) — one `chk:<id>` button per item (leading
 ⬜/✅ from `checked`) plus a final `run:done` "Fertig" button. Item taps flip the
 glyph visually (vBot's checklist extension — no Gusto write); the **Fertig** tap
-wakes the agent with the current button state, which then syncs Gusto (`recipe
+wakes the agent with the current button state, which then syncs Gusto (`gusto
 shopping check|uncheck <id>` per item; no `toggle` — decide from the ⬜/✅ glyph)
-and confirms in chat. "Fertig" saves the checked-state (add `recipe shopping
+and confirms in chat. "Fertig" saves the checked-state (add `gusto shopping
 clear` if it should also remove bought items). Full round-trip in the skill
 (`skill/gusto/SKILL.md`); client history: [docs/telegram-shopping-handoff.md](docs/telegram-shopping-handoff.md).
 
 ## Important files
 
-- `recipe/core.py` — all logic (load/save, search, log, suggestions)
-- `recipe/cli.py` — the CLI
-- `recipe/web.py` — FastAPI app (server-rendered, Jinja2)
-- `recipe/templates/`, `recipe/static/` — UI + CSS/JS
+- `gusto/core.py` — all logic (load/save, search, log, suggestions)
+- `gusto/cli.py` — the CLI
+- `gusto/web.py` — FastAPI app (server-rendered, Jinja2)
+- `gusto/templates/`, `gusto/static/` — UI + CSS/JS
 - `scripts/browser_check.py` — end-to-end browser test (Playwright)
 - `deploy/gusto.service` — systemd unit for the Pi
 - `skill/gusto/` — skill (SKILL.md + `references/cli.md`) for operating the
@@ -175,11 +175,11 @@ staggered fade-in. UI and data fields are German.
 
 **Done:** data model, core, CLI, web UI (list/search incl. **live search** while
 typing, **tag facets**: multi-select grouped by category, OR within / AND across
-categories — `data/categories.json`, `recipe tags`), recipe view,
+categories — `data/categories.json`, `gusto tags`), recipe view,
 create/edit/delete, "cooked today", suggestions, log, 404 page, Pi deployment
 (systemd), browser test, and **multiple stored recipe images** with a selected
-cover, gallery, free role/caption, and full agent control through `recipe image
-…`. **Shopping list** (core/CLI/web, `recipe shopping …`)
+cover, gallery, free role/caption, and full agent control through `gusto image
+…`. **Shopping list** (core/CLI/web, `gusto shopping …`)
 incl. offline-capable **PWA**: service worker (app-shell cache, offline fallback)
 + full-state sync via "last writer wins" + tombstones. Sync contract:
 [docs/sync-kontrakt.md](docs/sync-kontrakt.md). Tests: `scripts/browser_check.py`
@@ -188,7 +188,7 @@ service worker).
 
 **In progress:**
 - **Telegram shopping checklist** (tap-to-check on the phone) — Gusto side is
-  ready (`recipe shopping …`, verified); the Telegram client (inline-keyboard +
+  ready (`gusto shopping …`, verified); the Telegram client (inline-keyboard +
   `callback_query`) is built in the agent app. Contract:
   [docs/telegram-shopping-handoff.md](docs/telegram-shopping-handoff.md).
   Fallback if Telegram gets too fiddly: the existing **PWA over HTTPS in the LAN**

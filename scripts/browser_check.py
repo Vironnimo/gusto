@@ -1,7 +1,7 @@
 """End-to-end check of the web UI with Playwright.
 
 Starts its own uvicorn server against a THROWAWAY copy of the data
-(RECIPE_HOME -> .testdata), clicks through the app in real Chromium, takes
+(GUSTO_HOME -> .testdata), clicks through the app in real Chromium, takes
 screenshots and checks the most important flows. The real sample data stays
 untouched.
 
@@ -40,9 +40,9 @@ shutil.copytree(ROOT / "data", TESTDATA / "data")
 if (ROOT / "images").exists():
     shutil.copytree(ROOT / "images", TESTDATA / "images")
 
-env = {**os.environ, "RECIPE_HOME": str(TESTDATA)}
+env = {**os.environ, "GUSTO_HOME": str(TESTDATA)}
 srv = subprocess.Popen(
-    [sys.executable, "-m", "uvicorn", "recipe.web:app",
+    [sys.executable, "-m", "uvicorn", "gusto.web:app",
      "--host", "127.0.0.1", "--port", PORT, "--log-level", "warning"],
     cwd=str(ROOT), env=env,
 )

@@ -1,6 +1,6 @@
 """Web UI (FastAPI, server-rendered).
 
-Thin shell around recipe.core -- just like the CLI. Every action here has its
+Thin shell around gusto.core -- just like the CLI. Every action here has its
 counterpart in the core and thus in the CLI; there is no web-only feature.
 Visible UI text lives in the templates and stays German.
 """

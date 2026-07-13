@@ -25,7 +25,7 @@ trotzdem grünes Schloss ohne Warnung.
 
 Zwei Bausteine:
 - **DuckDNS** (gratis): Subdomain `gusto.duckdns.org`, A-Eintrag → Pi-LAN-IP.
-- **Caddy** als Reverse-Proxy vor `recipe serve`: holt & **erneuert** das
+- **Caddy** als Reverse-Proxy vor `gusto serve`: holt & **erneuert** das
   Zertifikat automatisch, terminiert TLS, proxyt auf `localhost:8000`.
 
 Nutzer-Erlebnis (Android, im Heim-WLAN): `https://gusto.duckdns.org` öffnen →
@@ -35,7 +35,7 @@ installieren.**
 
 ## Wichtig: die PWA ist schon gebaut
 
-Kein App-Code nötig. `recipe/static/manifest.webmanifest`, `sw.js`,
+Kein App-Code nötig. `gusto/static/manifest.webmanifest`, `sw.js`,
 `shopping-client.js` existieren bereits (Roadmap: „Shopping list & PWA" = erledigt).
 Diese Option ist **nur** Serving/Zertifikat (Caddy) + DNS. Sync-Verhalten:
 [sync-kontrakt.md](sync-kontrakt.md).
@@ -59,7 +59,7 @@ Diese Option ist **nur** Serving/Zertifikat (Caddy) + DNS. Sync-Verhalten:
    ```
    (Token als Umgebungsvariable `DUCKDNS_TOKEN`; exakte Syntax im README von
    `caddy-dns/duckdns` gegenprüfen.)
-4. `recipe serve` läuft weiter auf `127.0.0.1:8000`; Caddy lauscht auf **443**.
+4. `gusto serve` läuft weiter auf `127.0.0.1:8000`; Caddy lauscht auf **443**.
    Damit ist die URL schlicht `https://gusto.duckdns.org` (ohne `:8000`).
 5. Auf dem Handy `https://gusto.duckdns.org` im Heim-WLAN öffnen → installieren.
 

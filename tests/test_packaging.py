@@ -18,6 +18,10 @@ sys.path.insert(0, os.fspath(ROOT))
 
 
 manifest = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+assert re.search(r'^name\s*=\s*"gusto"$', manifest, re.MULTILINE)
+assert re.search(r'^gusto\s*=\s*"gusto\.cli:main"$', manifest, re.MULTILINE)
+assert not (ROOT / "recipe").exists()
+
 optional_dependencies = re.search(
     r"\[project\.optional-dependencies\](.*?)(?=\n\[|\Z)", manifest, re.DOTALL
 )
@@ -31,7 +35,7 @@ assert '"python-multipart"' in normalized, (
     "HTML form routes."
 )
 
-from recipe.web import app  # noqa: E402
+from gusto.web import app  # noqa: E402
 
 assert app is not None
 print("OK - web packaging metadata and application import")

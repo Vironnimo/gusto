@@ -5,7 +5,7 @@ glyph (U+2756, black diamond with a dot). Size ~0.58*edge length, which keeps
 it in the safe area for "maskable".
 
 Usage:
-    .venv\\Scripts\\python.exe recipe/static/icons/make_icons.py
+    .venv\\Scripts\\python.exe gusto/static/icons/make_icons.py
 """
 from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path

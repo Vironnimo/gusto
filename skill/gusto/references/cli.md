@@ -1,6 +1,6 @@
 # Gusto CLI — Full Reference
 
-All commands: `python -m recipe <command>` (or `recipe <command>` after
+All commands: `python -m gusto <command>` (or `gusto <command>` after
 `pip install -e .`). Every command accepts `--json` for machine-readable output.
 
 ## Commands
@@ -165,11 +165,11 @@ client app): see `docs/telegram-shopping-handoff.md`.
 ## Worked example — "what should I cook?"
 
 ```
-$ python -m recipe log --days 7 --json
+$ python -m gusto log --days 7 --json
 [ { "date": "2026-06-21", "slug": "spaghetti-carbonara" },
   { "date": "2026-06-18", "slug": "rotes-linsen-dal" } ]
 
-$ python -m recipe suggest --json
+$ python -m gusto suggest --json
 [ { "slug": "ofengemuese-feta", "title": "Ofengemüse mit Feta",
     "tags": ["vegetarisch", "ofen", "einfach"], "last_cooked": null } ]
 ```

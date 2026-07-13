@@ -1,6 +1,6 @@
 """Core logic of the recipe system.
 
-ALL logic lives here. The CLI (recipe/cli.py) and the web UI (recipe/web.py)
+ALL logic lives here. The CLI (gusto/cli.py) and the web UI (gusto/web.py)
 are only thin shells around this module. No feature exists in only one surface.
 
 Data model:
@@ -26,10 +26,10 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 
-# --- Paths (overridable via RECIPE_HOME, e.g. on the Pi) ---------------------
+# --- Paths (overridable via GUSTO_HOME, e.g. on the Pi) ----------------------
 
 def project_root() -> Path:
-    env = os.environ.get("RECIPE_HOME")
+    env = os.environ.get("GUSTO_HOME")
     if env:
         return Path(env).expanduser()
     return Path(__file__).resolve().parent.parent
@@ -217,7 +217,7 @@ def tag_category(tag: str, categories: dict | None = None) -> str | None:
 
 def tag_groups(only_used: bool = True) -> list[dict]:
     """Categories with their tags in display order -- for the tag bar and
-    `recipe tags`. Returns [{"key", "label", "tags": [...]}, ...].
+    `gusto tags`. Returns [{"key", "label", "tags": [...]}, ...].
 
     only_used=True: only tags that occur in recipes; empty categories are
     dropped; actually-used tags without a category come last as a "Sonstige"

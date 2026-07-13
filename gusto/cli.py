@@ -1,6 +1,6 @@
-"""Command line for the recipe system.
+"""Command line for Gusto.
 
-Thin shell around recipe.core. Every command understands --json for machine-
+Thin shell around gusto.core. Every command understands --json for machine-
 readable output (for agents & scripts); without --json it is formatted nicely
 for the terminal. User-facing output and --help texts stay German.
 """
@@ -383,14 +383,14 @@ def cmd_serve(args):
     except ImportError:
         sys.exit("Web-Abhaengigkeiten fehlen. Installiere sie mit:  pip install -e .[web]")
     print(f"Gusto laeuft auf http://{args.host}:{args.port}  (Strg+C zum Beenden)")
-    uvicorn.run("recipe.web:app", host=args.host, port=args.port, reload=args.reload)
+    uvicorn.run("gusto.web:app", host=args.host, port=args.port, reload=args.reload)
 
 
 # --- Parser -----------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="recipe",
+        prog="gusto",
         description="Markdown-Rezepte – komplett per CLI steuerbar. "
                     "Jedes Kommando versteht --json.",
     )

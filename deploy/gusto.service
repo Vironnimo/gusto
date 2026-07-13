@@ -7,10 +7,10 @@ Wants=network-online.target
 Type=simple
 # --- an deine Umgebung anpassen ---
 User=pi
-WorkingDirectory=/home/pi/recipes
-ExecStart=/home/pi/recipes/.venv/bin/python -m recipe serve --host 0.0.0.0 --port 8000
+WorkingDirectory=/home/pi/gusto
+ExecStart=/home/pi/gusto/.venv/bin/python -m gusto serve --host 0.0.0.0 --port 8000
 # Optional: Daten woanders ablegen (sonst neben dem Code)
-# Environment=RECIPE_HOME=/home/pi/gusto-daten
+# Environment=GUSTO_HOME=/home/pi/gusto-daten
 Restart=on-failure
 RestartSec=3
 

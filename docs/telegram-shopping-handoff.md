@@ -1,7 +1,7 @@
 # Handoff: Einkaufsliste als Telegram-Checkliste
 
 Vertrag zwischen **Gusto** (dieses Repo, liefert Daten & Logik über die
-`recipe`-CLI) und der **Agent-/Telegram-App** (anderes Repo, baut die
+`gusto`-CLI) und der **Agent-/Telegram-App** (anderes Repo, baut die
 Telegram-Darstellung). Ziel: die Einkaufsliste erscheint im Telegram-Chat als
 **antippbare Checkliste** — ein Button pro Zutat, Tippen hakt ab (⬜ → ✅) und
 schreibt sofort nach Gusto zurück. Zielgruppe u. a. ältere Menschen: **mehr als
@@ -11,14 +11,14 @@ schreibt sofort nach Gusto zurück. Zielgruppe u. a. ältere Menschen: **mehr al
 
 ## Arbeitsteilung
 
-- **Gusto (fertig, nichts zu bauen):** Daten & Logik über `recipe shopping …`.
+- **Gusto (fertig, nichts zu bauen):** Daten & Logik über `gusto shopping …`.
 - **Andere App (zu bauen):** Telegram-Inline-Keyboard senden **+** `callback_query`
   empfangen → ruft die Gusto-CLI. Das geht **nicht** über Nachrichtentext/Markdown.
 
 ## Gusto-CLI-Kontrakt (verifiziert)
 
-Aufruf: `recipe shopping <cmd>` bzw. `python -m recipe shopping <cmd>`, immer mit
-`--json`. `RECIPE_HOME` zeigt auf den Datenordner (auf dem Pi gesetzt).
+Aufruf: `gusto shopping <cmd>` bzw. `python -m gusto shopping <cmd>`, immer mit
+`--json`. `GUSTO_HOME` zeigt auf den Datenordner (auf dem Pi gesetzt).
 
 | Kommando | Rückgabe (`--json`) |
 |---|---|
@@ -70,7 +70,7 @@ Item-Form:
    sondern ein eigener Update-Typ — wer nur `message`-Updates liest, sieht ihn
    nicht. Beim Update:
    - `data` parsen (`chk:<id>`),
-   - Status umschalten: `recipe shopping check <id>` bzw. `uncheck <id>`
+   - Status umschalten: `gusto shopping check <id>` bzw. `uncheck <id>`
      (es gibt kein `toggle` — anhand des aktuellen `checked` entscheiden),
    - **`answerCallbackQuery(callback_query_id)`** aufrufen (sonst dreht der
      Ladekreis beim Nutzer weiter),
@@ -79,13 +79,13 @@ Item-Form:
 
 ## Ablauf (Ende-zu-Ende)
 
-1. `recipe shopping list --json` → für jedes nicht-`deleted` Item eine
+1. `gusto shopping list --json` → für jedes nicht-`deleted` Item eine
    Button-Reihe, ⬜ bei `checked:false`, ✅ bei `true`.
 2. Nachricht senden, `message_id` merken.
 3. Tap kommt als `callback_query` → `id` aus `data` → in Gusto umschalten →
    `answerCallbackQuery` → Nachricht neu rendern & editieren.
-4. Optional: „Erledigte entfernen"-Button → `recipe shopping clear`; neue
-   Einträge per Chat („+ Milch") → `recipe shopping add`; danach neu rendern.
+4. Optional: „Erledigte entfernen"-Button → `gusto shopping clear`; neue
+   Einträge per Chat („+ Milch") → `gusto shopping add`; danach neu rendern.
 
 ## Zuerst untersuchen (bitte vor dem Bauen berichten)
 
@@ -117,6 +117,6 @@ Item-Form:
 
 ## In einem Satz
 
-Gusto = Daten & Logik (fertig, über `recipe shopping …`). Andere App =
+Gusto = Daten & Logik (fertig, über `gusto shopping …`). Andere App =
 Telegram-Darstellung (Inline-Keyboard) + Tap-Empfang (`callback_query`), das die
 Gusto-CLI aufruft.

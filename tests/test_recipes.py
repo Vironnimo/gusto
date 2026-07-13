@@ -10,10 +10,10 @@ import base64
 
 
 HOME = Path(tempfile.mkdtemp(prefix="gusto-recipes-test-"))
-os.environ["RECIPE_HOME"] = os.fspath(HOME)
+os.environ["GUSTO_HOME"] = os.fspath(HOME)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from recipe import core  # noqa: E402
+from gusto import core  # noqa: E402
 
 
 checks = 0
@@ -162,7 +162,7 @@ def main():
           "delete must remove all stored images for the recipe")
     expect_valueerror(core.delete_recipe, pasta.slug)
 
-    print(f"OK - {checks} recipe core checks passed (RECIPE_HOME={HOME})")
+    print(f"OK - {checks} recipe core checks passed (GUSTO_HOME={HOME})")
 
 
 if __name__ == "__main__":

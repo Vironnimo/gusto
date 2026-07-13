@@ -9,7 +9,7 @@ Extends scripts/browser_check.py with the phase-2 flows (PWA + offline + sync):
   SW cache
 
 Like browser_check.py everything runs against a THROWAWAY copy of the data
-(RECIPE_HOME -> .testdata-pwa); the real data stays untouched.
+(GUSTO_HOME -> .testdata-pwa); the real data stays untouched.
 
 Usage:  .venv/Scripts/python.exe scripts/pwa_check.py
 """
@@ -45,9 +45,9 @@ TESTDATA.mkdir()
 shutil.copytree(ROOT / "recipes", TESTDATA / "recipes")
 shutil.copytree(ROOT / "data", TESTDATA / "data")
 
-env = {**os.environ, "RECIPE_HOME": str(TESTDATA)}
+env = {**os.environ, "GUSTO_HOME": str(TESTDATA)}
 srv = subprocess.Popen(
-    [sys.executable, "-m", "uvicorn", "recipe.web:app",
+    [sys.executable, "-m", "uvicorn", "gusto.web:app",
      "--host", "127.0.0.1", "--port", PORT, "--log-level", "warning"],
     cwd=str(ROOT), env=env,
 )

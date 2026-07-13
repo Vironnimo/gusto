@@ -1,23 +1,23 @@
-"""Hermetic tests for the shopping-list logic in recipe/core.py.
+"""Hermetic tests for the shopping-list logic in gusto/core.py.
 
 Runnable WITHOUT pytest:  python tests/test_shopping.py
 
-IMPORTANT: RECIPE_HOME is set at the very top to a fresh temp directory BEFORE
-recipe.core is imported or any function is called. Otherwise the real data
+IMPORTANT: GUSTO_HOME is set at the very top to a fresh temp directory BEFORE
+gusto.core is imported or any function is called. Otherwise the real data
 under recipes/ and data/ would be modified -- which is forbidden.
 """
 import os
 import sys
 import tempfile
 
-# --- Hermetic: RECIPE_HOME to a throwaway directory, BEFORE the import ------
-os.environ["RECIPE_HOME"] = tempfile.mkdtemp(prefix="gusto-test-")
+# --- Hermetic: GUSTO_HOME to a throwaway directory, BEFORE the import -------
+os.environ["GUSTO_HOME"] = tempfile.mkdtemp(prefix="gusto-test-")
 
-# Project root on the path so `recipe` is importable no matter where the script
+# Project root on the path so `gusto` is importable no matter where the script
 # is started from.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from recipe import core  # noqa: E402
+from gusto import core  # noqa: E402
 
 RECIPE_MD = (
     "# T\n"
@@ -52,7 +52,7 @@ def expect_valueerror(fn, *args, **kwargs):
 def main():
     # Safety net: we really work inside the temp directory.
     check(str(core.project_root()).startswith(tempfile.gettempdir()),
-          "RECIPE_HOME does not point into the temp directory -- abort.")
+          "GUSTO_HOME does not point into the temp directory -- abort.")
 
     # --- parse_ingredients --------------------------------------------------
     check(core.parse_ingredients(RECIPE_MD) == ["200 g Spaghetti", "100 g Speck"],
@@ -156,7 +156,7 @@ def main():
     check([i.text for i in visible] == ["100 g Speck"],
           "After clear_done only the open Speck item may be visible.")
 
-    print(f"OK - {checks} checks passed (RECIPE_HOME={core.project_root()})")
+    print(f"OK - {checks} checks passed (GUSTO_HOME={core.project_root()})")
 
 
 if __name__ == "__main__":

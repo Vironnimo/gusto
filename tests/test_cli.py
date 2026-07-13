@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HOME = Path(tempfile.mkdtemp(prefix="gusto-cli-test-"))
-ENV = {**os.environ, "RECIPE_HOME": os.fspath(HOME)}
+ENV = {**os.environ, "GUSTO_HOME": os.fspath(HOME)}
 checks = 0
 
 
@@ -24,7 +24,7 @@ def check(condition, message):
 
 def run(*arguments, expect=0):
     result = subprocess.run(
-        [sys.executable, "-m", "recipe", *arguments], cwd=ROOT, env=ENV,
+        [sys.executable, "-m", "gusto", *arguments], cwd=ROOT, env=ENV,
         text=True, encoding="utf-8", capture_output=True,
     )
     check(result.returncode == expect,
@@ -117,7 +117,7 @@ def main():
     check(deleted == {"slug": slug, "deleted": True},
           "delete --json must confirm deletion")
 
-    print(f"OK - {checks} CLI checks passed (RECIPE_HOME={HOME})")
+    print(f"OK - {checks} CLI checks passed (GUSTO_HOME={HOME})")
 
 
 if __name__ == "__main__":

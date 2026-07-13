@@ -51,7 +51,7 @@ Festlegen, als Stubs committen, BEVOR Phase 1 startet:
   `shopping_load/save/add/add_rezept/list/toggle/remove/clear_done/merge`.
 - **Zutaten-Parsing-Regel:** Bullet-Items (`-`/`*`) unter `## Zutaten` bis zur
   nächsten `##`-Überschrift; v1 = ganze Zeile als `text`.
-- **CLI-Spec:** `recipe shopping list|add|rezept|check|uncheck|remove|clear`
+- **CLI-Spec:** `gusto shopping list|add|rezept|check|uncheck|remove|clear`
   (alle mit `--json`).
 - **Schon mit Blick auf Phase 2:** Merge-Regel = pro `id` neuestes
   `updated_at` gewinnt, Tombstones propagieren.
@@ -65,15 +65,15 @@ Gegen den Phase-0-Kontrakt, gleichzeitig, getrennte Dateien:
 
 | Subagent | Auftrag | Besitzt (exklusiv) |
 |---|---|---|
-| **1A · Core** | `parse_zutaten` + alle `shopping_*`-Funktionen (außer `merge`) implementieren; Tests | `recipe/core.py` (Einkauf-Abschnitt), `tests/test_shopping.py` |
-| **1B · CLI** | `recipe shopping …`-Subcommands gegen den Kontrakt, alle mit `--json` | `recipe/cli.py` (Einkauf-Abschnitt) |
-| **1C · Web** | Routen + Listen-Seite + „Zutaten auf die Liste"-Knopf am Rezept + Styles | `recipe/web.py` (Einkauf-Routen), `recipe/templates/shopping.html`, `recipe/templates/recipe.html` (nur der Knopf), `recipe/static/style.css` (Einkauf-Styles) |
+| **1A · Core** | `parse_zutaten` + alle `shopping_*`-Funktionen (außer `merge`) implementieren; Tests | `gusto/core.py` (Einkauf-Abschnitt), `tests/test_shopping.py` |
+| **1B · CLI** | `gusto shopping …`-Subcommands gegen den Kontrakt, alle mit `--json` | `gusto/cli.py` (Einkauf-Abschnitt) |
+| **1C · Web** | Routen + Listen-Seite + „Zutaten auf die Liste"-Knopf am Rezept + Styles | `gusto/web.py` (Einkauf-Routen), `gusto/templates/shopping.html`, `gusto/templates/recipe.html` (nur der Knopf), `gusto/static/style.css` (Einkauf-Styles) |
 
 Hinweis: 1B/1C schreiben gegen die **Signaturen** und laufen erst nach dem Merge
 mit 1A grün — genau dafür ist Contract-first da.
 
 ### Checkpoint 1 🔒
-Zusammenführen → `python -m recipe shopping …` prüfen, `browser_check.py` um die
+Zusammenführen → `python -m gusto shopping …` prüfen, `browser_check.py` um die
 Einkaufs-Flows erweitern (Rezept→Liste, Häkchen, Clear). Grün? → weiter.
 
 ---
@@ -95,9 +95,9 @@ Einkaufs-Flows erweitern (Rezept→Liste, Häkchen, Clear). Grün? → weiter.
 ### Phase 2.1 ⚡ MUSS an 3 Subagents
 | Subagent | Auftrag | Besitzt (exklusiv) |
 |---|---|---|
-| **2A · Sync-Server** | `shopping_merge` + `GET /api/shopping` + `POST /api/shopping/sync` | `recipe/core.py` (merge), `recipe/web.py` (API-Abschnitt) |
-| **2B · PWA-Schale** | `manifest.webmanifest`, Icons, Service-Worker (App-Shell cachen, Offline-Fallback), Registrierung | `recipe/static/manifest.webmanifest`, `recipe/static/sw.js`, `recipe/static/icons/*`, `recipe/templates/base.html` (manifest-Link + SW-Registrierung + theme-color) |
-| **2C · Offline-Client** | Lokaler Store, optimistische Häkchen offline, Sync-Logik gegen die API | `recipe/static/shopping-client.js`, `recipe/templates/shopping.html` (Client-Anbindung) |
+| **2A · Sync-Server** | `shopping_merge` + `GET /api/shopping` + `POST /api/shopping/sync` | `gusto/core.py` (merge), `gusto/web.py` (API-Abschnitt) |
+| **2B · PWA-Schale** | `manifest.webmanifest`, Icons, Service-Worker (App-Shell cachen, Offline-Fallback), Registrierung | `gusto/static/manifest.webmanifest`, `gusto/static/sw.js`, `gusto/static/icons/*`, `gusto/templates/base.html` (manifest-Link + SW-Registrierung + theme-color) |
+| **2C · Offline-Client** | Lokaler Store, optimistische Häkchen offline, Sync-Logik gegen die API | `gusto/static/shopping-client.js`, `gusto/templates/shopping.html` (Client-Anbindung) |
 
 2A & 2C arbeiten gegen den 2.0-API-Kontrakt; 2B ist davon unabhängig
 (braucht nur die Asset-Liste).
