@@ -87,6 +87,9 @@ python scripts/browser_check.py    # starts a server against throwaway data and
 python scripts/pwa_check.py        # offline / sync / service worker
 python tests/test_shopping.py      # core shopping-list logic
 python tests/test_merge.py         # full-state sync merge rule
+python tests/test_recipes.py       # recipe/search/log/suggestion core logic
+python tests/test_cli.py           # agent-facing JSON CLI
+python tests/test_packaging.py     # fresh-install dependency declaration
 ```
 
 ## Roadmap
