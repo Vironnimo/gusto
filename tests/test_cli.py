@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import base64
 from pathlib import Path
 
 
@@ -54,6 +55,42 @@ def main():
     changed = as_json("set", slug, "--title", "Neue Suppe", "--duration", "30")
     check(changed["title"] == "Neue Suppe" and changed["duration_min"] == 30,
           "set --json must return updated metadata")
+
+    first_photo = HOME / "cover.png"
+    second_photo = HOME / "step.png"
+    pixel = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+    first_photo.write_bytes(pixel)
+    second_photo.write_bytes(pixel)
+    cover = as_json(
+        "image", "add", slug, os.fspath(first_photo), "--role", "result",
+        "--caption", "Fertige Suppe",
+    )
+    check(cover["is_cover"] is True and cover["role"] == "result",
+          "the first image added through the CLI must become the cover")
+    step = as_json(
+        "image", "add", slug, os.fspath(second_photo), "--role", "step",
+        "--caption", "Beim Kochen",
+    )
+    listed_images = as_json("image", "list", slug)
+    check(len(listed_images["images"]) == 2
+          and listed_images["cover_image_id"] == cover["id"],
+          "image list --json must expose all images and the cover")
+    updated_image = as_json(
+        "image", "set", slug, step["id"], "--role", "ingredients",
+        "--caption", "Vorbereitung",
+    )
+    check(updated_image["role"] == "ingredients"
+          and updated_image["caption"] == "Vorbereitung",
+          "image set --json must update free role and caption")
+    selected = as_json("image", "cover", slug, step["id"])
+    check(selected["cover_image_id"] == step["id"],
+          "image cover --json must select any stored image")
+    removed_image = as_json("image", "remove", slug, step["id"])
+    check(removed_image["removed"] is True
+          and removed_image["cover_image_id"] == cover["id"],
+          "removing the cover must return the fallback cover")
 
     cooked = as_json("cooked", slug, "--date", "2026-07-13")
     check(cooked == {"slug": slug, "date": "2026-07-13", "ok": True},

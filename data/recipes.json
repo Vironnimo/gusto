@@ -9,7 +9,24 @@
     ],
     "duration_min": 25,
     "servings": 2,
-    "last_cooked": "2026-06-21"
+    "last_cooked": "2026-06-21",
+    "images": [
+      {
+        "id": "aefc8363b3b448f88700ced380620754",
+        "filename": "aefc8363b3b448f88700ced380620754.png",
+        "role": "result",
+        "caption": "Cremige Spaghetti Carbonara mit Pecorino und Pfeffer",
+        "created_at": "2026-07-13T17:31:21.396Z"
+      },
+      {
+        "id": "47b3e2c7cc444a5e91cbf483a0b9620f",
+        "filename": "47b3e2c7cc444a5e91cbf483a0b9620f.png",
+        "role": "step",
+        "caption": "Zubereitung von Guanciale und Eier-Pecorino-Creme",
+        "created_at": "2026-07-13T17:31:21.506Z"
+      }
+    ],
+    "cover_image_id": "aefc8363b3b448f88700ced380620754"
   },
   {
     "slug": "rotes-linsen-dal",
@@ -21,7 +38,24 @@
     ],
     "duration_min": 30,
     "servings": 4,
-    "last_cooked": "2026-06-18"
+    "last_cooked": "2026-06-18",
+    "images": [
+      {
+        "id": "7f94b1cbddb24bb0b61bdaf7fc7c8573",
+        "filename": "7f94b1cbddb24bb0b61bdaf7fc7c8573.png",
+        "role": "result",
+        "caption": "Rotes Linsen-Dal mit Kokosmilch und Limette",
+        "created_at": "2026-07-13T17:31:21.604Z"
+      },
+      {
+        "id": "9f7394ac9cba48129bf51b3fa2042e01",
+        "filename": "9f7394ac9cba48129bf51b3fa2042e01.png",
+        "role": "ingredients",
+        "caption": "Linsen, Gemüse, Kokosmilch und Gewürze vor der Zubereitung",
+        "created_at": "2026-07-13T17:31:21.700Z"
+      }
+    ],
+    "cover_image_id": "7f94b1cbddb24bb0b61bdaf7fc7c8573"
   },
   {
     "slug": "ofengemuese-feta",
@@ -33,6 +67,23 @@
     ],
     "duration_min": 40,
     "servings": 2,
-    "last_cooked": null
+    "last_cooked": null,
+    "images": [
+      {
+        "id": "bdab890cded54629a2fd0a279819fcd4",
+        "filename": "bdab890cded54629a2fd0a279819fcd4.png",
+        "role": "step",
+        "caption": "Ofengemüse und Feta frisch auf dem Blech",
+        "created_at": "2026-07-13T17:31:21.804Z"
+      },
+      {
+        "id": "93f2ff3ce0354da08e1404db2e7ba88e",
+        "filename": "93f2ff3ce0354da08e1404db2e7ba88e.png",
+        "role": "result",
+        "caption": "Geröstetes Ofengemüse mit gebräuntem Feta, servierfertig",
+        "created_at": "2026-07-13T17:31:21.900Z"
+      }
+    ],
+    "cover_image_id": "93f2ff3ce0354da08e1404db2e7ba88e"
   }
 ]

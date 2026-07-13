@@ -48,6 +48,8 @@ def _print_list(recipes, as_json: bool) -> None:
             meta.append(f"{r.servings} P.")
         if r.tags:
             meta.append(", ".join(r.tags))
+        if r.images:
+            meta.append(f"{len(r.images)} Bild" + ("er" if len(r.images) != 1 else ""))
         extra = "  ·  ".join(meta)
         print(f"  {r.slug:<22} {r.title}" + (f"   [{extra}]" if extra else ""))
 
@@ -164,8 +166,18 @@ def cmd_check(args):
         print("  Index-Eintrag ohne .md:", ", ".join(res["missing_files"]))
     if res.get("uncategorized_tags"):
         print("  Tags ohne Kategorie:", ", ".join(res["uncategorized_tags"]))
+    if res.get("orphaned_image_folders"):
+        print("  Bildordner ohne Rezept:", ", ".join(res["orphaned_image_folders"]))
+    if res.get("orphaned_image_files"):
+        print("  Bilder ohne Metadaten:", ", ".join(res["orphaned_image_files"]))
+    if res.get("missing_image_files"):
+        print("  Fehlende Bilddateien:", ", ".join(res["missing_image_files"]))
+    if res.get("invalid_cover_images"):
+        print("  Ungueltige Top-Bilder:", ", ".join(res["invalid_cover_images"]))
     if not (res["orphaned_files"] or res["missing_files"]
-            or res.get("uncategorized_tags")):
+            or res.get("uncategorized_tags") or res.get("orphaned_image_folders")
+            or res.get("orphaned_image_files") or res.get("missing_image_files")
+            or res.get("invalid_cover_images")):
         print("  Alles konsistent.")
 
 
@@ -193,6 +205,86 @@ def cmd_delete(args):
         _dump({"slug": args.slug, "deleted": True})
     else:
         print(f"Geloescht: {args.slug}")
+
+
+# --- Recipe images ----------------------------------------------------------
+
+def _image_dict(image, cover_id: str | None) -> dict:
+    data = image.to_dict()
+    data["is_cover"] = image.id == cover_id
+    return data
+
+
+def cmd_image_list(args):
+    try:
+        images, cover_id = core.list_recipe_images(args.slug)
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump({"cover_image_id": cover_id,
+               "images": [_image_dict(image, cover_id) for image in images]})
+        return
+    if not images:
+        print("Keine Bilder bei diesem Rezept.")
+        return
+    for image in images:
+        marker = " [Top-Bild]" if image.id == cover_id else ""
+        caption = f" — {image.caption}" if image.caption else ""
+        print(f"  {image.id}  {image.role}{marker}{caption}")
+
+
+def cmd_image_add(args):
+    try:
+        image = core.add_recipe_image(
+            args.slug, args.path, role=args.role, caption=args.caption,
+            cover=args.cover,
+        )
+        _, cover_id = core.list_recipe_images(args.slug)
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump(_image_dict(image, cover_id))
+    else:
+        marker = " (Top-Bild)" if image.id == cover_id else ""
+        print(f"Bild hinzugefuegt: {image.id}{marker}")
+
+
+def cmd_image_set(args):
+    if args.role is None and args.caption is None:
+        sys.exit("Gib --role und/oder --caption an.")
+    try:
+        image = core.update_recipe_image(
+            args.slug, args.id, role=args.role, caption=args.caption,
+        )
+        _, cover_id = core.list_recipe_images(args.slug)
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump(_image_dict(image, cover_id))
+    else:
+        print(f"Bild aktualisiert: {image.id}")
+
+
+def cmd_image_cover(args):
+    try:
+        image = core.set_recipe_cover(args.slug, args.id)
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump({"slug": args.slug, "cover_image_id": image.id})
+    else:
+        print(f"Top-Bild gesetzt: {image.id}")
+
+
+def cmd_image_remove(args):
+    try:
+        cover_id = core.remove_recipe_image(args.slug, args.id)
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump({"id": args.id, "removed": True, "cover_image_id": cover_id})
+    else:
+        print(f"Bild entfernt: {args.id}")
 
 
 # --- Shopping list ----------------------------------------------------------
@@ -377,6 +469,39 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("delete", parents=[base], help="Rezept loeschen (.md + Index).")
     sp.add_argument("slug")
     sp.set_defaults(func=cmd_delete)
+
+    sp = sub.add_parser("image", help="Bilder eines Rezepts verwalten.")
+    isub = sp.add_subparsers(dest="image_command", required=True)
+
+    ip = isub.add_parser("list", parents=[base], help="Rezeptbilder anzeigen.")
+    ip.add_argument("slug")
+    ip.set_defaults(func=cmd_image_list)
+
+    ip = isub.add_parser("add", parents=[base], help="Bild zu einem Rezept kopieren.")
+    ip.add_argument("slug")
+    ip.add_argument("path", help="Lokale Bilddatei (JPG, PNG, WebP oder GIF).")
+    ip.add_argument("--role", default="gallery",
+                    help="Freier Zweck, z.B. result, step, ingredients.")
+    ip.add_argument("--caption", default="", help="Optionale Bildunterschrift.")
+    ip.add_argument("--cover", action="store_true", help="Als Top-Bild verwenden.")
+    ip.set_defaults(func=cmd_image_add)
+
+    ip = isub.add_parser("set", parents=[base], help="Rolle/Beschriftung aendern.")
+    ip.add_argument("slug")
+    ip.add_argument("id")
+    ip.add_argument("--role")
+    ip.add_argument("--caption")
+    ip.set_defaults(func=cmd_image_set)
+
+    ip = isub.add_parser("cover", parents=[base], help="Top-Bild auswaehlen.")
+    ip.add_argument("slug")
+    ip.add_argument("id")
+    ip.set_defaults(func=cmd_image_cover)
+
+    ip = isub.add_parser("remove", parents=[base], help="Bild entfernen.")
+    ip.add_argument("slug")
+    ip.add_argument("id")
+    ip.set_defaults(func=cmd_image_remove)
 
     sp = sub.add_parser("shopping", help="Einkaufsliste verwalten.")
     esub = sp.add_subparsers(dest="shopping_command", required=True)

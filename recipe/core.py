@@ -6,6 +6,7 @@ are only thin shells around this module. No feature exists in only one surface.
 Data model:
   recipes/<slug>.md   pure Markdown content of a recipe (NO frontmatter)
   data/recipes.json   metadata of ALL recipes (source for list/search/filter)
+  images/<slug>/      image files owned and stored by Gusto
   data/log.json       cooking log: what was cooked when
 
 The slug links both:  data/recipes.json[*].slug  <->  recipes/<slug>.md
@@ -18,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import uuid
 from dataclasses import dataclass, field, asdict, fields
 from datetime import date, datetime, timedelta, timezone
@@ -61,7 +63,32 @@ def shopping_path() -> Path:
     return data_dir() / "shopping_list.json"
 
 
+def images_dir() -> Path:
+    return project_root() / "images"
+
+
+def recipe_images_dir(slug: str) -> Path:
+    return images_dir() / slug
+
+
 # --- Data model -------------------------------------------------------------
+
+@dataclass
+class RecipeImage:
+    id: str
+    filename: str
+    role: str = "gallery"
+    caption: str = ""
+    created_at: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "RecipeImage":
+        allowed = {f.name for f in fields(cls)}
+        return cls(**{key: value for key, value in data.items() if key in allowed})
+
 
 @dataclass
 class Recipe:
@@ -71,6 +98,8 @@ class Recipe:
     duration_min: int | None = None
     servings: int | None = None
     last_cooked: str | None = None  # ISO "YYYY-MM-DD" or None
+    images: list[RecipeImage] = field(default_factory=list)
+    cover_image_id: str | None = None
 
     @property
     def path(self) -> Path:
@@ -81,13 +110,25 @@ class Recipe:
         p = self.path
         return p.read_text(encoding="utf-8") if p.exists() else ""
 
+    @property
+    def cover_image(self) -> RecipeImage | None:
+        if self.cover_image_id:
+            match = next((image for image in self.images
+                          if image.id == self.cover_image_id), None)
+            if match is not None:
+                return match
+        return self.images[0] if self.images else None
+
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Recipe":
         allowed = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in d.items() if k in allowed})
+        values = {k: v for k, v in d.items() if k in allowed}
+        values["images"] = [RecipeImage.from_dict(image)
+                            for image in values.get("images", [])]
+        return cls(**values)
 
 
 # --- Load / save ------------------------------------------------------------
@@ -324,6 +365,195 @@ def delete_recipe(slug: str) -> None:
     p = recipe_file(slug)
     if p.exists():
         p.unlink()
+    image_folder = recipe_images_dir(slug)
+    if image_folder.exists():
+        shutil.rmtree(image_folder)
+
+
+# --- Recipe images ----------------------------------------------------------
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+
+
+def _valid_image_header(path: Path, suffix: str) -> bool:
+    """Validate the format and positive dimensions without optional libraries."""
+    with path.open("rb") as handle:
+        header = handle.read(32)
+
+        if suffix == ".png":
+            return (header.startswith(b"\x89PNG\r\n\x1a\n")
+                    and header[12:16] == b"IHDR"
+                    and int.from_bytes(header[16:20], "big") > 0
+                    and int.from_bytes(header[20:24], "big") > 0)
+
+        if suffix == ".gif":
+            return (header[:6] in {b"GIF87a", b"GIF89a"}
+                    and int.from_bytes(header[6:8], "little") > 0
+                    and int.from_bytes(header[8:10], "little") > 0)
+
+        if suffix == ".webp":
+            if not (header.startswith(b"RIFF") and header[8:12] == b"WEBP"):
+                return False
+            chunk = header[12:16]
+            if chunk == b"VP8X" and len(header) >= 30:
+                width = 1 + int.from_bytes(header[24:27], "little")
+                height = 1 + int.from_bytes(header[27:30], "little")
+                return width > 0 and height > 0
+            if chunk == b"VP8L" and len(header) >= 25 and header[20] == 0x2F:
+                bits = int.from_bytes(header[21:25], "little")
+                return (bits & 0x3FFF) + 1 > 0 and ((bits >> 14) & 0x3FFF) + 1 > 0
+            if chunk == b"VP8 " and len(header) >= 30 and header[23:26] == b"\x9d\x01\x2a":
+                width = int.from_bytes(header[26:28], "little") & 0x3FFF
+                height = int.from_bytes(header[28:30], "little") & 0x3FFF
+                return width > 0 and height > 0
+            return False
+
+        if suffix in {".jpg", ".jpeg"}:
+            if header[:2] != b"\xff\xd8":
+                return False
+            handle.seek(2)
+            sof_markers = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                           0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+            while True:
+                byte = handle.read(1)
+                if not byte:
+                    return False
+                if byte != b"\xff":
+                    continue
+                marker_byte = handle.read(1)
+                while marker_byte == b"\xff":
+                    marker_byte = handle.read(1)
+                if not marker_byte:
+                    return False
+                marker = marker_byte[0]
+                if marker in {0x01, 0xD8} or 0xD0 <= marker <= 0xD7:
+                    continue
+                if marker in {0xD9, 0xDA}:
+                    return False
+                length_bytes = handle.read(2)
+                if len(length_bytes) != 2:
+                    return False
+                length = int.from_bytes(length_bytes, "big")
+                if length < 2:
+                    return False
+                if marker in sof_markers:
+                    dimensions = handle.read(5)
+                    return (len(dimensions) == 5
+                            and int.from_bytes(dimensions[1:3], "big") > 0
+                            and int.from_bytes(dimensions[3:5], "big") > 0)
+                handle.seek(length - 2, 1)
+
+    return False
+
+
+def recipe_image_path(slug: str, image: RecipeImage) -> Path:
+    return recipe_images_dir(slug) / image.filename
+
+
+def list_recipe_images(slug: str) -> tuple[list[RecipeImage], str | None]:
+    recipe = get(slug)
+    if recipe is None:
+        raise ValueError(f"Kein Rezept mit Slug '{slug}'.")
+    cover = recipe.cover_image
+    return recipe.images, cover.id if cover is not None else None
+
+
+def get_recipe_image(slug: str, image_id: str) -> RecipeImage | None:
+    recipe = get(slug)
+    if recipe is None:
+        return None
+    return next((image for image in recipe.images if image.id == image_id), None)
+
+
+def add_recipe_image(slug: str, source: str | Path, role: str = "gallery",
+                     caption: str = "", cover: bool = False) -> RecipeImage:
+    recipes = load_recipes()
+    recipe = next((item for item in recipes if item.slug == slug), None)
+    if recipe is None:
+        raise ValueError(f"Kein Rezept mit Slug '{slug}'.")
+
+    source_path = Path(source).expanduser()
+    if not source_path.is_file():
+        raise ValueError(f"Bilddatei nicht gefunden: '{source_path}'.")
+    suffix = source_path.suffix.lower()
+    if suffix not in IMAGE_EXTENSIONS:
+        allowed = ", ".join(sorted(IMAGE_EXTENSIONS))
+        raise ValueError(f"Nicht unterstütztes Bildformat '{suffix}' ({allowed}).")
+    if not _valid_image_header(source_path, suffix):
+        raise ValueError(
+            f"Datei ist kein gültiges {suffix.lstrip('.').upper()}-Bild: '{source_path}'."
+        )
+
+    image = RecipeImage(
+        id=uuid.uuid4().hex,
+        filename="", role=role.strip() or "gallery",
+        caption=caption.strip(), created_at=_now_iso(),
+    )
+    image.filename = f"{image.id}{suffix}"
+    destination = recipe_image_path(slug, image)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_path, destination)
+
+    recipe.images.append(image)
+    if cover or recipe.cover_image is None:
+        recipe.cover_image_id = image.id
+    try:
+        save_recipes(recipes)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    return image
+
+
+def update_recipe_image(slug: str, image_id: str, role: str | None = None,
+                        caption: str | None = None) -> RecipeImage:
+    recipes = load_recipes()
+    recipe = next((item for item in recipes if item.slug == slug), None)
+    if recipe is None:
+        raise ValueError(f"Kein Rezept mit Slug '{slug}'.")
+    image = next((item for item in recipe.images if item.id == image_id), None)
+    if image is None:
+        raise ValueError(f"Kein Bild mit id '{image_id}' bei Rezept '{slug}'.")
+    if role is not None:
+        image.role = role.strip() or "gallery"
+    if caption is not None:
+        image.caption = caption.strip()
+    save_recipes(recipes)
+    return image
+
+
+def set_recipe_cover(slug: str, image_id: str) -> RecipeImage:
+    recipes = load_recipes()
+    recipe = next((item for item in recipes if item.slug == slug), None)
+    if recipe is None:
+        raise ValueError(f"Kein Rezept mit Slug '{slug}'.")
+    image = next((item for item in recipe.images if item.id == image_id), None)
+    if image is None:
+        raise ValueError(f"Kein Bild mit id '{image_id}' bei Rezept '{slug}'.")
+    recipe.cover_image_id = image.id
+    save_recipes(recipes)
+    return image
+
+
+def remove_recipe_image(slug: str, image_id: str) -> str | None:
+    recipes = load_recipes()
+    recipe = next((item for item in recipes if item.slug == slug), None)
+    if recipe is None:
+        raise ValueError(f"Kein Rezept mit Slug '{slug}'.")
+    image = next((item for item in recipe.images if item.id == image_id), None)
+    if image is None:
+        raise ValueError(f"Kein Bild mit id '{image_id}' bei Rezept '{slug}'.")
+
+    recipe.images = [item for item in recipe.images if item.id != image_id]
+    remaining_ids = {item.id for item in recipe.images}
+    if recipe.cover_image_id == image_id or recipe.cover_image_id not in remaining_ids:
+        recipe.cover_image_id = recipe.images[0].id if recipe.images else None
+    save_recipes(recipes)
+    recipe_image_path(slug, image).unlink(missing_ok=True)
+    folder = recipe_images_dir(slug)
+    if folder.exists() and not any(folder.iterdir()):
+        folder.rmdir()
+    return recipe.cover_image_id
 
 
 # --- Consistency ------------------------------------------------------------
@@ -336,11 +566,37 @@ def check() -> dict:
     present = {p.stem for p in recipes_dir().glob("*.md")} if recipes_dir().exists() else set()
     mapping = _tag_to_category()
     uncategorized = sorted({t for r in recipes for t in r.tags if t.lower() not in mapping})
+    image_root = images_dir()
+    image_folders = ({path.name for path in image_root.iterdir() if path.is_dir()}
+                     if image_root.exists() else set())
+    orphaned_image_folders = sorted(image_folders - indexed)
+    missing_image_files: list[str] = []
+    orphaned_image_files: list[str] = []
+    invalid_cover_images: list[str] = []
+    for recipe in recipes:
+        referenced = {image.filename for image in recipe.images}
+        folder = recipe_images_dir(recipe.slug)
+        present_images = ({path.name for path in folder.iterdir() if path.is_file()}
+                          if folder.exists() else set())
+        missing_image_files.extend(
+            f"{recipe.slug}/{filename}" for filename in sorted(referenced - present_images)
+        )
+        orphaned_image_files.extend(
+            f"{recipe.slug}/{filename}" for filename in sorted(present_images - referenced)
+        )
+        if ((recipe.images and recipe.cover_image_id is None)
+                or (recipe.cover_image_id is not None
+                    and recipe.cover_image_id not in {image.id for image in recipe.images})):
+            invalid_cover_images.append(recipe.slug)
     return {
         "recipe_count": len(indexed),
         "orphaned_files": sorted(present - indexed),   # .md without index entry
         "missing_files": sorted(indexed - present),    # index entry without .md
         "uncategorized_tags": uncategorized,           # tags in no category
+        "orphaned_image_folders": orphaned_image_folders,
+        "orphaned_image_files": orphaned_image_files,
+        "missing_image_files": missing_image_files,
+        "invalid_cover_images": sorted(invalid_cover_images),
     }
 
 
