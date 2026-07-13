@@ -31,6 +31,12 @@
   {% for r in recipes %}
   <li class="card" style="--i: {{ loop.index0 }}">
     <a href="/recipe/{{ r.slug }}">
+      {% if r.cover_image %}
+      <div class="card-image-wrap">
+        <img class="card-image" src="/media/recipe/{{ r.slug }}/{{ r.cover_image.id }}"
+             alt="{{ r.cover_image.caption or r.title }}" loading="lazy" decoding="async">
+      </div>
+      {% endif %}
       <div class="card-top">
         {% if r.duration_min %}<span class="card-time">{{ r.duration_min }} min</span>{% endif %}
       </div>

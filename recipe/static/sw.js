@@ -4,9 +4,10 @@
 //   activate  -> delete old caches + clients.claim
 //   fetch     -> navigations: network-first, offline fallback to /shopping
 //                /api/...:     network-only (do not cache)
+//                /media/...:   network-only (deleted images must stay deleted)
 //                other GET:    cache-first (static)
 
-const CACHE = "gusto-v3";
+const CACHE = "gusto-v4";
 
 const APP_SHELL = [
   "/shopping",
@@ -68,6 +69,12 @@ self.addEventListener("fetch", (event) => {
 
   // API: never cache (the client handles offline via localStorage).
   if (url.pathname.startsWith("/api/")) {
+    event.respondWith(fetch(request));
+    return;
+  }
+
+  // Recipe images are mutable and can be deleted. Never retain stale copies.
+  if (url.pathname.startsWith("/media/recipe/")) {
     event.respondWith(fetch(request));
     return;
   }

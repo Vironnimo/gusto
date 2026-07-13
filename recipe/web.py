@@ -99,6 +99,17 @@ def recipe_detail(request: Request, slug: str):
     })
 
 
+@app.get("/media/recipe/{slug}/{image_id}", include_in_schema=False)
+def recipe_image(slug: str, image_id: str):
+    image = core.get_recipe_image(slug, image_id)
+    if image is None:
+        raise StarletteHTTPException(status_code=404)
+    path = core.recipe_image_path(slug, image)
+    if not path.is_file():
+        raise StarletteHTTPException(status_code=404)
+    return FileResponse(str(path))
+
+
 @app.get("/new", response_class=HTMLResponse)
 def new_form(request: Request):
     form = {"title": "", "tags": "", "duration": "", "servings": "",

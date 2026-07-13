@@ -37,6 +37,8 @@ if TESTDATA.exists():
 TESTDATA.mkdir()
 shutil.copytree(ROOT / "recipes", TESTDATA / "recipes")
 shutil.copytree(ROOT / "data", TESTDATA / "data")
+if (ROOT / "images").exists():
+    shutil.copytree(ROOT / "images", TESTDATA / "images")
 
 env = {**os.environ, "RECIPE_HOME": str(TESTDATA)}
 srv = subprocess.Popen(
@@ -78,6 +80,8 @@ try:
         page.goto(BASE, wait_until="networkidle")
         check("Gusto" in page.content(), "homepage shows the brand")
         check(page.locator(".card").count() == 3, "3 recipe cards visible")
+        check(page.locator(".card-image").count() == 3,
+              "all sample recipes show their stored cover image")
         page.screenshot(path=str(SHOTS / "01_home.png"), full_page=True)
 
         # Search (also searches ingredients in the text) -- server route (no-JS)
@@ -138,7 +142,21 @@ try:
         check("Zutaten" in page.content() and "Zubereitung" in page.content(),
               "recipe shows ingredients + steps")
         check(page.locator(".recipe-body ol li").count() >= 4, "steps rendered as a list")
+        check(page.locator(".recipe-hero img").count() == 1,
+              "recipe shows the selected cover image")
+        check(page.locator(".recipe-gallery-item").count() == 1,
+              "recipe shows an additional gallery image")
+        check(page.locator(".recipe-gallery-item figcaption", has_text="Zubereitung").count() == 1,
+              "gallery image shows its caption")
+        image_response = page.request.get(
+            BASE + page.locator(".recipe-gallery-item img").get_attribute("src")
+        )
+        check(image_response.ok and image_response.headers.get("content-type", "").startswith("image/"),
+              "stored gallery image is served as an image")
         page.screenshot(path=str(SHOTS / "03_recipe.png"), full_page=True)
+
+        missing_image = page.request.get(BASE + "/media/recipe/spaghetti-carbonara/gibtsnicht")
+        check(missing_image.status == 404, "unknown recipe image -> 404")
 
         # "Cooked today" -> log
         page.locator("button.btn", has_text="Heute gekocht").click()

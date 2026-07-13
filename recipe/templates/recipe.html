@@ -2,6 +2,13 @@
 {% block content %}
 <article class="recipe">
   <a class="back" href="/">← Alle Rezepte</a>
+  {% if r.cover_image %}
+  <figure class="recipe-hero">
+    <img src="/media/recipe/{{ r.slug }}/{{ r.cover_image.id }}"
+         alt="{{ r.cover_image.caption or r.title }}">
+    {% if r.cover_image.caption %}<figcaption>{{ r.cover_image.caption }}</figcaption>{% endif %}
+  </figure>
+  {% endif %}
   <header class="recipe-head">
     {% if r.tags %}
     <div class="recipe-tags">
@@ -31,5 +38,27 @@
   <div class="recipe-body">
     {{ content_html|safe }}
   </div>
+  {% if r.images|length > 1 %}
+  {% set role_labels = {'result': 'Ergebnis', 'ingredients': 'Zutaten', 'step': 'Zubereitung'} %}
+  <section class="recipe-gallery" aria-label="Weitere Bilder">
+    <h2>Weitere Eindrücke</h2>
+    <div class="recipe-gallery-grid">
+      {% for image in r.images %}
+        {% if not r.cover_image or image.id != r.cover_image.id %}
+        <figure class="recipe-gallery-item">
+          <img src="/media/recipe/{{ r.slug }}/{{ image.id }}"
+               alt="{{ image.caption or r.title }}" loading="lazy">
+          {% if image.caption or image.role != 'gallery' %}
+          <figcaption>
+            {% if image.role != 'gallery' %}<span>{{ role_labels.get(image.role, image.role) }}</span>{% endif %}
+            {{ image.caption }}
+          </figcaption>
+          {% endif %}
+        </figure>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
 </article>
 {% endblock %}
