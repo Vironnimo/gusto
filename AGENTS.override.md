@@ -43,7 +43,8 @@ Before doing anything else in every Session, read `.vorch/PROJECT.md` and `.vorc
 | Location | Contents |
 |----------|----------|
 | `recipes/<slug>.md` | Pure recipe content (Markdown, starts with `# Title`). No frontmatter. |
-| `data/recipes.json` | Metadata of all recipes: `slug`, `title`, `tags`, `duration_min`, `servings`, `last_cooked`. |
+| `images/<slug>/` | Recipe images copied into and owned by Gusto. |
+| `data/recipes.json` | Recipe metadata including `images` and `cover_image_id`. |
 | `data/categories.json` | Tag categories (facets): `{ "<key>": {"label", "tags": [...]} }`. Maps the flat tags to categories (order = display order). |
 | `data/log.json` | Cooking log: `[{ "date": "YYYY-MM-DD", "slug": ... }]`. |
 
@@ -68,7 +69,8 @@ python -m recipe <command>     # CLI, if not installed
 ```
 
 All commands understand `--json` (machine-readable, for agents). `RECIPE_HOME`
-(env) relocates the data folder (`recipes/` + `data/`), handy on the Pi.
+(env) relocates the full recipe store (`recipes/` + `images/` + `data/`), handy
+on the Pi.
 
 ```
 recipe list   [--tag T ...] [--max-time N]    Filter; --tag repeatable/comma-separated
@@ -84,6 +86,12 @@ recipe delete <slug>                           Delete a recipe
 recipe suggest [--days N] [--limit N]          Candidates for the next meal
 recipe check                                   Consistency index <-> .md (+ unsorted tags)
 recipe serve  [--host H] [--port N]            Start the web UI (LAN)
+
+recipe image list <slug>                       Show cover and gallery images
+recipe image add <slug> <path> [--role R] [--caption TEXT] [--cover]
+recipe image set <slug> <id> [--role R] [--caption TEXT]
+recipe image cover <slug> <id>                 Select the top image
+recipe image remove <slug> <id>                Delete one stored image
 
 recipe shopping list [--pending]                  Show the shopping list
 recipe shopping add "<text>" [--quantity M]        Add an entry
@@ -109,8 +117,12 @@ recipe shopping clear                           Remove done (checked) entries
 **Filter by tags (facets):** `recipe list --tag italienisch --tag pizza --tag
 vegetarisch --json` — OR within a category, AND across categories.
 
-**Digitize a recipe:** `recipe new "Title" --tags … --duration …`, then write the
-content into `recipes/<slug>.md` (from code: `core.add_recipe(…, content=…)`).
+**Transfer a recipe from images:** inspect the supplied images yourself, create
+or update the recipe content, then attach every useful image with `recipe image
+add <slug> <path> --role <purpose> --caption "…"`. Gusto copies and owns the
+files. Recipes can have any number of images; the first is the default cover,
+and `--cover` or `recipe image cover` selects a different top image. Roles such
+as `result`, `ingredients`, or `step` are descriptive and remain open-ended.
 
 **Shopping list as a Telegram checklist:** the agent posts the list via vBot's
 `channel_send` tool (inline-keyboard) — one `chk:<id>` button per item (leading
@@ -165,7 +177,9 @@ staggered fade-in. UI and data fields are German.
 typing, **tag facets**: multi-select grouped by category, OR within / AND across
 categories — `data/categories.json`, `recipe tags`), recipe view,
 create/edit/delete, "cooked today", suggestions, log, 404 page, Pi deployment
-(systemd), browser test. **Shopping list** (core/CLI/web, `recipe shopping …`)
+(systemd), browser test, and **multiple stored recipe images** with a selected
+cover, gallery, free role/caption, and full agent control through `recipe image
+…`. **Shopping list** (core/CLI/web, `recipe shopping …`)
 incl. offline-capable **PWA**: service worker (app-shell cache, offline fallback)
 + full-state sync via "last writer wins" + tombstones. Sync contract:
 [docs/sync-kontrakt.md](docs/sync-kontrakt.md). Tests: `scripts/browser_check.py`
@@ -182,5 +196,4 @@ service worker).
   [docs/https-pwa-option.md](docs/https-pwa-option.md).
 
 **Under discussion / planned:**
-- Agent-managed recipe images.
 - Weekly plan.

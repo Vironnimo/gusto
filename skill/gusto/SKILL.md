@@ -1,6 +1,6 @@
 ---
 name: gusto
-description: Operate the Gusto recipe system through its `recipe` CLI. Use to answer "what should I cook?" and "what can I make with these ingredients?", to find, show, add, edit or delete recipes, filter recipes by tag categories, manage the shopping list, and record or read the cooking log. Drive the `recipe` CLI and pass `--json` whenever you parse output.
+description: Operate the Gusto recipe system through its `recipe` CLI. Use to answer "what should I cook?" and "what can I make with these ingredients?", find, show, add, edit or delete recipes, manage recipe images, filter recipes by tag categories, manage the shopping list, and record or read the cooking log. Drive the `recipe` CLI and pass `--json` whenever you parse output.
 ---
 
 # Gusto — operating the recipe system via the CLI
@@ -15,7 +15,7 @@ English.)
 
 - `python -m recipe <command> --json` (or `recipe <command>` if installed).
 - Side-effect-free: `list`, `search`, `show`, `tags`, `log`, `suggest`, `check`.
-- Change state: `new`, `set`, `delete`, `cooked`, `shopping …`.
+- Change state: `new`, `set`, `delete`, `cooked`, `image …`, `shopping …`.
 
 ## Workflows
 
@@ -43,6 +43,17 @@ English.)
   (From Python in one step: `core.add_recipe(title, tags=..., content=md)`.)
 - Used a new tag? add it under a category in `data/categories.json`;
   `recipe check` reports uncategorized tags.
+
+**Add and manage recipe images**
+- Inspect the source image yourself, then add it to the matching recipe with
+  `recipe image add <slug> <path> --role <purpose> --caption "<description>" --json`.
+  Gusto copies the file into its own store; the source path is not retained.
+- A recipe can contain any number of images. The first becomes its cover
+  automatically; pass `--cover` while adding or use `recipe image cover <slug>
+  <id>` to select a different top image.
+- `role` is a free descriptive value such as `result`, `ingredients`, or `step`;
+  it does not constrain placement. Use `recipe image list <slug> --json` before
+  changing images, `image set` for role/caption, and `image remove` to delete one.
 
 **Edit · log · shopping**
 - `recipe set <slug> --tags a,b --duration N` (`--tags` replaces the list);
@@ -96,7 +107,8 @@ stays the source of truth. The keyboard has **two kinds of buttons**:
 ## Data model
 
 - `recipes/<slug>.md` — recipe content, no frontmatter.
-- `data/recipes.json` — metadata: `slug, title, tags[], duration_min, servings, last_cooked`.
+- `data/recipes.json` — metadata including `images[]` and `cover_image_id`.
+- `images/<slug>/` — original image files copied into and owned by Gusto.
 - `data/categories.json` — `{ key: { label, tags[] } }` (order = display order); defines the facets.
 - `data/log.json`, `data/shopping_list.json`.
 

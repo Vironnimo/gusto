@@ -5,8 +5,9 @@ Raspberry Pi on the local network, reachable from any device.
 
 - **Recipes are plain Markdown files** in `recipes/` – directly readable and
   editable, no lock-in, no frontmatter.
-- **Metadata** (tags, duration, servings, last cooked) live bundled in
-  `data/recipes.json`, the cooking log in `data/log.json`.
+- **Metadata** (tags, duration, servings, last cooked, image references) live
+  bundled in `data/recipes.json`; Gusto stores recipe images under `images/`,
+  and the cooking log lives in `data/log.json`.
 - **Two equal surfaces over the same core** (`recipe/core.py`): a **CLI** (also
   for agents; guide in [CLAUDE.md](CLAUDE.md) and as a skill under
   `skill/gusto/`) and a polished **web UI**. No feature exists in only one of them.
@@ -45,6 +46,11 @@ recipe cooked <slug>                 # cooked today -> log
 recipe suggest --days 7              # suggestions for the next meal
 recipe delete <slug>
 recipe check                         # consistency index <-> .md
+recipe image list <slug>             # cover and gallery images
+recipe image add <slug> <path> --role result --caption "Serviert" --cover
+recipe image set <slug> <id> --role step --caption "Nach dem Anbraten"
+recipe image cover <slug> <id>       # select the top image
+recipe image remove <slug> <id>
 ```
 
 Every command takes `--json` for machine-readable output.
@@ -53,6 +59,7 @@ Every command takes `--json` for machine-readable output.
 
 ```
 recipes/            the recipes as .md (the heart, pure content)
+images/<slug>/      recipe images copied into and owned by Gusto
 data/recipes.json   metadata of all recipes
 data/log.json       cooking log
 recipe/core.py      all the logic
@@ -76,8 +83,9 @@ skill/gusto/        skill for operating it via the CLI (for agents)
    ```
 3. Reachable at `http://<pi-hostname>.local:8000`.
 
-With the environment variable `RECIPE_HOME` the data folder (`recipes/` +
-`data/`) can be placed anywhere – handy for backing it up as its own git repo.
+With the environment variable `RECIPE_HOME` the recipe store (`recipes/` +
+`images/` + `data/`) can be placed anywhere – handy for backing it up as its
+own git repo.
 
 ## Tests
 
@@ -97,5 +105,5 @@ python tests/test_packaging.py     # fresh-install dependency declaration
 - [x] Data model + core + CLI
 - [x] Web UI (FastAPI, responsive & nice)
 - [x] Shopping list & PWA (offline + sync)
-- [ ] Agent-managed recipe images
+- [x] Multiple stored images per recipe (cover + gallery, agent-managed via CLI)
 - [ ] Weekly plan

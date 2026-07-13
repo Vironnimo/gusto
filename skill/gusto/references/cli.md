@@ -24,7 +24,8 @@ All commands: `python -m recipe <command>` (or `recipe <command>` after
 - `suggest [--days N] [--limit N] [--json]`
   Recipes not cooked in the last N days (default 7), longest-ago first.
 - `check [--json]`
-  Consistency of index ↔ `.md` files, plus tags not assigned to a category.
+  Consistency of index ↔ `.md` files, recipe image metadata ↔ stored files,
+  plus tags not assigned to a category.
 
 ### Writing
 
@@ -39,7 +40,18 @@ All commands: `python -m recipe <command>` (or `recipe <command>` after
 - `cooked <slug> [--date YYYY-MM-DD] [--json]`
   Add a log entry (default: today) and bump `last_cooked`.
 - `delete <slug> [--json]`
-  Remove the `.md` + index entry. Log history is kept.
+  Remove the `.md`, index entry, and all stored images. Log history is kept.
+
+### Recipe images (`image`)
+
+- `image list <slug> [--json]` — list every image and the selected cover.
+- `image add <slug> <path> [--role R] [--caption TEXT] [--cover] [--json]` —
+  copy an image into Gusto. The first image automatically becomes the cover.
+- `image set <slug> <id> [--role R] [--caption TEXT] [--json]` — update free-form
+  purpose and/or caption.
+- `image cover <slug> <id> [--json]` — select an existing image as the top image.
+- `image remove <slug> <id> [--json]` — delete the stored file and metadata; if
+  it was the cover, the first remaining image becomes the new cover.
 
 ### Shopping list (`shopping`)
 
@@ -69,7 +81,11 @@ Recipe (returned by `list`, `search`, `new`, `set` — array or single object):
   "tags": ["pasta", "italienisch", "schnell"],
   "duration_min": 25,
   "servings": 2,
-  "last_cooked": "2026-06-21"
+  "last_cooked": "2026-06-21",
+  "images": [
+    {"id": "a04381611b2740d5944abc58993c2643", "filename": "a04381611b2740d5944abc58993c2643.png", "role": "result", "caption": "Serviert", "created_at": "2026-07-13T18:00:00Z"}
+  ],
+  "cover_image_id": "a04381611b2740d5944abc58993c2643"
 }
 ```
 
@@ -88,13 +104,19 @@ Recipe (returned by `list`, `search`, `new`, `set` — array or single object):
   "recipe_count": 3,
   "orphaned_files": [],
   "missing_files": [],
-  "uncategorized_tags": []
+  "uncategorized_tags": [],
+  "orphaned_image_folders": [],
+  "orphaned_image_files": [],
+  "missing_image_files": [],
+  "invalid_cover_images": []
 }
 ```
 
 - `orphaned_files`: a `.md` with no index entry.
 - `missing_files`: an index entry with no `.md`.
 - `uncategorized_tags`: used tags not in any category.
+- The image fields report folders without recipes, files without metadata,
+  missing referenced files, and cover ids that do not point to an image.
 
 `log --json`: `[ { "date": "2026-06-21", "slug": "spaghetti-carbonara" } ]`
 
@@ -134,7 +156,8 @@ client app): see `docs/telegram-shopping-handoff.md`.
 | File | Content |
 |---|---|
 | `recipes/<slug>.md` | Pure markdown. First line `# Title`, then `## Zutaten` (bullets) and `## Zubereitung` (numbered). **No frontmatter.** |
-| `data/recipes.json` | Metadata array — the index. |
+| `images/<slug>/` | Recipe images copied into and owned by Gusto. |
+| `data/recipes.json` | Metadata array — the index, including images and selected cover. |
 | `data/categories.json` | `{ key: { label, tags[] } }`; order = display order. |
 | `data/log.json` | `[ { date, slug } ]`. |
 | `data/shopping_list.json` | `{ items: [ … ] }` (includes tombstones). |
