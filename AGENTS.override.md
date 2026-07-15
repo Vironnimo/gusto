@@ -28,9 +28,13 @@ Before doing anything else in every Session, read `.vorch/PROJECT.md` and `.vorc
    not build it.
 5. **Ask first, then build.** Do not implement new features / larger steps
    without an explicit go. Present the concept → ask → only then code.
-6. **Verify in a real browser.** Check web changes with `scripts/browser_check.py`
-   (Playwright) against a throwaway copy of the data and produce screenshots.
-   Tests must never modify the real data.
+6. **Verify in a real browser through the local `playwright-cli` skill.** Never
+   use the internal Codex in-app browser or the Codex Browser plugin for this
+   project; it is unstable in this workspace and can crash the Codex app. Use
+   `.agents/skills/playwright-cli/SKILL.md` for all browser interaction and
+   visual verification. Run `scripts/browser_check.py` and
+   `scripts/pwa_check.py` where relevant, always against a throwaway copy of
+   the data, and produce screenshots. Tests must never modify the real data.
 7. **Show it live, don't just describe it.** When something runs, start the
    server yourself and give a clickable link — don't just explain how to start it.
 8. **Keep every agent guide and the skill in sync.** The usage documentation
