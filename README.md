@@ -8,6 +8,10 @@ Raspberry Pi on the local network, reachable from any device.
 - **Metadata** (tags, duration, servings, last cooked, image references) live
   bundled in `data/recipes.json`; Gusto stores recipe images under `images/`,
   and the cooking log lives in `data/log.json`.
+- **Preferred products** connect recurring free-text shopping items to exact
+  learned aliases and a shared, manually ranked household selection. Product
+  cards contain a name and brand, may also include an owned photo, store, and
+  note, and remain visible in the shopping PWA while offline.
 - **Two equal surfaces over the same core** (`gusto/core.py`): a **CLI** (also
   for agents; guide in [CLAUDE.md](CLAUDE.md) and as a skill under
   `skill/gusto/`) and a polished **web UI**. No feature exists in only one of them.
@@ -51,6 +55,10 @@ gusto image add <slug> <path> --role result --caption "Serviert" --cover
 gusto image set <slug> <id> --role step --caption "Nach dem Anbraten"
 gusto image cover <slug> <id>       # select the top image
 gusto image remove <slug> <id>
+gusto favorites match "200 g Spaghetti"  # show the ranked household choice
+gusto favorites add "Spaghetti" --alias "200 g Spaghetti"
+gusto favorites product-add Spaghetti "De Cecco n. 12" --brand "De Cecco" --image photo.png
+gusto favorites product-move Spaghetti <id> 1
 ```
 
 Every command takes `--json` for machine-readable output.
@@ -60,7 +68,9 @@ Every command takes `--json` for machine-readable output.
 ```
 recipes/            the recipes as .md (the heart, pure content)
 images/<slug>/      recipe images copied into and owned by Gusto
+images/_favorites/  preferred-product images copied into and owned by Gusto
 data/recipes.json   metadata of all recipes
+data/favorites.json shared shopping needs, exact aliases, ranked products
 data/log.json       cooking log
 gusto/core.py      all the logic
 gusto/cli.py       the CLI
@@ -94,6 +104,7 @@ python scripts/browser_check.py    # starts a server against throwaway data and
                                    # clicks through the web UI in a real browser
 python scripts/pwa_check.py        # offline / sync / service worker
 python tests/test_shopping.py      # core shopping-list logic
+python tests/test_favorites.py     # aliases, rankings, product cards/images
 python tests/test_merge.py         # full-state sync merge rule
 python tests/test_recipes.py       # recipe/search/log/suggestion core logic
 python tests/test_cli.py           # agent-facing JSON CLI
@@ -105,5 +116,6 @@ python tests/test_packaging.py     # fresh-install dependency declaration
 - [x] Data model + core + CLI
 - [x] Web UI (FastAPI, responsive & nice)
 - [x] Shopping list & PWA (offline + sync)
+- [x] Shared preferred products (exact aliases, ranking, photos, offline view)
 - [x] Multiple stored images per recipe (cover + gallery, agent-managed via CLI)
 - [ ] Weekly plan

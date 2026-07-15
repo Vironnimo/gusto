@@ -1,6 +1,6 @@
 ---
 name: gusto
-description: Operate the Gusto recipe system through its `gusto` CLI. Use to answer "what should I cook?" and "what can I make with these ingredients?", find, show, add, edit or delete recipes, manage recipe images, filter recipes by tag categories, manage the shopping list, and record or read the cooking log. Drive the `gusto` CLI and pass `--json` whenever you parse output.
+description: Operate the Gusto recipe system through its `gusto` CLI. Use to answer "what should I cook?" and "what can I make with these ingredients?", find, show, add, edit or delete recipes, manage recipe images, filter recipes by tag categories, manage the shopping list and shared preferred products, and record or read the cooking log. Drive the `gusto` CLI and pass `--json` whenever you parse output.
 ---
 
 # Gusto — operating the recipe system via the CLI
@@ -14,8 +14,10 @@ English.)
 ## Invocation
 
 - `python -m gusto <command> --json` (or `gusto <command>` if installed).
-- Side-effect-free: `list`, `search`, `show`, `tags`, `log`, `suggest`, `check`.
-- Change state: `new`, `set`, `delete`, `cooked`, `image …`, `shopping …`.
+- Side-effect-free: `list`, `search`, `show`, `tags`, `log`, `suggest`, `check`,
+  `favorites list|show|match`.
+- Change state: `new`, `set`, `delete`, `cooked`, `image …`, `shopping …`,
+  and the remaining `favorites …` commands.
 
 ## Workflows
 
@@ -62,6 +64,18 @@ English.)
 - `gusto shopping add-recipe <slug>` (all ingredients), `shopping add "<text>"`,
   `shopping list [--pending]`, `shopping check|uncheck|remove <id>`,
   `shopping clear`.
+
+**Find and maintain preferred products**
+- `gusto favorites match "<shopping text>" --json` returns the shared household
+  shopping need or `null`. Its `products` array is already ordered from most
+  preferred to fallback. Matching changes only case and whitespace; never infer
+  quantities, alternatives, or substrings.
+- Use `favorites list|show` to inspect the catalog; `favorites add|set|remove`
+  for shopping needs; and `favorites alias-add|alias-remove` to teach exact
+  recurring formulations.
+- Use `favorites product-add|product-set|product-move|product-remove` to manage
+  required product name/brand, optional preferred store, note, owned image, and
+  manual ranking. Read `references/cli.md` for exact flags and JSON shapes.
 
 **Shopping list as a Telegram checklist**
 You (the agent) run the whole thing yourself via vBot's `channel_send` tool; Gusto
@@ -111,6 +125,8 @@ stays the source of truth. The keyboard has **two kinds of buttons**:
 - `images/<slug>/` — original image files copied into and owned by Gusto.
 - `data/categories.json` — `{ key: { label, tags[] } }` (order = display order); defines the facets.
 - `data/log.json`, `data/shopping_list.json`.
+- `data/favorites.json` — shared shopping needs, exact aliases, and product
+  rankings; `images/_favorites/` contains copied product images.
 
 The `slug` links `.md` ↔ index. Prefer the CLI over hand-editing JSON; after a
 manual edit run `gusto check`.

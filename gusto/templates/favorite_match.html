@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="favorite-match-page">
+  <a class="back" href="/shopping">← Zur Einkaufsliste</a>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  {% if need %}
+  <p class="eyebrow">Unsere Wahl für</p>
+  <h1 class="page-title">{{ need.name }}</h1>
+  {% if need.products %}
+  <div class="favorite-product-list favorite-product-list-page">
+    {% for product in need.products %}
+    <article class="favorite-product-card">
+      <span class="favorite-product-rank">{{ loop.index }}</span>
+      {% if product.image_filename %}
+      <img src="/media/favorite/{{ product.image_filename }}" alt="{{ product.name }}">
+      {% else %}
+      <div class="favorite-product-placeholder" aria-hidden="true">{{ product.name[:1] }}</div>
+      {% endif %}
+      <div>
+        {% if loop.first %}<p class="favorite-product-kicker">Am liebsten</p>{% endif %}
+        <h2>{{ product.name }}</h2>
+        {% if product.brand %}<p class="favorite-product-brand">{{ product.brand }}</p>{% endif %}
+        {% if product.store %}<p class="favorite-product-store">bei {{ product.store }}</p>{% endif %}
+        {% if product.note %}<p class="favorite-product-note">„{{ product.note }}“</p>{% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="favorite-empty-note"><span>♡</span><p>Für diesen Einkaufsbedarf sind noch keine Produkte hinterlegt.</p></div>
+  {% endif %}
+  <a class="btn-ghost favorite-manage-link" href="/favorites/{{ need.id }}">Produkte bearbeiten</a>
+
+  {% else %}
+  <p class="eyebrow">Noch nicht zugeordnet</p>
+  <h1 class="page-title">{{ text }}</h1>
+  <p class="lede">Ordne diese Formulierung einmalig zu. Danach erkennt Gusto sie bei jedem Einkauf.</p>
+
+  <div class="favorite-setup-grid">
+    {% if needs %}
+    <form class="favorite-form favorite-setup-card" method="post" action="/favorites/assign">
+      <h2>Vorhandenem Bedarf zuordnen</h2>
+      <input type="hidden" name="alias" value="{{ text }}">
+      <input type="hidden" name="return_to" value="/shopping">
+      <label>Einkaufsbedarf
+        <select name="need_id" required>
+          {% for item in needs %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <button class="btn" type="submit">Zuordnen</button>
+    </form>
+    {% endif %}
+    <form class="favorite-form favorite-setup-card" method="post" action="/favorites/add">
+      <h2>Neu anlegen</h2>
+      <input type="hidden" name="alias" value="{{ text }}">
+      <input type="hidden" name="return_to" value="/shopping">
+      <label>Name des Einkaufsbedarfs
+        <input name="name" value="{{ text }}" required>
+      </label>
+      <button class="btn-ghost" type="submit">Neu anlegen</button>
+    </form>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

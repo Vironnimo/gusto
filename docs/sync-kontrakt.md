@@ -15,6 +15,13 @@ der Client schickt seinen kompletten lokalen Stand, der Server merged
 Gesamtstand zurück, den der Client übernimmt. Der Pi bleibt die einzige
 Quelle der Wahrheit.
 
+Lieblingsprodukte sind bewusst ein **separater, servergeführter Stammdaten-
+Bestand**. `GET /api/favorites` liefert alle Einkaufsbedarfe, exakten Aliasse
+und geordneten Produktkarten. Der Browser spiegelt die Antwort unter dem
+localStorage-Key `gusto.favorites`, damit Empfehlungen offline lesbar bleiben;
+es gibt dafür keinen Offline-Merge und keine Offline-Mutation. Änderungen
+erfolgen online über Core/CLI oder die serverseitigen Formulare.
+
 ## Item-Schema (identisch Client ⇄ Server)
 Ein Item ist exakt das Dict von `core.EinkaufItem.to_dict()`:
 
@@ -70,6 +77,11 @@ Beide liefern `application/json` (JSONResponse). Keine HTML-Redirects.
 ## Client-Store + Verhalten (Subagent 2C — `gusto/static/shopping-client.js`, `gusto/templates/shopping.html`)
 **localStorage-Key:** `gusto.shopping`
 **Wert:** `JSON.stringify({ items: [<item>, ...] })` (gleiches Item-Schema).
+
+Zusätzlich hält `gusto.favorites` `{needs:[…]}` als offline lesbare Kopie des
+gemeinsamen Präferenzkatalogs. Bei erfolgreichem `GET /api/favorites` wird sie
+vollständig ersetzt; bei Netzwerkfehler bleibt der letzte lokale Stand erhalten.
+Die Einkaufsliste wird weiterhin ausschließlich über `gusto.shopping` gemerged.
 
 **Progressive Enhancement in `shopping.html`:**
 - Die server-gerenderte Phase-1-Liste bleibt als **No-JS-Fallback** erhalten,
@@ -141,6 +153,9 @@ ok, muss aber nicht.
     Fehler aus dem Cache `/shopping` liefern (Offline-Fallback).
   - `/api/...`: **network-only** (nicht cachen — Offline regelt der Client
     über localStorage).
+  - `/media/favorite/<content-specific-filename>`: **cache-first**. Beim
+    Ersetzen eines Produktfotos entsteht ein neuer Dateiname, daher kann kein
+    veraltetes Foto unter einer weiterverwendeten URL erscheinen.
   - sonstige same-origin GET (Static): **cache-first**.
 
 **App-Shell-Asset-Liste (precache):**

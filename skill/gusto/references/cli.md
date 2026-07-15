@@ -25,7 +25,7 @@ All commands: `python -m gusto <command>` (or `gusto <command>` after
   Recipes not cooked in the last N days (default 7), longest-ago first.
 - `check [--json]`
   Consistency of index ↔ `.md` files, recipe image metadata ↔ stored files,
-  plus tags not assigned to a category.
+  preferred-product aliases/images, plus tags not assigned to a category.
 
 ### Writing
 
@@ -52,6 +52,34 @@ All commands: `python -m gusto <command>` (or `gusto <command>` after
 - `image cover <slug> <id> [--json]` — select an existing image as the top image.
 - `image remove <slug> <id> [--json]` — delete the stored file and metadata; if
   it was the cover, the first remaining image becomes the new cover.
+
+### Preferred products (`favorites`)
+
+- `favorites list [--json]` — all shared household shopping needs and their
+  already-ranked `products` arrays.
+- `favorites show <need> [--json]` — one need by id or exact canonical name.
+- `favorites match "<shopping text>" [--json]` — the need whose canonical name
+  or explicit alias matches after case/whitespace normalization; `null` when
+  there is no match. Quantities, punctuation, and words are never guessed.
+- `favorites add "<name>" [--alias TEXT ...] [--json]` — create a need with
+  optional repeatable exact aliases.
+- `favorites set <need> --name "<name>" [--json]` — rename a need. The old name
+  remains an alias so existing shopping formulations keep matching.
+- `favorites remove <need> [--json]` — remove the need, all product cards, and
+  their owned images.
+- `favorites alias-add <need> "<text>" [--json]` / `favorites alias-remove
+  <need> "<text>" [--json]` — maintain deterministic aliases. A name or alias
+  cannot belong to two needs.
+- `favorites product-add <need> "<name>" --brand B [--store S] [--note N]
+  [--image PATH] [--json]` — append a product at the end of the ranking; images
+  are validated and copied into Gusto.
+- `favorites product-set <need> <id> [--name N] [--brand B] [--store S]
+  [--note N] [--image PATH] [--remove-image] [--json]` — update a product or
+  replace/remove its owned image.
+- `favorites product-move <need> <id> <position> [--json]` — move to a one-based
+  position in the manual household ranking.
+- `favorites product-remove <need> <id> [--json]` — remove one product and its
+  owned image.
 
 ### Shopping list (`shopping`)
 
@@ -108,7 +136,11 @@ Recipe (returned by `list`, `search`, `new`, `set` — array or single object):
   "orphaned_image_folders": [],
   "orphaned_image_files": [],
   "missing_image_files": [],
-  "invalid_cover_images": []
+  "invalid_cover_images": [],
+  "favorite_need_count": 1,
+  "duplicate_favorite_aliases": [],
+  "orphaned_favorite_image_files": [],
+  "missing_favorite_image_files": []
 }
 ```
 
@@ -117,6 +149,8 @@ Recipe (returned by `list`, `search`, `new`, `set` — array or single object):
 - `uncategorized_tags`: used tags not in any category.
 - The image fields report folders without recipes, files without metadata,
   missing referenced files, and cover ids that do not point to an image.
+- The favorite fields report ambiguous aliases and product-image files that do
+  not match the shared preference catalog.
 
 `log --json`: `[ { "date": "2026-06-21", "slug": "spaghetti-carbonara" } ]`
 
@@ -136,6 +170,31 @@ array** (no `{items}` wrapper); `check`/`uncheck`/`add` return a single item;
 `add-recipe` an array; `clear` returns `{ "removed": N }`. Rendering the list as
 a tappable **Telegram checklist** (inline-keyboard + `callback_query` in the
 client app): see `docs/telegram-shopping-handoff.md`.
+
+Shopping need returned by `favorites list|show|match`:
+
+```json
+{
+  "id": "need-id",
+  "name": "Pizzateig",
+  "aliases": ["1 Rolle Pizzateig"],
+  "products": [
+    {
+      "id": "product-id",
+      "name": "Frischer Pizzateig 400 g",
+      "brand": "Tante Fanny",
+      "store": "REWE",
+      "note": "Wird besonders knusprig",
+      "image_filename": "owned-image.png",
+      "created_at": "2026-07-15T12:00:00.000Z"
+    }
+  ],
+  "created_at": "2026-07-15T12:00:00.000Z"
+}
+```
+
+The `products` array order is the preference order. `favorites match --json`
+prints one such object or `null`; it does not create an alias automatically.
 
 ## Tag facets in detail
 
@@ -157,10 +216,12 @@ client app): see `docs/telegram-shopping-handoff.md`.
 |---|---|
 | `recipes/<slug>.md` | Pure markdown. First line `# Title`, then `## Zutaten` (bullets) and `## Zubereitung` (numbered). **No frontmatter.** |
 | `images/<slug>/` | Recipe images copied into and owned by Gusto. |
+| `images/_favorites/` | Preferred-product images copied into and owned by Gusto. |
 | `data/recipes.json` | Metadata array — the index, including images and selected cover. |
 | `data/categories.json` | `{ key: { label, tags[] } }`; order = display order. |
 | `data/log.json` | `[ { date, slug } ]`. |
 | `data/shopping_list.json` | `{ items: [ … ] }` (includes tombstones). |
+| `data/favorites.json` | `{ needs: [ … ] }` with exact aliases and ranked products. |
 
 ## Worked example — "what should I cook?"
 

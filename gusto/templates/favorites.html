@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head favorite-page-head">
+  <div>
+    <p class="eyebrow">Unser Vorratswissen</p>
+    <h1 class="page-title">Lieblingsprodukte</h1>
+    <p class="lede">Was wir wirklich gern kaufen — geordnet, wiedererkennbar und bei jedem Einkauf griffbereit.</p>
+  </div>
+  <a class="btn-ghost" href="/shopping">← Einkaufsliste</a>
+</section>
+
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+<details class="favorite-create-panel"{{ ' open' if not needs else '' }}>
+  <summary><span>Neuen Einkaufsbedarf anlegen</span><span aria-hidden="true">＋</span></summary>
+  <form class="favorite-form favorite-create-form" method="post" action="/favorites/add">
+    <label>Name
+      <input name="name" placeholder="z.B. Pizzateig" required>
+    </label>
+    <label>Erste weitere Formulierung <span class="hint">optional</span>
+      <input name="alias" placeholder="z.B. 1 Rolle Pizzateig">
+    </label>
+    <button class="btn" type="submit">Anlegen</button>
+  </form>
+</details>
+
+{% if needs %}
+<div class="favorite-library">
+  {% for need in needs %}
+  <a class="favorite-library-card" href="/favorites/{{ need.id }}" style="--i:{{ loop.index0 }}">
+    <div class="favorite-library-visual">
+      {% set image_product = need.products|selectattr('image_filename')|first %}
+      {% if image_product %}
+      <img src="/media/favorite/{{ image_product.image_filename }}" alt="{{ image_product.name }}" loading="lazy">
+      {% else %}
+      <span aria-hidden="true">{{ need.name[:1] }}</span>
+      {% endif %}
+      <b>{{ need.products|length }}</b>
+    </div>
+    <div class="favorite-library-body">
+      <p class="favorite-library-kicker">Einkaufsbedarf</p>
+      <h2>{{ need.name }}</h2>
+      <p>{{ need.products|length }} {{ 'Lieblingsprodukt' if need.products|length == 1 else 'Lieblingsprodukte' }}</p>
+      {% if need.aliases %}<small>{{ need.aliases|join(' · ') }}</small>{% endif %}
+    </div>
+    <span class="favorite-library-arrow" aria-hidden="true">→</span>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty favorite-empty">
+  <p class="empty-emoji">♥</p>
+  <p>Noch ist kein Lieblingsprodukt hinterlegt. Leg den ersten Einkaufsbedarf oben an.</p>
+</div>
+{% endif %}
+{% endblock %}

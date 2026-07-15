@@ -7,6 +7,8 @@ Data model:
   recipes/<slug>.md   pure Markdown content of a recipe (NO frontmatter)
   data/recipes.json   metadata of ALL recipes (source for list/search/filter)
   images/<slug>/      image files owned and stored by Gusto
+  data/favorites.json shared shopping needs and ranked preferred products
+  images/_favorites/  preferred-product images owned and stored by Gusto
   data/log.json       cooking log: what was cooked when
 
 The slug links both:  data/recipes.json[*].slug  <->  recipes/<slug>.md
@@ -63,12 +65,20 @@ def shopping_path() -> Path:
     return data_dir() / "shopping_list.json"
 
 
+def favorites_path() -> Path:
+    return data_dir() / "favorites.json"
+
+
 def images_dir() -> Path:
     return project_root() / "images"
 
 
 def recipe_images_dir(slug: str) -> Path:
     return images_dir() / slug
+
+
+def favorite_images_dir() -> Path:
+    return images_dir() / "_favorites"
 
 
 # --- Data model -------------------------------------------------------------
@@ -128,6 +138,48 @@ class Recipe:
         values = {k: v for k, v in d.items() if k in allowed}
         values["images"] = [RecipeImage.from_dict(image)
                             for image in values.get("images", [])]
+        return cls(**values)
+
+
+@dataclass
+class FavoriteProduct:
+    """One concrete product in a household preference ranking."""
+    id: str
+    name: str
+    brand: str = ""
+    store: str = ""
+    note: str = ""
+    image_filename: str = ""
+    created_at: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "FavoriteProduct":
+        allowed = {f.name for f in fields(cls)}
+        return cls(**{key: value for key, value in data.items() if key in allowed})
+
+
+@dataclass
+class ShoppingNeed:
+    """A reusable shopping need with exact aliases and ranked products."""
+    id: str
+    name: str
+    aliases: list[str] = field(default_factory=list)
+    products: list[FavoriteProduct] = field(default_factory=list)
+    created_at: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ShoppingNeed":
+        allowed = {f.name for f in fields(cls)}
+        values = {key: value for key, value in data.items() if key in allowed}
+        values["aliases"] = list(values.get("aliases", []))
+        values["products"] = [FavoriteProduct.from_dict(product)
+                              for product in values.get("products", [])]
         return cls(**values)
 
 
@@ -567,7 +619,8 @@ def check() -> dict:
     mapping = _tag_to_category()
     uncategorized = sorted({t for r in recipes for t in r.tags if t.lower() not in mapping})
     image_root = images_dir()
-    image_folders = ({path.name for path in image_root.iterdir() if path.is_dir()}
+    image_folders = ({path.name for path in image_root.iterdir()
+                      if path.is_dir() and path.name != "_favorites"}
                      if image_root.exists() else set())
     orphaned_image_folders = sorted(image_folders - indexed)
     missing_image_files: list[str] = []
@@ -588,6 +641,26 @@ def check() -> dict:
                 or (recipe.cover_image_id is not None
                     and recipe.cover_image_id not in {image.id for image in recipe.images})):
             invalid_cover_images.append(recipe.slug)
+    favorite_needs = favorites_load()
+    referenced_favorite_images = {
+        product.image_filename
+        for need in favorite_needs
+        for product in need.products
+        if product.image_filename
+    }
+    favorite_root = favorite_images_dir()
+    present_favorite_images = ({path.name for path in favorite_root.iterdir()
+                                if path.is_file()}
+                               if favorite_root.exists() else set())
+    alias_owners: dict[str, list[str]] = {}
+    for need in favorite_needs:
+        for label in [need.name, *need.aliases]:
+            alias_owners.setdefault(normalize_shopping_text(label), []).append(need.name)
+    duplicate_favorite_aliases = sorted(
+        label for label, owners in alias_owners.items()
+        if label and len(set(owners)) > 1
+    )
+
     return {
         "recipe_count": len(indexed),
         "orphaned_files": sorted(present - indexed),   # .md without index entry
@@ -597,6 +670,14 @@ def check() -> dict:
         "orphaned_image_files": orphaned_image_files,
         "missing_image_files": missing_image_files,
         "invalid_cover_images": sorted(invalid_cover_images),
+        "favorite_need_count": len(favorite_needs),
+        "duplicate_favorite_aliases": duplicate_favorite_aliases,
+        "orphaned_favorite_image_files": sorted(
+            present_favorite_images - referenced_favorite_images
+        ),
+        "missing_favorite_image_files": sorted(
+            referenced_favorite_images - present_favorite_images
+        ),
     }
 
 
@@ -669,6 +750,307 @@ def _now_iso(after: str | None = None) -> str:
 def new_id() -> str:
     """New unique item id (uuid4 hex)."""
     return uuid.uuid4().hex
+
+
+# --- Preferred products -----------------------------------------------------
+
+def normalize_shopping_text(value: str) -> str:
+    """Deterministic favorite matching: case and whitespace only.
+
+    Quantities, punctuation and words deliberately stay untouched. A label is
+    matched only after it has explicitly become a need name or alias.
+    """
+    lowered = re.sub(r"\s+", " ", (value or "").strip()).lower()
+    return lowered.replace("ß", "ss")
+
+
+def favorites_load() -> list[ShoppingNeed]:
+    """Load the shared household preference catalog."""
+    path = favorites_path()
+    if not path.exists():
+        return []
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return [ShoppingNeed.from_dict(raw) for raw in data.get("needs", [])]
+
+
+def favorites_save(needs: list[ShoppingNeed]) -> None:
+    _write_json(favorites_path(), {"needs": [need.to_dict() for need in needs]})
+
+
+def favorite_get_need(identifier: str) -> ShoppingNeed | None:
+    """Find a need by opaque id or exact normalized canonical name."""
+    normalized = normalize_shopping_text(identifier)
+    return next((need for need in favorites_load()
+                 if need.id == identifier
+                 or normalize_shopping_text(need.name) == normalized), None)
+
+
+def favorite_match(text: str, needs: list[ShoppingNeed] | None = None) -> ShoppingNeed | None:
+    """Return the need whose name or explicit alias matches ``text`` exactly."""
+    normalized = normalize_shopping_text(text)
+    if not normalized:
+        return None
+    for need in favorites_load() if needs is None else needs:
+        labels = [need.name, *need.aliases]
+        if normalized in {normalize_shopping_text(label) for label in labels}:
+            return need
+    return None
+
+
+def _favorite_need(needs: list[ShoppingNeed], identifier: str) -> ShoppingNeed:
+    normalized = normalize_shopping_text(identifier)
+    need = next((item for item in needs
+                 if item.id == identifier
+                 or normalize_shopping_text(item.name) == normalized), None)
+    if need is None:
+        raise ValueError(f"Kein Einkaufsbedarf mit id oder Name '{identifier}'.")
+    return need
+
+
+def _favorite_product(need: ShoppingNeed, product_id: str) -> FavoriteProduct:
+    product = next((item for item in need.products if item.id == product_id), None)
+    if product is None:
+        raise ValueError(
+            f"Kein Lieblingsprodukt mit id '{product_id}' bei '{need.name}'."
+        )
+    return product
+
+
+def _favorite_label_owner(label: str, needs: list[ShoppingNeed],
+                          except_need_id: str | None = None) -> ShoppingNeed | None:
+    normalized = normalize_shopping_text(label)
+    if not normalized:
+        return None
+    for need in needs:
+        if need.id == except_need_id:
+            continue
+        if normalized in {normalize_shopping_text(value)
+                          for value in [need.name, *need.aliases]}:
+            return need
+    return None
+
+
+def favorite_add_need(name: str, aliases: list[str] | None = None) -> ShoppingNeed:
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Der Einkaufsbedarf braucht einen Namen.")
+    needs = favorites_load()
+    owner = _favorite_label_owner(name, needs)
+    if owner is not None:
+        raise ValueError(f"'{name}' gehört bereits zu '{owner.name}'.")
+
+    clean_aliases: list[str] = []
+    seen = {normalize_shopping_text(name)}
+    for alias in aliases or []:
+        cleaned = alias.strip()
+        normalized = normalize_shopping_text(cleaned)
+        if not normalized or normalized in seen:
+            continue
+        owner = _favorite_label_owner(cleaned, needs)
+        if owner is not None:
+            raise ValueError(f"'{cleaned}' gehört bereits zu '{owner.name}'.")
+        seen.add(normalized)
+        clean_aliases.append(cleaned)
+
+    need = ShoppingNeed(
+        id=new_id(), name=name, aliases=clean_aliases, products=[],
+        created_at=_now_iso(),
+    )
+    needs.append(need)
+    favorites_save(needs)
+    return need
+
+
+def favorite_update_need(identifier: str, name: str) -> ShoppingNeed:
+    needs = favorites_load()
+    need = _favorite_need(needs, identifier)
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Der Einkaufsbedarf braucht einen Namen.")
+    owner = _favorite_label_owner(name, needs, except_need_id=need.id)
+    if owner is not None:
+        raise ValueError(f"'{name}' gehört bereits zu '{owner.name}'.")
+
+    old_name = need.name
+    if normalize_shopping_text(old_name) != normalize_shopping_text(name):
+        if normalize_shopping_text(old_name) not in {
+                normalize_shopping_text(alias) for alias in need.aliases}:
+            need.aliases.append(old_name)
+    need.name = name
+    need.aliases = [alias for alias in need.aliases
+                    if normalize_shopping_text(alias) != normalize_shopping_text(name)]
+    favorites_save(needs)
+    return need
+
+
+def favorite_add_alias(identifier: str, alias: str) -> ShoppingNeed:
+    needs = favorites_load()
+    need = _favorite_need(needs, identifier)
+    alias = (alias or "").strip()
+    if not alias:
+        raise ValueError("Der Alias darf nicht leer sein.")
+    normalized = normalize_shopping_text(alias)
+    own_labels = {normalize_shopping_text(value)
+                  for value in [need.name, *need.aliases]}
+    if normalized in own_labels:
+        return need
+    owner = _favorite_label_owner(alias, needs, except_need_id=need.id)
+    if owner is not None:
+        raise ValueError(f"'{alias}' gehört bereits zu '{owner.name}'.")
+    need.aliases.append(alias)
+    favorites_save(needs)
+    return need
+
+
+def favorite_remove_alias(identifier: str, alias: str) -> ShoppingNeed:
+    needs = favorites_load()
+    need = _favorite_need(needs, identifier)
+    normalized = normalize_shopping_text(alias)
+    original_count = len(need.aliases)
+    need.aliases = [value for value in need.aliases
+                    if normalize_shopping_text(value) != normalized]
+    if len(need.aliases) == original_count:
+        raise ValueError(f"Kein Alias '{alias}' bei '{need.name}'.")
+    favorites_save(needs)
+    return need
+
+
+def _copy_favorite_image(source: str | Path) -> tuple[str, Path]:
+    source_path = Path(source).expanduser()
+    if not source_path.is_file():
+        raise ValueError(f"Bilddatei nicht gefunden: '{source_path}'.")
+    suffix = source_path.suffix.lower()
+    if suffix not in IMAGE_EXTENSIONS:
+        allowed = ", ".join(sorted(IMAGE_EXTENSIONS))
+        raise ValueError(f"Nicht unterstütztes Bildformat '{suffix}' ({allowed}).")
+    if not _valid_image_header(source_path, suffix):
+        raise ValueError(
+            f"Datei ist kein gültiges {suffix.lstrip('.').upper()}-Bild: '{source_path}'."
+        )
+    filename = f"{new_id()}{suffix}"
+    destination = favorite_images_dir() / filename
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_path, destination)
+    return filename, destination
+
+
+def favorite_image_path(filename: str) -> Path:
+    return favorite_images_dir() / Path(filename).name
+
+
+def favorite_image_is_referenced(filename: str) -> bool:
+    return any(product.image_filename == filename
+               for need in favorites_load() for product in need.products)
+
+
+def favorite_add_product(identifier: str, name: str, *, brand: str = "",
+                         store: str = "", note: str = "",
+                         image: str | Path | None = None) -> FavoriteProduct:
+    needs = favorites_load()
+    need = _favorite_need(needs, identifier)
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Das Lieblingsprodukt braucht einen Namen.")
+    brand = (brand or "").strip()
+    if not brand:
+        raise ValueError("Das Lieblingsprodukt braucht eine Marke.")
+    product = FavoriteProduct(
+        id=new_id(), name=name, brand=brand, store=store.strip(),
+        note=note.strip(), created_at=_now_iso(),
+    )
+    copied: Path | None = None
+    if image:
+        product.image_filename, copied = _copy_favorite_image(image)
+    need.products.append(product)
+    try:
+        favorites_save(needs)
+    except Exception:
+        if copied is not None:
+            copied.unlink(missing_ok=True)
+        raise
+    return product
+
+
+def favorite_update_product(identifier: str, product_id: str, *,
+                            name: str | None = None, brand: str | None = None,
+                            store: str | None = None, note: str | None = None,
+                            image: str | Path | None = None,
+                            remove_image: bool = False) -> FavoriteProduct:
+    if image and remove_image:
+        raise ValueError("Bild kann nicht gleichzeitig ersetzt und entfernt werden.")
+    needs = favorites_load()
+    need = _favorite_need(needs, identifier)
+    product = _favorite_product(need, product_id)
+    if name is not None:
+        cleaned_name = name.strip()
+        if not cleaned_name:
+            raise ValueError("Das Lieblingsprodukt braucht einen Namen.")
+        product.name = cleaned_name
+    if brand is not None:
+        cleaned_brand = brand.strip()
+        if not cleaned_brand:
+            raise ValueError("Das Lieblingsprodukt braucht eine Marke.")
+        product.brand = cleaned_brand
+    if store is not None:
+        product.store = store.strip()
+    if note is not None:
+        product.note = note.strip()
+
+    old_filename = product.image_filename
+    copied: Path | None = None
+    if image:
+        product.image_filename, copied = _copy_favorite_image(image)
+    elif remove_image:
+        product.image_filename = ""
+    try:
+        favorites_save(needs)
+    except Exception:
+        if copied is not None:
+            copied.unlink(missing_ok=True)
+        raise
+    if old_filename and old_filename != product.image_filename:
+        favorite_image_path(old_filename).unlink(missing_ok=True)
+    return product
+
+
+def favorite_move_product(identifier: str, product_id: str,
+                          position: int) -> ShoppingNeed:
+    needs = favorites_load()
+    need = _favorite_need(needs, identifier)
+    product = _favorite_product(need, product_id)
+    if position < 1 or position > len(need.products):
+        raise ValueError(f"Position muss zwischen 1 und {len(need.products)} liegen.")
+    need.products.remove(product)
+    need.products.insert(position - 1, product)
+    favorites_save(needs)
+    return need
+
+
+def favorite_remove_product(identifier: str, product_id: str) -> ShoppingNeed:
+    needs = favorites_load()
+    need = _favorite_need(needs, identifier)
+    product = _favorite_product(need, product_id)
+    need.products = [item for item in need.products if item.id != product.id]
+    favorites_save(needs)
+    if product.image_filename:
+        favorite_image_path(product.image_filename).unlink(missing_ok=True)
+    folder = favorite_images_dir()
+    if folder.exists() and not any(folder.iterdir()):
+        folder.rmdir()
+    return need
+
+
+def favorite_remove_need(identifier: str) -> ShoppingNeed:
+    needs = favorites_load()
+    need = _favorite_need(needs, identifier)
+    favorites_save([item for item in needs if item.id != need.id])
+    for product in need.products:
+        if product.image_filename:
+            favorite_image_path(product.image_filename).unlink(missing_ok=True)
+    folder = favorite_images_dir()
+    if folder.exists() and not any(folder.iterdir()):
+        folder.rmdir()
+    return need
 
 
 # --- Ingredient parsing -----------------------------------------------------

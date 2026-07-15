@@ -12,6 +12,9 @@
 
   var STORAGE_KEY = "gusto.shopping";
   var SYNC_URL = "/api/shopping/sync";
+  var FAVORITES_KEY = "gusto.favorites";
+  var FAVORITES_URL = "/api/favorites";
+  var favoriteNeeds = [];
   var sourceTitles = {};
 
   // --- localStorage binding --------------------------------------------------
@@ -36,6 +39,42 @@
     } catch (e) {
       // Store full/blocked -> UI stays consistent anyway (in memory).
     }
+  }
+
+  function loadFavoriteNeeds() {
+    try {
+      var raw = localStorage.getItem(FAVORITES_KEY);
+      if (!raw) return [];
+      var data = JSON.parse(raw);
+      if (data && Array.isArray(data.needs)) return data.needs;
+    } catch (e) {
+      // Missing/broken cache -> recommendations fill on the next online load.
+    }
+    return [];
+  }
+
+  function saveFavoriteNeeds(needs) {
+    try {
+      localStorage.setItem(FAVORITES_KEY, JSON.stringify({ needs: needs }));
+    } catch (e) {
+      // Recommendations remain usable in memory if storage is unavailable.
+    }
+  }
+
+  function normalizeShoppingText(value) {
+    return String(value || "").trim().replace(/\s+/g, " ").toLowerCase().replace(/ß/g, "ss");
+  }
+
+  function findFavoriteNeed(text) {
+    var normalized = normalizeShoppingText(text);
+    for (var i = 0; i < favoriteNeeds.length; i++) {
+      var need = favoriteNeeds[i];
+      var labels = [need.name].concat(need.aliases || []);
+      for (var j = 0; j < labels.length; j++) {
+        if (normalizeShoppingText(labels[j]) === normalized) return need;
+      }
+    }
+    return null;
   }
 
   // Server-compatible timestamp: UTC with milliseconds and a literal Z.
@@ -87,24 +126,45 @@
     });
     check.appendChild(box);
 
-    // Body: text + optional quantity + optional source.
+    // Body: tappable recommendation entry + optional quantity/source metadata.
     var body = el("div", "shop-body");
+    var trigger = el("button", "shop-favorite-trigger");
+    trigger.type = "button";
     var text = el("span", "shop-text");
     text.textContent = item.text;
-    body.appendChild(text);
+    trigger.appendChild(text);
+
+    var need = findFavoriteNeed(item.text);
+    var hint = el("span", "shop-favorite-hint");
+    if (need && (need.products || []).length > 0) {
+      var count = need.products.length;
+      hint.textContent = "♥ " + count + " " + (count === 1 ? "Favorit" : "Favoriten");
+    } else if (need) {
+      hint.textContent = "♡ Produkte ergänzen";
+    } else {
+      hint.textContent = "♡ Lieblingsprodukt";
+    }
+    trigger.appendChild(hint);
+    trigger.addEventListener("click", function () {
+      openFavoriteSheet(item.text);
+    });
+    body.appendChild(trigger);
+
+    var meta = el("span", "shop-meta");
 
     if (item.quantity) {
       var quantity = el("span", "shop-quantity");
       quantity.textContent = item.quantity;
-      body.appendChild(quantity);
+      meta.appendChild(quantity);
     }
 
     if (item.source) {
       var source = el("a", "shop-source");
       source.href = "/recipe/" + item.source;
       source.textContent = "aus „" + (sourceTitles[item.source] || item.source) + "“";
-      body.appendChild(source);
+      meta.appendChild(source);
     }
+    if (meta.childNodes.length) body.appendChild(meta);
 
     // Remove button (same classes as the server form).
     var remove = el("div", "shop-remove");
@@ -285,6 +345,217 @@
     return wrap;
   }
 
+  // --- Preferred-product sheet ---------------------------------------------
+
+  var favoriteSheet = null;
+  var favoriteSheetContent = null;
+  var openFavoriteText = "";
+  var favoriteReturnFocus = null;
+
+  function hiddenInput(name, value) {
+    var input = el("input");
+    input.type = "hidden";
+    input.name = name;
+    input.value = value;
+    return input;
+  }
+
+  function labeledControl(labelText, control) {
+    var label = el("label");
+    label.appendChild(document.createTextNode(labelText));
+    label.appendChild(control);
+    return label;
+  }
+
+  function renderFavoriteProduct(product, position) {
+    var card = el("article", "favorite-product-card");
+    var rank = el("span", "favorite-product-rank");
+    rank.textContent = String(position);
+    card.appendChild(rank);
+
+    if (product.image_url) {
+      var image = el("img");
+      image.src = product.image_url;
+      image.alt = product.name;
+      card.appendChild(image);
+    } else {
+      var placeholder = el("div", "favorite-product-placeholder");
+      placeholder.textContent = (product.name || "?").slice(0, 1);
+      placeholder.setAttribute("aria-hidden", "true");
+      card.appendChild(placeholder);
+    }
+
+    var body = el("div");
+    if (position === 1) {
+      var kicker = el("p", "favorite-product-kicker");
+      kicker.textContent = "Am liebsten";
+      body.appendChild(kicker);
+    }
+    var name = el("h3");
+    name.textContent = product.name;
+    body.appendChild(name);
+    if (product.brand) {
+      var brand = el("p", "favorite-product-brand");
+      brand.textContent = product.brand;
+      body.appendChild(brand);
+    }
+    if (product.store) {
+      var store = el("p", "favorite-product-store");
+      store.textContent = "bei " + product.store;
+      body.appendChild(store);
+    }
+    if (product.note) {
+      var note = el("p", "favorite-product-note");
+      note.textContent = "„" + product.note + "“";
+      body.appendChild(note);
+    }
+    card.appendChild(body);
+    return card;
+  }
+
+  function renderFavoriteSetup(text) {
+    var lede = el("p", "favorite-sheet-lede");
+    lede.textContent =
+      "Ordne diese Formulierung einmalig zu. Danach erkennt Gusto sie automatisch.";
+    favoriteSheetContent.appendChild(lede);
+
+    if (!navigator.onLine) {
+      var offline = el("p", "favorite-offline-note");
+      offline.textContent = "Zum Zuordnen oder Anlegen bitte kurz wieder online gehen.";
+      favoriteSheetContent.appendChild(offline);
+      return;
+    }
+
+    var grid = el("div", "favorite-setup-grid");
+    if (favoriteNeeds.length > 0) {
+      var assign = el("form", "favorite-form favorite-setup-card");
+      assign.method = "post";
+      assign.action = "/favorites/assign";
+      var assignTitle = el("h3");
+      assignTitle.textContent = "Vorhandenem Bedarf zuordnen";
+      assign.appendChild(assignTitle);
+      assign.appendChild(hiddenInput("alias", text));
+      assign.appendChild(hiddenInput("return_to", "/shopping"));
+      var select = el("select");
+      select.name = "need_id";
+      favoriteNeeds.forEach(function (need) {
+        var option = el("option");
+        option.value = need.id;
+        option.textContent = need.name;
+        select.appendChild(option);
+      });
+      assign.appendChild(labeledControl("Einkaufsbedarf", select));
+      var assignButton = el("button", "btn");
+      assignButton.type = "submit";
+      assignButton.textContent = "Zuordnen";
+      assign.appendChild(assignButton);
+      grid.appendChild(assign);
+    }
+
+    var create = el("form", "favorite-form favorite-setup-card");
+    create.method = "post";
+    create.action = "/favorites/add";
+    var createTitle = el("h3");
+    createTitle.textContent = "Neu anlegen";
+    create.appendChild(createTitle);
+    create.appendChild(hiddenInput("alias", text));
+    create.appendChild(hiddenInput("return_to", "/shopping"));
+    var nameInput = el("input");
+    nameInput.name = "name";
+    nameInput.value = text;
+    nameInput.required = true;
+    create.appendChild(labeledControl("Name des Einkaufsbedarfs", nameInput));
+    var createButton = el("button", "btn-ghost");
+    createButton.type = "submit";
+    createButton.textContent = "Neu anlegen";
+    create.appendChild(createButton);
+    grid.appendChild(create);
+    favoriteSheetContent.appendChild(grid);
+  }
+
+  function openFavoriteSheet(text) {
+    if (!favoriteSheet || !favoriteSheetContent) return;
+    favoriteReturnFocus = document.activeElement;
+    openFavoriteText = text;
+    favoriteSheetContent.textContent = "";
+    var need = findFavoriteNeed(text);
+
+    var eyebrow = el("p", "eyebrow");
+    eyebrow.textContent = need ? "Unsere Wahl für" : "Noch nicht zugeordnet";
+    favoriteSheetContent.appendChild(eyebrow);
+    var title = el("h2");
+    title.id = "favorite-sheet-title";
+    title.textContent = need ? need.name : text;
+    favoriteSheetContent.appendChild(title);
+
+    if (need) {
+      var products = need.products || [];
+      if (products.length > 0) {
+        var list = el("div", "favorite-product-list");
+        products.forEach(function (product, index) {
+          list.appendChild(renderFavoriteProduct(product, index + 1));
+        });
+        favoriteSheetContent.appendChild(list);
+      } else {
+        var empty = el("div", "favorite-empty-note");
+        var heart = el("span");
+        heart.textContent = "♡";
+        var message = el("p");
+        message.textContent = "Für diesen Einkaufsbedarf sind noch keine Produkte hinterlegt.";
+        empty.appendChild(heart);
+        empty.appendChild(message);
+        favoriteSheetContent.appendChild(empty);
+      }
+      var manage = el("a", "btn-ghost favorite-manage-link");
+      manage.href = "/favorites/" + need.id;
+      manage.textContent = "Produkte bearbeiten";
+      favoriteSheetContent.appendChild(manage);
+    } else {
+      renderFavoriteSetup(text);
+    }
+
+    favoriteSheet.hidden = false;
+    document.body.classList.add("has-favorite-sheet");
+    var closeButton = favoriteSheet.querySelector(".favorite-sheet-close");
+    if (closeButton) closeButton.focus();
+  }
+
+  function closeFavoriteSheet() {
+    if (!favoriteSheet) return;
+    favoriteSheet.hidden = true;
+    document.body.classList.remove("has-favorite-sheet");
+    openFavoriteText = "";
+    if (favoriteReturnFocus && favoriteReturnFocus.focus) favoriteReturnFocus.focus();
+    favoriteReturnFocus = null;
+  }
+
+  function cacheFavoriteImages(needs) {
+    needs.forEach(function (need) {
+      (need.products || []).forEach(function (product) {
+        if (product.image_url) fetch(product.image_url).catch(function () {});
+      });
+    });
+  }
+
+  function refreshFavoriteNeeds() {
+    if (!navigator.onLine) return;
+    fetch(FAVORITES_URL)
+      .then(function (response) {
+        if (!response.ok) throw new Error("favorites failed: " + response.status);
+        return response.json();
+      })
+      .then(function (data) {
+        favoriteNeeds = data && Array.isArray(data.needs) ? data.needs : [];
+        saveFavoriteNeeds(favoriteNeeds);
+        cacheFavoriteImages(favoriteNeeds);
+        render();
+        if (openFavoriteText) openFavoriteSheet(openFavoriteText);
+      })
+      .catch(function () {
+        // Offline/server failure -> keep the last catalog in localStorage.
+      });
+  }
+
   // --- Mutations -------------------------------------------------------------
   // Pattern everywhere: write localStorage -> re-render -> trigger sync().
 
@@ -410,7 +681,7 @@
     clientEl = document.getElementById("shop-client");
     if (!clientEl) return; // No container -> do nothing (server fallback stays).
 
-    var titlesEl = document.getElementById("shop-source-titles");
+    var titlesEl = document.getElementById("shop-recipe-titles");
     if (titlesEl) {
       try {
         var parsedTitles = JSON.parse(titlesEl.textContent);
@@ -421,6 +692,19 @@
         // A broken presentation map must not block the offline list.
       }
     }
+    favoriteNeeds = loadFavoriteNeeds();
+    favoriteSheet = document.getElementById("favorite-sheet");
+    favoriteSheetContent = document.getElementById("favorite-sheet-content");
+    if (favoriteSheet) {
+      favoriteSheet.querySelectorAll("[data-favorite-close]").forEach(function (button) {
+        button.addEventListener("click", closeFavoriteSheet);
+      });
+    }
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && favoriteSheet && !favoriteSheet.hidden) {
+        closeFavoriteSheet();
+      }
+    });
 
     // JS active: hide the server part, show the client part.
     if (serverEl) serverEl.hidden = true;
@@ -428,8 +712,12 @@
 
     render();
     sync(); // first run (even empty) fills the local state from the server.
+    refreshFavoriteNeeds();
   }
 
   document.addEventListener("DOMContentLoaded", init);
-  window.addEventListener("online", sync);
+  window.addEventListener("online", function () {
+    sync();
+    refreshFavoriteNeeds();
+  });
 })();

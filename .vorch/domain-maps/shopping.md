@@ -1,14 +1,14 @@
 # Shopping
 
-The shopping domain owns the shared shopping list, ingredient import, offline mutations, and full-state synchronization between browser clients and the server.
+The shopping domain owns the shared shopping list, ingredient import, preferred products, offline mutations, and full-state synchronization between browser clients and the server.
 
 ## Overview
 
-Server-side rules and persistence live in the shopping section of `gusto/core.py`. `gusto/web.py` provides HTML fallbacks and the sync API, while `gusto/static/shopping-client.js` owns the offline browser copy and optimistic interaction. Recipe lookup and ingredient content come from the catalog domain.
+Server-side rules and persistence live in the shopping section of `gusto/core.py`. `gusto/web.py` provides HTML fallbacks and APIs, while `gusto/static/shopping-client.js` owns the offline browser copies and optimistic list interaction. Recipe lookup and ingredient content come from the catalog domain.
 
 ## Terms
 
-No cross-cutting terms for this domain are currently defined in `.vorch/GLOSSARY.md`.
+The cross-cutting term GLOSSARY → Einkaufsbedarf defines the durable owner of aliases and product rankings.
 
 ### Tombstone
 
@@ -24,6 +24,14 @@ No cross-cutting terms for this domain are currently defined in `.vorch/GLOSSARY
 
 The browser stores the same full item array, including tombstones, under `localStorage` key `gusto.shopping`.
 
+`data/favorites.json` stores shared household Einkaufsbedarfe. Each has one
+canonical name, explicit exact-match aliases, and a product array whose order
+is the manual preference ranking. Product cards require name and brand; store,
+note, and an owned image filename are optional. Images live under
+`images/_favorites/`; this reserved folder is not a recipe image folder. The
+browser mirrors the catalog under `localStorage` key `gusto.favorites` for
+offline reading only.
+
 ## Interfaces
 
 Core operations load and save full state, add individual entries, import ingredients from a recipe, list visible entries, set or toggle checked state, tombstone entries, clear completed entries, and merge a remote full state.
@@ -31,6 +39,13 @@ Core operations load and save full state, add individual entries, import ingredi
 The CLI exposes these through `gusto shopping list|add|add-recipe|check|uncheck|remove|clear`; explicit check and uncheck are idempotent and suited to agents synchronizing an external checklist.
 
 The web provides server-rendered `/shopping` forms when JavaScript is unavailable. With JavaScript, the client hides that fallback, mutates local state first, and synchronizes in the background. `GET /api/shopping` returns all server items including tombstones; `POST /api/shopping/sync` accepts `{ "items": [...] }` and returns the merged full state.
+
+Core also owns deterministic favorite matching, need/alias CRUD, ranked-product
+CRUD and movement, image ownership, and consistency checks. The CLI exposes
+these as `gusto favorites list|show|match|add|set|remove|alias-add|alias-remove`
+and `product-add|product-set|product-move|product-remove`. The web exposes
+central management under `/favorites`, a no-JS match page, product media, and
+`GET /api/favorites` for the offline-readable browser copy.
 
 ## Sync Contract
 
@@ -44,6 +59,13 @@ The web provides server-rendered `/shopping` forms when JavaScript is unavailabl
 
 - Ingredient import recognizes only non-empty `-` or `*` bullets under the exact `## Zutaten` heading and stops at the next H2.
 - Offline and failed syncs deliberately preserve local state. The browser retries on the next mutation, queued follow-up, initialization, or `online` event.
+- Preferred-product matching only lowercases (including `ß` → `ss`) and
+  collapses whitespace. It does
+  not strip quantities, interpret alternatives, or use substring/fuzzy matches;
+  a name or alias may belong to only one Einkaufsbedarf.
+- Preference catalog mutations are server-side and require connectivity. The
+  last successful catalog and content-specific product-image URLs remain
+  readable offline; replacing an image creates a new filename.
 - The service worker uses network-only handling for the sync API and recipe media. Navigations are network-first with the cached shopping page as fallback; other same-origin static GETs are cache-first.
 - Update the cache version when changing cached assets or offline shell behavior.
-- Verify core behavior with `tests/test_shopping.py` and `tests/test_merge.py`; verify offline, two-device, API, manifest, and service-worker behavior with `scripts/pwa_check.py`.
+- Verify core behavior with `tests/test_shopping.py`, `tests/test_favorites.py`, and `tests/test_merge.py`; verify offline, two-device, API, manifest, product-image cache, and service-worker behavior with `scripts/pwa_check.py`.

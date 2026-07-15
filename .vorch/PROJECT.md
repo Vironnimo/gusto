@@ -17,7 +17,8 @@ Python 3.10+ with a stdlib-only core and CLI. FastAPI, Jinja2, Markdown,
 Uvicorn, and python-multipart form the optional web surface. Core owns recipe,
 search, log, suggestion, shopping-list, and sync behavior; CLI and web are thin
 shells. The shopping PWA uses localStorage plus full-state last-writer-wins sync
-and tombstones.
+and tombstones. Shared preferred products are a separate server-owned shopping
+catalog mirrored read-only into browser localStorage for offline display.
 
 ## Conventions
 
@@ -41,6 +42,7 @@ Quality gates:
 
 - `python tests/test_packaging.py`
 - `python tests/test_shopping.py`
+- `python tests/test_favorites.py`
 - `python tests/test_merge.py`
 - `python tests/test_recipes.py`
 - `python tests/test_cli.py`
@@ -60,6 +62,10 @@ Quality gates:
 - 2026-07-13: Recipes may own multiple images stored by Gusto. Agents inspect
   images and add them through the CLI. One image can be selected as the cover;
   all images may carry a free role and caption and appear in the recipe gallery.
+- 2026-07-15: Shared household shopping needs now map exact learned aliases to
+  manually ranked preferred-product cards with optional owned photos, store,
+  and notes. Shopping recommendations and photos remain readable offline;
+  catalog changes intentionally require an online server or the CLI.
 
 ## Domain Maps
 
@@ -72,5 +78,5 @@ The Orchestrator uses `.vorch/workflows/domain-map-workflow.md` when creating, a
 | Domain map | Domain | What it covers |
 |---|---|---|
 | `catalog.md` | Catalog | Recipes, metadata, images, tag facets, cooking history, suggestions, and consistency checks. |
-| `shopping.md` | Shopping | Shopping-list persistence, ingredient import, tombstones, offline behavior, and full-state sync. |
+| `shopping.md` | Shopping | Shopping-list persistence, ingredient import, preferred products, tombstones, offline behavior, and full-state sync. |
 | `surfaces.md` | Surfaces | CLI, web, packaging, runtime entry points, templates, static assets, and verification boundaries. |

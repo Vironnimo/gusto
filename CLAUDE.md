@@ -38,8 +38,10 @@ days.
 |----------|----------|
 | `recipes/<slug>.md` | Pure recipe content (Markdown, starts with `# Title`). No frontmatter. |
 | `images/<slug>/` | Recipe images copied into and owned by Gusto. |
+| `images/_favorites/` | Preferred-product images copied into and owned by Gusto. |
 | `data/recipes.json` | Recipe metadata including `images` and `cover_image_id`. |
 | `data/categories.json` | Tag categories (facets): `{ "<key>": {"label", "tags": [...]} }`. Maps the flat tags to categories (order = display order). |
+| `data/favorites.json` | Shared shopping needs, exact aliases, and manually ranked preferred products. |
 | `data/log.json` | Cooking log: `[{ "date": "YYYY-MM-DD", "slug": ... }]`. |
 
 `gusto new` writes both the .md AND the index entry. If a .md is created by
@@ -87,6 +89,16 @@ gusto image set <slug> <id> [--role R] [--caption TEXT]
 gusto image cover <slug> <id>                 Select the top image
 gusto image remove <slug> <id>                Delete one stored image
 
+gusto favorites list|show <need>              List shared shopping needs / one ranking
+gusto favorites match "<text>"                 Match only an exact known name or alias
+gusto favorites add "<name>" [--alias TEXT ...]
+gusto favorites set|remove <need> ...
+gusto favorites alias-add|alias-remove <need> "<text>"
+gusto favorites product-add <need> "<name>" --brand B [--store S] [--note N] [--image PATH]
+gusto favorites product-set <need> <id> [...] [--remove-image]
+gusto favorites product-move <need> <id> <position>
+gusto favorites product-remove <need> <id>
+
 gusto shopping list [--pending]                  Show the shopping list
 gusto shopping add "<text>" [--quantity M]        Add an entry
 gusto shopping add-recipe <slug>                   All ingredients of a recipe -> list
@@ -117,6 +129,14 @@ add <slug> <path> --role <purpose> --caption "…"`. Gusto copies and owns the
 files. Recipes can have any number of images; the first is the default cover,
 and `--cover` or `gusto image cover` selects a different top image. Roles such
 as `result`, `ingredients`, or `step` are descriptive and remain open-ended.
+
+**Preferred product for a shopping item:** run `gusto favorites match "<shopping
+text>" --json`. A result is the shared household shopping need; its `products`
+array is already ordered from most preferred to fallback. Matching only folds
+case and whitespace: never infer quantities or substrings. To teach a known
+formulation use `favorites alias-add`; create and rank product cards through
+`favorites product-add|product-set|product-move|product-remove`. Product images
+are copied into Gusto and may be shown offline by the shopping PWA.
 
 **Shopping list as a Telegram checklist:** the agent posts the list via vBot's
 `channel_send` tool (inline-keyboard) — one `chk:<id>` button per item (leading
@@ -173,7 +193,10 @@ categories — `data/categories.json`, `gusto tags`), recipe view,
 create/edit/delete, "cooked today", suggestions, log, 404 page, Pi deployment
 (systemd), browser test, and **multiple stored recipe images** with a selected
 cover, gallery, free role/caption, and full agent control through `gusto image
-…`. **Shopping list** (core/CLI/web, `gusto shopping …`)
+…`. **Shopping list** (core/CLI/web, `gusto shopping …`) with shared
+**preferred products** (`gusto favorites …`): exact learned aliases, manually
+ranked product cards, optional owned photos/store/notes, a mobile bottom sheet,
+central management, no-JS fallback, and offline-readable recommendations;
 incl. offline-capable **PWA**: service worker (app-shell cache, offline fallback)
 + full-state sync via "last writer wins" + tombstones. Sync contract:
 [docs/sync-kontrakt.md](docs/sync-kontrakt.md). Tests: `scripts/browser_check.py`

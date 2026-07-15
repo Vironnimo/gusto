@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="favorite-admin">
+  <a class="back" href="/favorites">← Alle Lieblingsprodukte</a>
+  <p class="eyebrow">Einkaufsbedarf</p>
+  <h1 class="page-title">{{ need.name }}</h1>
+  <p class="lede">Die Reihenfolge ist eure Rangliste. Platz 1 erscheint beim Einkauf zuerst.</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <div class="favorite-admin-section favorite-name-section">
+    <h2>Name</h2>
+    <form class="favorite-inline-form" method="post" action="/favorites/{{ need.id }}/set">
+      <input name="name" value="{{ need.name }}" required>
+      <button class="btn-ghost" type="submit">Umbenennen</button>
+    </form>
+  </div>
+
+  <div class="favorite-admin-section">
+    <div class="favorite-section-head">
+      <div><p class="eyebrow">Wird eindeutig erkannt als</p><h2>Formulierungen</h2></div>
+      <span>{{ need.aliases|length + 1 }}</span>
+    </div>
+    <div class="favorite-aliases">
+      <span class="favorite-alias is-primary">{{ need.name }} <small>Name</small></span>
+      {% for alias in need.aliases %}
+      <form class="favorite-alias" method="post" action="/favorites/{{ need.id }}/alias/remove">
+        <input type="hidden" name="alias" value="{{ alias }}">
+        <span>{{ alias }}</span><button type="submit" aria-label="Alias „{{ alias }}“ entfernen">✕</button>
+      </form>
+      {% endfor %}
+    </div>
+    <form class="favorite-inline-form" method="post" action="/favorites/{{ need.id }}/alias/add">
+      <input name="alias" placeholder="Weitere exakte Formulierung" required>
+      <button class="btn-ghost" type="submit">Alias hinzufügen</button>
+    </form>
+  </div>
+
+  <div class="favorite-admin-section">
+    <div class="favorite-section-head">
+      <div><p class="eyebrow">Von sehr gern bis gute Alternative</p><h2>Rangliste</h2></div>
+      <span>{{ need.products|length }}</span>
+    </div>
+
+    {% if need.products %}
+    <div class="favorite-admin-products">
+      {% for product in need.products %}
+      <details class="favorite-admin-product">
+        <summary>
+          <span class="favorite-admin-rank">{{ loop.index }}</span>
+          {% if product.image_filename %}
+          <img src="/media/favorite/{{ product.image_filename }}" alt="{{ product.name }}">
+          {% else %}<span class="favorite-admin-placeholder" aria-hidden="true">{{ product.name[:1] }}</span>{% endif %}
+          <span class="favorite-admin-product-name"><strong>{{ product.name }}</strong><small>{{ product.brand or 'Ohne Marke' }}{% if product.store %} · {{ product.store }}{% endif %}</small></span>
+          <span aria-hidden="true">Bearbeiten</span>
+        </summary>
+        <div class="favorite-admin-product-body">
+          <div class="favorite-rank-actions" aria-label="Rangfolge ändern">
+            {% if not loop.first %}
+            <form method="post" action="/favorites/{{ need.id }}/product/{{ product.id }}/move"><input type="hidden" name="position" value="{{ loop.index - 1 }}"><button class="btn-text" type="submit">↑ Weiter nach oben</button></form>
+            {% endif %}
+            {% if not loop.last %}
+            <form method="post" action="/favorites/{{ need.id }}/product/{{ product.id }}/move"><input type="hidden" name="position" value="{{ loop.index + 1 }}"><button class="btn-text" type="submit">↓ Weiter nach unten</button></form>
+            {% endif %}
+          </div>
+          <form class="favorite-form favorite-product-form" method="post" enctype="multipart/form-data" action="/favorites/{{ need.id }}/product/{{ product.id }}/set">
+            <label>Produktname<input name="name" value="{{ product.name }}" required></label>
+            <label>Marke<input name="brand" value="{{ product.brand }}" required></label>
+            <label>Bevorzugter Laden<input name="store" value="{{ product.store }}"></label>
+            <label class="favorite-form-wide">Notiz<textarea name="note" rows="2">{{ product.note }}</textarea></label>
+            <label class="favorite-form-wide">Neues Foto <span class="hint">optional</span><input type="file" name="image" accept="image/jpeg,image/png,image/webp,image/gif"></label>
+            {% if product.image_filename %}<label class="favorite-check favorite-form-wide"><input type="checkbox" name="remove_image" value="1"> Vorhandenes Foto entfernen</label>{% endif %}
+            <button class="btn" type="submit">Änderungen speichern</button>
+          </form>
+          <form method="post" action="/favorites/{{ need.id }}/product/{{ product.id }}/remove" onsubmit="return confirm('Produkt „{{ product.name }}“ wirklich entfernen?');">
+            <button class="btn-text" type="submit">Produkt entfernen</button>
+          </form>
+        </div>
+      </details>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="favorite-empty-note"><span>♡</span><p>Noch kein Produkt hinterlegt. Das erste wird automatisch Platz 1.</p></div>
+    {% endif %}
+
+    <details class="favorite-create-panel favorite-product-create"{{ ' open' if not need.products else '' }}>
+      <summary><span>Produkt hinzufügen</span><span aria-hidden="true">＋</span></summary>
+      <form class="favorite-form favorite-product-form" method="post" enctype="multipart/form-data" action="/favorites/{{ need.id }}/product/add">
+        <label>Produktname<input name="name" placeholder="z.B. Frischer Pizzateig 400 g" required></label>
+        <label>Marke<input name="brand" placeholder="z.B. Tante Fanny" required></label>
+        <label>Bevorzugter Laden<input name="store" placeholder="z.B. REWE"></label>
+        <label class="favorite-form-wide">Notiz<textarea name="note" rows="2" placeholder="z.B. wird besonders knusprig"></textarea></label>
+        <label class="favorite-form-wide">Foto <span class="hint">optional</span><input type="file" name="image" accept="image/jpeg,image/png,image/webp,image/gif"></label>
+        <button class="btn" type="submit">Produkt hinzufügen</button>
+      </form>
+    </details>
+  </div>
+
+  <div class="favorite-danger">
+    <div><strong>Einkaufsbedarf entfernen</strong><p>Entfernt alle Aliasse, Produktkarten und Fotos.</p></div>
+    <form method="post" action="/favorites/{{ need.id }}/delete" onsubmit="return confirm('„{{ need.name }}“ samt aller Lieblingsprodukte wirklich entfernen?');">
+      <button class="btn-text" type="submit">Vollständig entfernen</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

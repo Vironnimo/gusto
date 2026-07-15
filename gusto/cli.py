@@ -174,10 +174,22 @@ def cmd_check(args):
         print("  Fehlende Bilddateien:", ", ".join(res["missing_image_files"]))
     if res.get("invalid_cover_images"):
         print("  Ungueltige Top-Bilder:", ", ".join(res["invalid_cover_images"]))
+    if res.get("duplicate_favorite_aliases"):
+        print("  Mehrdeutige Lieblingsprodukt-Aliasse:",
+              ", ".join(res["duplicate_favorite_aliases"]))
+    if res.get("orphaned_favorite_image_files"):
+        print("  Produktbilder ohne Metadaten:",
+              ", ".join(res["orphaned_favorite_image_files"]))
+    if res.get("missing_favorite_image_files"):
+        print("  Fehlende Produktbilder:",
+              ", ".join(res["missing_favorite_image_files"]))
     if not (res["orphaned_files"] or res["missing_files"]
             or res.get("uncategorized_tags") or res.get("orphaned_image_folders")
             or res.get("orphaned_image_files") or res.get("missing_image_files")
-            or res.get("invalid_cover_images")):
+            or res.get("invalid_cover_images")
+            or res.get("duplicate_favorite_aliases")
+            or res.get("orphaned_favorite_image_files")
+            or res.get("missing_favorite_image_files")):
         print("  Alles konsistent.")
 
 
@@ -285,6 +297,155 @@ def cmd_image_remove(args):
         _dump({"id": args.id, "removed": True, "cover_image_id": cover_id})
     else:
         print(f"Bild entfernt: {args.id}")
+
+
+# --- Preferred products -----------------------------------------------------
+
+def cmd_favorites_list(args):
+    needs = core.favorites_load()
+    if args.json:
+        _dump([need.to_dict() for need in needs])
+        return
+    if not needs:
+        print("Noch keine Lieblingsprodukte hinterlegt.")
+        return
+    for need in needs:
+        print(f"  {need.id}  {need.name}  ({len(need.products)} Produkt(e))")
+
+
+def cmd_favorites_show(args):
+    need = core.favorite_get_need(args.need)
+    if need is None:
+        sys.exit(f"Kein Einkaufsbedarf mit id oder Name '{args.need}'.")
+    if args.json:
+        _dump(need.to_dict())
+        return
+    print(need.name)
+    if need.aliases:
+        print("  Aliasse: " + ", ".join(need.aliases))
+    for position, product in enumerate(need.products, 1):
+        details = " · ".join(value for value in [product.brand, product.store] if value)
+        print(f"  {position}. {product.name}" + (f"  [{details}]" if details else ""))
+
+
+def cmd_favorites_match(args):
+    need = core.favorite_match(args.text)
+    if args.json:
+        _dump(need.to_dict() if need is not None else None)
+    elif need is None:
+        print("Keine Zuordnung gefunden.")
+    else:
+        print(f"{args.text} -> {need.name}")
+
+
+def cmd_favorites_add(args):
+    try:
+        need = core.favorite_add_need(args.name, aliases=args.alias)
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump(need.to_dict())
+    else:
+        print(f"Einkaufsbedarf angelegt: {need.name} ({need.id})")
+
+
+def cmd_favorites_set(args):
+    try:
+        need = core.favorite_update_need(args.need, args.name)
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump(need.to_dict())
+    else:
+        print(f"Einkaufsbedarf aktualisiert: {need.name}")
+
+
+def cmd_favorites_remove(args):
+    try:
+        need = core.favorite_remove_need(args.need)
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump({"id": need.id, "removed": True})
+    else:
+        print(f"Einkaufsbedarf entfernt: {need.name}")
+
+
+def cmd_favorites_alias_add(args):
+    try:
+        need = core.favorite_add_alias(args.need, args.alias)
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump(need.to_dict())
+    else:
+        print(f"Alias bei '{need.name}' hinterlegt: {args.alias}")
+
+
+def cmd_favorites_alias_remove(args):
+    try:
+        need = core.favorite_remove_alias(args.need, args.alias)
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump(need.to_dict())
+    else:
+        print(f"Alias bei '{need.name}' entfernt: {args.alias}")
+
+
+def cmd_favorites_product_add(args):
+    try:
+        product = core.favorite_add_product(
+            args.need, args.name, brand=args.brand or "", store=args.store or "",
+            note=args.note or "", image=args.image,
+        )
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump(product.to_dict())
+    else:
+        print(f"Lieblingsprodukt hinzugefuegt: {product.name} ({product.id})")
+
+
+def cmd_favorites_product_set(args):
+    if not any(value is not None for value in
+               [args.name, args.brand, args.store, args.note, args.image]) \
+            and not args.remove_image:
+        sys.exit("Gib mindestens eine Aenderung an.")
+    try:
+        product = core.favorite_update_product(
+            args.need, args.id, name=args.name, brand=args.brand,
+            store=args.store, note=args.note, image=args.image,
+            remove_image=args.remove_image,
+        )
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump(product.to_dict())
+    else:
+        print(f"Lieblingsprodukt aktualisiert: {product.name}")
+
+
+def cmd_favorites_product_move(args):
+    try:
+        need = core.favorite_move_product(args.need, args.id, args.position)
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump(need.to_dict())
+    else:
+        print(f"Reihenfolge bei '{need.name}' aktualisiert.")
+
+
+def cmd_favorites_product_remove(args):
+    try:
+        need = core.favorite_remove_product(args.need, args.id)
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump(need.to_dict())
+    else:
+        print(f"Lieblingsprodukt bei '{need.name}' entfernt.")
 
 
 # --- Shopping list ----------------------------------------------------------
@@ -502,6 +663,88 @@ def build_parser() -> argparse.ArgumentParser:
     ip.add_argument("slug")
     ip.add_argument("id")
     ip.set_defaults(func=cmd_image_remove)
+
+    sp = sub.add_parser("favorites", help="Lieblingsprodukte verwalten.")
+    fsub = sp.add_subparsers(dest="favorites_command", required=True)
+
+    fp = fsub.add_parser("list", parents=[base],
+                         help="Alle Einkaufsbedarfe anzeigen.")
+    fp.set_defaults(func=cmd_favorites_list)
+
+    fp = fsub.add_parser("show", parents=[base],
+                         help="Einen Einkaufsbedarf mit Produkten anzeigen.")
+    fp.add_argument("need", help="Id oder exakter Name des Einkaufsbedarfs.")
+    fp.set_defaults(func=cmd_favorites_show)
+
+    fp = fsub.add_parser("match", parents=[base],
+                         help="Freien Einkaufstext eindeutig zuordnen.")
+    fp.add_argument("text")
+    fp.set_defaults(func=cmd_favorites_match)
+
+    fp = fsub.add_parser("add", parents=[base],
+                         help="Einkaufsbedarf anlegen.")
+    fp.add_argument("name")
+    fp.add_argument("--alias", action="append",
+                    help="Exakte weitere Formulierung; mehrfach moeglich.")
+    fp.set_defaults(func=cmd_favorites_add)
+
+    fp = fsub.add_parser("set", parents=[base],
+                         help="Einkaufsbedarf umbenennen.")
+    fp.add_argument("need")
+    fp.add_argument("--name", required=True)
+    fp.set_defaults(func=cmd_favorites_set)
+
+    fp = fsub.add_parser("remove", parents=[base],
+                         help="Einkaufsbedarf samt Produktkarten entfernen.")
+    fp.add_argument("need")
+    fp.set_defaults(func=cmd_favorites_remove)
+
+    fp = fsub.add_parser("alias-add", parents=[base],
+                         help="Bekannte Formulierung zuordnen.")
+    fp.add_argument("need")
+    fp.add_argument("alias")
+    fp.set_defaults(func=cmd_favorites_alias_add)
+
+    fp = fsub.add_parser("alias-remove", parents=[base],
+                         help="Bekannte Formulierung entfernen.")
+    fp.add_argument("need")
+    fp.add_argument("alias")
+    fp.set_defaults(func=cmd_favorites_alias_remove)
+
+    fp = fsub.add_parser("product-add", parents=[base],
+                         help="Geordnetes Lieblingsprodukt hinzufuegen.")
+    fp.add_argument("need")
+    fp.add_argument("name")
+    fp.add_argument("--brand", required=True, help="Marke.")
+    fp.add_argument("--store", help="Bevorzugter Laden.")
+    fp.add_argument("--note", help="Kurze persoenliche Notiz.")
+    fp.add_argument("--image", help="Lokales Produktbild.")
+    fp.set_defaults(func=cmd_favorites_product_add)
+
+    fp = fsub.add_parser("product-set", parents=[base],
+                         help="Lieblingsprodukt aktualisieren.")
+    fp.add_argument("need")
+    fp.add_argument("id")
+    fp.add_argument("--name")
+    fp.add_argument("--brand")
+    fp.add_argument("--store")
+    fp.add_argument("--note")
+    fp.add_argument("--image", help="Neues lokales Produktbild.")
+    fp.add_argument("--remove-image", action="store_true")
+    fp.set_defaults(func=cmd_favorites_product_set)
+
+    fp = fsub.add_parser("product-move", parents=[base],
+                         help="Lieblingsprodukt auf eine Rangposition verschieben.")
+    fp.add_argument("need")
+    fp.add_argument("id")
+    fp.add_argument("position", type=int, help="Position ab 1.")
+    fp.set_defaults(func=cmd_favorites_product_move)
+
+    fp = fsub.add_parser("product-remove", parents=[base],
+                         help="Lieblingsprodukt entfernen.")
+    fp.add_argument("need")
+    fp.add_argument("id")
+    fp.set_defaults(func=cmd_favorites_product_remove)
 
     sp = sub.add_parser("shopping", help="Einkaufsliste verwalten.")
     esub = sp.add_subparsers(dest="shopping_command", required=True)

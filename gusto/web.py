@@ -6,11 +6,14 @@ Visible UI text lives in the templates and stays German.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
+import shutil
+import tempfile
 from urllib.parse import urlencode
 
 import markdown as md
-from fastapi import FastAPI, Form, Query, Request
+from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import (HTMLResponse, RedirectResponse, PlainTextResponse,
                                JSONResponse, FileResponse)
 from fastapi.staticfiles import StaticFiles
@@ -74,6 +77,41 @@ def _tag_bar(q: str, selected: list[str]) -> list[dict]:
     return bar
 
 
+def _favorite_dict(need: core.ShoppingNeed) -> dict:
+    data = need.to_dict()
+    for product in data["products"]:
+        filename = product.get("image_filename")
+        product["image_url"] = (f"/media/favorite/{filename}" if filename else None)
+    return data
+
+
+def _safe_return_to(value: str, fallback: str) -> str:
+    return value if value.startswith("/") and not value.startswith("//") else fallback
+
+
+def _error_redirect(path: str, message: str) -> RedirectResponse:
+    separator = "&" if "?" in path else "?"
+    return RedirectResponse(
+        path + separator + urlencode({"error": message}), status_code=303,
+    )
+
+
+@contextmanager
+def _temporary_upload(upload: UploadFile | None):
+    """Expose an optional browser upload as a short-lived local file."""
+    if upload is None or not upload.filename:
+        yield None
+        return
+    suffix = Path(upload.filename).suffix
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
+        shutil.copyfileobj(upload.file, handle)
+        path = Path(handle.name)
+    try:
+        yield path
+    finally:
+        path.unlink(missing_ok=True)
+
+
 # --- Pages ------------------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
@@ -107,6 +145,16 @@ def recipe_image(slug: str, image_id: str):
     if image is None:
         raise StarletteHTTPException(status_code=404)
     path = core.recipe_image_path(slug, image)
+    if not path.is_file():
+        raise StarletteHTTPException(status_code=404)
+    return FileResponse(str(path))
+
+
+@app.get("/media/favorite/{filename}", include_in_schema=False)
+def favorite_image(filename: str):
+    if not core.favorite_image_is_referenced(filename):
+        raise StarletteHTTPException(status_code=404)
+    path = core.favorite_image_path(filename)
     if not path.is_file():
         raise StarletteHTTPException(status_code=404)
     return FileResponse(str(path))
@@ -205,11 +253,153 @@ def log_page(request: Request):
     })
 
 
+# --- Preferred products -----------------------------------------------------
+
+@app.get("/favorites", response_class=HTMLResponse)
+def favorites_page(request: Request, error: str = ""):
+    needs = sorted(core.favorites_load(), key=lambda item: item.name.casefold())
+    return templates.TemplateResponse(request, "favorites.html", {
+        "nav": "shopping", "title": "Lieblingsprodukte",
+        "needs": needs, "error": error,
+    })
+
+
+@app.get("/favorites/match", response_class=HTMLResponse)
+def favorite_match_page(request: Request, text: str = "", error: str = ""):
+    needs = sorted(core.favorites_load(), key=lambda item: item.name.casefold())
+    need = core.favorite_match(text, needs)
+    return templates.TemplateResponse(request, "favorite_match.html", {
+        "nav": "shopping", "title": need.name if need else "Lieblingsprodukt",
+        "text": text, "need": need, "needs": needs, "error": error,
+    })
+
+
+@app.post("/favorites/add")
+def favorite_add_route(name: str = Form(...), alias: str = Form(""),
+                       return_to: str = Form("")):
+    try:
+        need = core.favorite_add_need(name.strip(), aliases=[alias] if alias else [])
+    except ValueError as error:
+        return _error_redirect("/favorites", str(error))
+    destination = _safe_return_to(return_to, f"/favorites/{need.id}")
+    return RedirectResponse(destination, status_code=303)
+
+
+@app.post("/favorites/assign")
+def favorite_assign_route(need_id: str = Form(...), alias: str = Form(...),
+                          return_to: str = Form("/shopping")):
+    try:
+        core.favorite_add_alias(need_id, alias)
+    except ValueError as error:
+        match_path = "/favorites/match?" + urlencode({"text": alias})
+        return _error_redirect(match_path, str(error))
+    return RedirectResponse(_safe_return_to(return_to, "/shopping"), status_code=303)
+
+
+@app.get("/favorites/{need_id}", response_class=HTMLResponse)
+def favorite_detail_page(request: Request, need_id: str, error: str = ""):
+    need = core.favorite_get_need(need_id)
+    if need is None:
+        raise StarletteHTTPException(status_code=404)
+    return templates.TemplateResponse(request, "favorite_detail.html", {
+        "nav": "shopping", "title": need.name,
+        "need": need, "error": error,
+    })
+
+
+@app.post("/favorites/{need_id}/set")
+def favorite_set_route(need_id: str, name: str = Form(...)):
+    try:
+        core.favorite_update_need(need_id, name)
+    except ValueError as error:
+        return _error_redirect(f"/favorites/{need_id}", str(error))
+    return RedirectResponse(f"/favorites/{need_id}", status_code=303)
+
+
+@app.post("/favorites/{need_id}/delete")
+def favorite_delete_route(need_id: str):
+    try:
+        core.favorite_remove_need(need_id)
+    except ValueError:
+        raise StarletteHTTPException(status_code=404)
+    return RedirectResponse("/favorites", status_code=303)
+
+
+@app.post("/favorites/{need_id}/alias/add")
+def favorite_alias_add_route(need_id: str, alias: str = Form(...)):
+    try:
+        core.favorite_add_alias(need_id, alias)
+    except ValueError as error:
+        return _error_redirect(f"/favorites/{need_id}", str(error))
+    return RedirectResponse(f"/favorites/{need_id}", status_code=303)
+
+
+@app.post("/favorites/{need_id}/alias/remove")
+def favorite_alias_remove_route(need_id: str, alias: str = Form(...)):
+    try:
+        core.favorite_remove_alias(need_id, alias)
+    except ValueError as error:
+        return _error_redirect(f"/favorites/{need_id}", str(error))
+    return RedirectResponse(f"/favorites/{need_id}", status_code=303)
+
+
+@app.post("/favorites/{need_id}/product/add")
+def favorite_product_add_route(
+        need_id: str, name: str = Form(...), brand: str = Form(""),
+        store: str = Form(""), note: str = Form(""),
+        image: UploadFile | None = File(None)):
+    try:
+        with _temporary_upload(image) as image_path:
+            core.favorite_add_product(
+                need_id, name, brand=brand, store=store, note=note,
+                image=image_path,
+            )
+    except ValueError as error:
+        return _error_redirect(f"/favorites/{need_id}", str(error))
+    return RedirectResponse(f"/favorites/{need_id}", status_code=303)
+
+
+@app.post("/favorites/{need_id}/product/{product_id}/set")
+def favorite_product_set_route(
+        need_id: str, product_id: str, name: str = Form(...),
+        brand: str = Form(""), store: str = Form(""), note: str = Form(""),
+        remove_image: str = Form(""), image: UploadFile | None = File(None)):
+    try:
+        with _temporary_upload(image) as image_path:
+            core.favorite_update_product(
+                need_id, product_id, name=name, brand=brand, store=store,
+                note=note, image=image_path, remove_image=remove_image == "1",
+            )
+    except ValueError as error:
+        return _error_redirect(f"/favorites/{need_id}", str(error))
+    return RedirectResponse(f"/favorites/{need_id}", status_code=303)
+
+
+@app.post("/favorites/{need_id}/product/{product_id}/move")
+def favorite_product_move_route(need_id: str, product_id: str,
+                                position: int = Form(...)):
+    try:
+        core.favorite_move_product(need_id, product_id, position)
+    except ValueError as error:
+        return _error_redirect(f"/favorites/{need_id}", str(error))
+    return RedirectResponse(f"/favorites/{need_id}", status_code=303)
+
+
+@app.post("/favorites/{need_id}/product/{product_id}/remove")
+def favorite_product_remove_route(need_id: str, product_id: str):
+    try:
+        core.favorite_remove_product(need_id, product_id)
+    except ValueError as error:
+        return _error_redirect(f"/favorites/{need_id}", str(error))
+    return RedirectResponse(f"/favorites/{need_id}", status_code=303)
+
+
 # --- Shopping list ----------------------------------------------------------
 
 @app.get("/shopping", response_class=HTMLResponse)
 def shopping_page(request: Request):
     items = core.shopping_list()
+    needs = core.favorites_load()
     open_items = [i for i in items if not i.checked]
     done_items = [i for i in items if i.checked]
     source_titles = {recipe.slug: recipe.title for recipe in core.load_recipes()}
@@ -217,6 +407,8 @@ def shopping_page(request: Request):
         "nav": "shopping", "title": "Einkaufsliste",
         "open_items": open_items, "done_items": done_items,
         "source_titles": source_titles,
+        "favorite_matches": {item.id: core.favorite_match(item.text, needs)
+                             for item in items},
     })
 
 
@@ -269,6 +461,14 @@ def api_shopping_get():
 
     Read-only starting point for the PWA and for agents/scripts."""
     return JSONResponse({"items": [i.to_dict() for i in core.shopping_load()]})
+
+
+@app.get("/api/favorites")
+def api_favorites_get():
+    """Shared preference catalog for the offline-readable shopping client."""
+    return JSONResponse({
+        "needs": [_favorite_dict(need) for need in core.favorites_load()],
+    })
 
 
 @app.post("/api/shopping/sync")

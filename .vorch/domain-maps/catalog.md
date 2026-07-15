@@ -41,6 +41,8 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
 - JSON writes use the shared atomic writer. New catalog behavior belongs in core before either surface.
 - Web create and edit always reconstruct the first Markdown line from the separate title field.
 - Images are copied into Gusto storage after extension and header/dimension validation. The first image becomes the cover unless another is explicitly selected.
+- `images/_favorites/` is reserved for the shopping domain and must be ignored
+  when diagnosing recipe image folders.
 - `check` diagnoses index, Markdown, tag, image-file, image-folder, and cover-selection inconsistencies; it does not repair them.
 
 ## Constraints & Gotchas

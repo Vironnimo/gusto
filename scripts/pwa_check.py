@@ -37,6 +37,8 @@ TESTDATA = ROOT / ".testdata-pwa"
 PORT = "8012"
 BASE = f"http://127.0.0.1:{PORT}"
 SHOPPING = TESTDATA / "data" / "shopping_list.json"
+FAVORITES = TESTDATA / "data" / "favorites.json"
+FAVORITE_IMAGE = "offline-spaghetti.png"
 
 # --- fresh throwaway data ---
 if TESTDATA.exists():
@@ -44,6 +46,20 @@ if TESTDATA.exists():
 TESTDATA.mkdir()
 shutil.copytree(ROOT / "recipes", TESTDATA / "recipes")
 shutil.copytree(ROOT / "data", TESTDATA / "data")
+(TESTDATA / "images" / "_favorites").mkdir(parents=True)
+shutil.copy2(
+    next((ROOT / "images" / "spaghetti-carbonara").glob("*.png")),
+    TESTDATA / "images" / "_favorites" / FAVORITE_IMAGE,
+)
+FAVORITES.write_text(json.dumps({"needs": [{
+    "id": "spaghetti", "name": "Spaghetti", "aliases": ["200 g Spaghetti"],
+    "created_at": "2026-01-01T00:00:00.000Z", "products": [{
+        "id": "de-cecco", "name": "De Cecco Spaghetti n. 12",
+        "brand": "De Cecco", "store": "REWE", "note": "Bleibt schön bissfest",
+        "image_filename": FAVORITE_IMAGE,
+        "created_at": "2026-01-01T00:00:00.000Z",
+    }],
+}]}, ensure_ascii=False), encoding="utf-8")
 
 env = {**os.environ, "GUSTO_HOME": str(TESTDATA)}
 srv = subprocess.Popen(
@@ -103,6 +119,10 @@ def api_sync(items):
     with urllib.request.urlopen(req) as r:
         return json.loads(r.read())["items"]
 
+def api_favorites():
+    with urllib.request.urlopen(BASE + "/api/favorites") as r:
+        return json.loads(r.read())["needs"]
+
 def wait_server(pred, timeout=8.0):
     end = time.time() + timeout
     while time.time() < end:
@@ -141,6 +161,8 @@ try:
     # Strictly increasing timestamps so "last writer wins" is deterministic.
     reset_shopping()
     check(api_get() == [], "GET /api/shopping: empty list at start")
+    check(api_favorites()[0]["products"][0]["image_url"].startswith("/media/favorite/"),
+          "GET /api/favorites: ranked catalog includes its product image URL")
 
     def itm(ts, **kw):
         base = {"id": "milch", "text": "Milch", "quantity": "", "checked": False,
@@ -235,6 +257,24 @@ try:
         check("addEventListener" in sw and "caches" in sw, "service worker is served")
         check(sw_ready(pg, 8000) is True, "service worker registered + active")
 
+        # Catalog and its image are cached locally while online, then remain
+        # available inside the shopping sheet after a fully offline reload.
+        seed_shopping([mk("200 g Spaghetti", past_iso())])
+        pg.evaluate("localStorage.removeItem('gusto.shopping')")
+        pg.reload(wait_until="networkidle")
+        check(wait_count(pg, "#shop-client .shop-item", 1),
+              "preferred products: matching shopping item loaded")
+        pg.wait_for_function(
+            "() => document.querySelector('#shop-client .shop-favorite-hint').textContent.includes('1 Favorit')"
+        )
+        pg.locator("#shop-client .shop-favorite-trigger").click()
+        check(pg.locator("#favorite-sheet .favorite-product-card").count() == 1,
+              "preferred products: ranked card opens online")
+        check(pg.locator("#favorite-sheet .favorite-product-card img").evaluate(
+            "img => img.complete && img.naturalWidth > 0"),
+            "preferred products: product image loads online")
+        pg.locator("#favorite-sheet .favorite-sheet-close").click()
+
         # Offline reload: page comes from the SW cache
         cp.set_offline(True)
         served = False
@@ -246,6 +286,12 @@ try:
         check(served, "offline reload served from the SW cache")
         check(pg.locator("#shop-client, #shop-server").count() >= 1,
               "offline-loaded page has the shopping structure")
+        pg.locator("#shop-client .shop-favorite-trigger").click()
+        check(pg.locator("#favorite-sheet .favorite-product-card").count() == 1,
+              "offline: preferred-product ranking remains readable")
+        check(pg.locator("#favorite-sheet .favorite-product-card img").evaluate(
+            "img => img.complete && img.naturalWidth > 0"),
+            "offline: cached product image remains recognizable")
         cp.close()
 
         browser.close()

@@ -106,8 +106,42 @@ def main():
     check(as_json("shopping", "list", "--pending") == [],
           "shopping list --pending --json must hide checked items")
 
+    need = as_json(
+        "favorites", "add", "Pizzateig", "--alias", "1 Rolle Pizzateig",
+    )
+    check(need["name"] == "Pizzateig" and need["aliases"] == ["1 Rolle Pizzateig"],
+          "favorites add --json must create a need with exact aliases")
+    matched = as_json("favorites", "match", "1 Rolle Pizzateig")
+    check(matched["id"] == need["id"],
+          "favorites match --json must expose the deterministic assignment")
+    favorite = as_json(
+        "favorites", "product-add", need["id"], "Frischer Pizzateig",
+        "--brand", "Tante Fanny", "--store", "REWE", "--image", os.fspath(first_photo),
+    )
+    fallback = as_json(
+        "favorites", "product-add", need["id"], "Pizza-Kit",
+        "--brand", "Knack & Back",
+    )
+    moved = as_json(
+        "favorites", "product-move", need["id"], fallback["id"], "1",
+    )
+    check([product["id"] for product in moved["products"]]
+          == [fallback["id"], favorite["id"]],
+          "favorites product-move --json must update the preference order")
+    updated_favorite = as_json(
+        "favorites", "product-set", need["id"], favorite["id"],
+        "--note", "Unser Favorit",
+    )
+    check(updated_favorite["note"] == "Unser Favorit",
+          "favorites product-set --json must update product details")
+    shown_need = as_json("favorites", "show", need["id"])
+    check(len(shown_need["products"]) == 2,
+          "favorites show --json must include ranked products")
+
     consistency = as_json("check")
-    check(consistency["recipe_count"] == 1 and not consistency["missing_files"],
+    check(consistency["recipe_count"] == 1
+          and consistency["favorite_need_count"] == 1
+          and not consistency["missing_files"],
           "check --json must expose consistency state")
 
     missing = run("show", "does-not-exist", "--json", expect=1)

@@ -28,6 +28,7 @@ SHOTS = Path(__file__).resolve().parent / "shots"
 TESTDATA = ROOT / ".testdata"
 PORT = "8011"
 BASE = f"http://127.0.0.1:{PORT}"
+PRODUCT_PHOTO = next((ROOT / "images" / "spaghetti-carbonara").glob("*.png"))
 
 SHOTS.mkdir(exist_ok=True)
 
@@ -217,13 +218,79 @@ try:
               "recipe sources use the readable recipe title")
         page.screenshot(path=str(SHOTS / "09_shopping.png"), full_page=True)
 
+        # Create a reusable shopping need and two ranked preferred products.
+        page.locator(".shop-favorites-link").click()
+        page.wait_for_load_state("networkidle")
+        check(page.url.endswith("/favorites"), "preferred-product library opens from shopping")
+        create_need = page.locator(".favorite-create-panel")
+        page.fill(".favorite-create-panel input[name=name]", "Spaghetti")
+        page.fill(".favorite-create-panel input[name=alias]", "200 g Spaghetti")
+        create_need.locator("button", has_text="Anlegen").click()
+        page.wait_for_load_state("networkidle")
+        check(page.locator(".favorite-alias", has_text="200 g Spaghetti").count() == 1,
+              "exact shopping text is stored as an alias")
+
+        add_product = page.locator(".favorite-product-create")
+        page.fill(".favorite-product-create input[name=name]", "De Cecco Spaghetti n. 12")
+        page.fill(".favorite-product-create input[name=brand]", "De Cecco")
+        page.fill(".favorite-product-create input[name=store]", "REWE")
+        page.fill(".favorite-product-create textarea[name=note]", "Bleibt schön bissfest")
+        page.set_input_files(".favorite-product-create input[name=image]", PRODUCT_PHOTO)
+        add_product.locator("button", has_text="Produkt hinzufügen").click()
+        page.wait_for_load_state("networkidle")
+        page.locator(".favorite-product-create summary").click()
+        page.fill(".favorite-product-create input[name=name]", "Barilla Spaghetti n. 5")
+        page.fill(".favorite-product-create input[name=brand]", "Barilla")
+        page.fill(".favorite-product-create input[name=store]", "EDEKA")
+        page.set_input_files(".favorite-product-create input[name=image]", PRODUCT_PHOTO)
+        page.locator(".favorite-product-create button", has_text="Produkt hinzufügen").click()
+        page.wait_for_load_state("networkidle")
+        check(page.locator(".favorite-admin-product").count() == 2,
+              "two preferred product cards are managed centrally")
+        page.locator(".favorite-admin-product").nth(1).locator("summary").click()
+        page.locator(".favorite-admin-product").nth(1).locator("button", has_text="Weiter nach oben").click()
+        page.wait_for_load_state("networkidle")
+        check("Barilla" in page.locator(".favorite-admin-product").first.text_content(),
+              "manual move changes the household ranking")
+        page.screenshot(path=str(SHOTS / "09b_favorites_admin.png"), full_page=True)
+
+        page.goto(BASE + "/shopping", wait_until="networkidle")
+        spaghetti_item = page.locator("#shop-client .shop-item", has_text="200 g Spaghetti")
+        page.wait_for_function(
+            "() => [...document.querySelectorAll('#shop-client .shop-favorite-hint')].some(el => el.textContent.includes('2 Favoriten'))"
+        )
+        check("2 Favoriten" in spaghetti_item.locator(".shop-favorite-hint").text_content(),
+              "known alias advertises its preferred products")
+        spaghetti_item.locator(".shop-favorite-trigger").click()
+        check(page.locator("#favorite-sheet:not([hidden])").count() == 1,
+              "tapping a shopping text opens the product sheet")
+        check(page.locator("#favorite-sheet .favorite-product-card").count() == 2,
+              "product sheet shows the complete ranked list")
+        check("Barilla" in page.locator("#favorite-sheet .favorite-product-card").first.text_content(),
+              "product sheet preserves the manual ranking")
+        page.wait_for_timeout(350)
+        page.screenshot(path=str(SHOTS / "09c_favorite_sheet.png"), full_page=True)
+        page.locator("#favorite-sheet .favorite-sheet-close").click()
+
         # Add manually (client form, optimistic + background sync)
         page.locator("#shop-client .shop-add-panel summary").click()
-        page.fill("#shop-client input[name=text]", "Backpapier")
-        page.fill("#shop-client input[name=quantity]", "1 Rolle")
+        page.fill("#shop-client input[name=text]", "Spaghettini")
+        page.fill("#shop-client input[name=quantity]", "500 g")
         page.locator("#shop-client form.shop-add button").click()
         page.wait_for_function("() => document.querySelectorAll('#shop-client .shop-item').length === 7")
-        check("Backpapier" in page.content(), "manual item visible (client)")
+        check("Spaghettini" in page.content(), "manual item visible (client)")
+        page.locator("#shop-client .shop-item", has_text="Spaghettini").locator(
+            ".shop-favorite-trigger").click()
+        check(page.locator("#favorite-sheet .favorite-setup-card").count() == 2,
+              "unknown shopping text offers assignment or a new need")
+        page.locator("#favorite-sheet form[action='/favorites/assign'] button").click()
+        page.wait_for_load_state("networkidle")
+        page.wait_for_function(
+            "() => [...document.querySelectorAll('#shop-client .shop-item')].some(item => item.querySelector('.shop-text').textContent === 'Spaghettini' && item.querySelector('.shop-favorite-hint').textContent.includes('2 Favoriten'))"
+        )
+        spaghettini_item = page.locator("#shop-client .shop-item", has_text="Spaghettini")
+        check("2 Favoriten" in spaghettini_item.locator(".shop-favorite-hint").text_content(),
+              "one-time assignment teaches the exact alias")
 
         # Tick one item off -> moves to "done"
         page.locator("#shop-client .shop-group:not(.shop-group-done) .shop-box").first.click()
@@ -249,6 +316,15 @@ try:
         njp.wait_for_load_state("domcontentloaded")
         check(njp.locator("#shop-server .shop-item").count() == before + 1, "no-JS: add via server form")
         check("Senf" in njp.content(), "no-JS: new item visible")
+        njp.locator("#shop-server .shop-add-panel summary").click()
+        njp.fill("#shop-server input[name=text]", "200 g Spaghetti")
+        njp.locator("#shop-server form.shop-add button").click()
+        njp.wait_for_load_state("domcontentloaded")
+        njp.locator("#shop-server .shop-item", has_text="200 g Spaghetti").locator(
+            ".shop-favorite-trigger").click()
+        njp.wait_for_load_state("domcontentloaded")
+        check(njp.locator(".favorite-product-card").count() == 2,
+              "no-JS: preferred products open on a normal page")
         nojs.close()
 
         # Mobile views
@@ -278,6 +354,16 @@ try:
         check(first_shop_item is not None and first_shop_item["y"] < 520,
               "mobile: shopping items lead the screen")
         m.screenshot(path=str(SHOTS / "11_mobile_shopping.png"))
+        m.locator("#shop-client .shop-item", has_text="200 g Spaghetti").locator(
+            ".shop-favorite-trigger").click()
+        panel_box = m.locator("#favorite-sheet .favorite-sheet-panel").bounding_box()
+        check(panel_box is not None and panel_box["y"] > 100,
+              "mobile: preferred products open as a sheet from the bottom")
+        check(m.evaluate(
+            "() => !!document.elementFromPoint(innerWidth / 2, innerHeight - 20).closest('#favorite-sheet')"),
+            "mobile: open product sheet stays above the fixed navigation")
+        m.wait_for_timeout(350)
+        m.screenshot(path=str(SHOTS / "12_mobile_favorite_sheet.png"))
 
         browser.close()
 finally:

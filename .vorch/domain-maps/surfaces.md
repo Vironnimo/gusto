@@ -18,7 +18,7 @@ No cross-cutting terms for this domain are currently defined in `.vorch/GLOSSARY
 
 The installed application command is `gusto`, backed by `gusto.cli:main`; `python -m gusto` reaches the same entry point. Every command accepts `--json`, and the CLI converts expected core `ValueError` failures into non-zero command exits.
 
-The web application object is `gusto.web:app`. It serves catalog, log, suggestion, shopping, and form pages; recipe media; shopping sync JSON; static assets; the root-scoped service worker; and a custom HTML 404. Entity URLs continue to use `/recipe/{slug}` because they address a recipe, not the application package.
+The web application object is `gusto.web:app`. It serves catalog, log, suggestion, shopping, preferred-product management, and form pages; recipe and product media; shopping/favorite JSON; static assets; the root-scoped service worker; and a custom HTML 404. Entity URLs continue to use `/recipe/{slug}` because they address a recipe, not the application package.
 
 Templates and static assets are package-relative under `gusto/templates/` and `gusto/static/`. The PWA manifest names the installed browser app Gusto and starts at `/shopping`.
 
@@ -34,6 +34,8 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
 
 - Add or change behavior in core and expose it through the CLI before adding web presentation. Keep the agent guides and `skill/gusto/` command reference synchronized with CLI changes.
 - Preserve German product copy and English code identifiers.
+- Product-catalog changes have a server-rendered online path; the shopping
+  client only caches and presents the last successful catalog offline.
 - Starlette template calls pass the request as the first argument.
 - Browser tests and PWA tests set `GUSTO_HOME` to throwaway stores before starting isolated servers; never point them at real data.
 
@@ -43,4 +45,7 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
 - Catalog filter markup is open by default so desktop and no-JavaScript use stay visible; `app.js` closes it only on an initial mobile load without selected tags. The mobile masthead must remain in a higher stacking context than main content so its fixed navigation cannot be covered by recipe cards.
 - Shopping items persist their recipe source as a slug. `gusto.web` supplies a slug-to-title presentation map to both the server fallback and offline client so the visible list uses recipe titles without changing the sync contract.
 - The offline shopping client duplicates only client-side state transitions required for optimistic use; authoritative merge and persistence rules remain in core. Keep both timestamp and merge behaviors aligned.
+- The same client performs deterministic name/alias lookup for presentation;
+  keep its case/whitespace normalization aligned with core and never add fuzzy
+  matching only in JavaScript.
 - Run `tests/test_packaging.py` after package, dependency, command, or import changes and `tests/test_cli.py` after CLI changes. Any web-visible change also requires `scripts/browser_check.py`; shopping PWA behavior additionally requires `scripts/pwa_check.py`.
