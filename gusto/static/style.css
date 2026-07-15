@@ -353,10 +353,87 @@ body.has-favorite-sheet .wrap{z-index:90}
 .favorite-danger strong{color:var(--accent-deep)}
 .favorite-danger p{font-size:.82rem}
 
+/* ---- Camera + image selection ---- */
+.photo-field-label{display:block; margin-bottom:.4rem; color:var(--ink); font-size:.84rem; font-weight:700}
+.photo-picker{display:grid; gap:.65rem}
+.photo-choices{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.65rem}
+.photo-choice,.favorite-form .photo-choice{
+  position:relative; display:grid; grid-template-columns:2.7rem minmax(0,1fr); align-items:center;
+  gap:.7rem; min-height:4.4rem; padding:.65rem .75rem; overflow:hidden;
+  border:1.5px solid var(--line-strong); border-radius:12px; background:rgba(252,247,236,.7);
+  color:var(--ink); cursor:pointer; transition:transform .15s,border-color .15s,background .15s;
+}
+.photo-choice:hover{transform:translateY(-1px); border-color:var(--accent); background:var(--paper-card)}
+.photo-choice:focus-within{border-color:var(--accent); box-shadow:0 0 0 3px rgba(191,69,40,.12)}
+.photo-choice-camera{border-color:rgba(191,69,40,.45); background:rgba(191,69,40,.07)}
+.photo-choice-icon{display:flex; align-items:center; justify-content:center; width:2.7rem; height:2.7rem; border-radius:50%; background:var(--paper); color:var(--accent)}
+.photo-choice-icon svg{width:1.35rem; height:1.35rem; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round}
+.photo-choice>span:nth-child(2){display:grid; gap:.05rem; min-width:0; line-height:1.2}
+.photo-choice strong{font-size:.88rem}
+.photo-choice small{color:var(--ink-soft); font-size:.7rem; font-weight:500}
+.photo-input,.favorite-form .photo-input{
+  position:absolute!important; width:1px!important; height:1px!important; margin:-1px!important;
+  padding:0!important; overflow:hidden!important; clip:rect(0 0 0 0)!important;
+  white-space:nowrap!important; border:0!important;
+}
+.photo-preview{display:grid; grid-template-columns:3.8rem minmax(0,1fr) auto; align-items:center; gap:.7rem; padding:.5rem; border-radius:11px; background:rgba(95,107,67,.1); color:var(--olive)}
+.photo-preview[hidden]{display:none}
+.photo-preview img{width:3.8rem; height:3.8rem; border-radius:8px; object-fit:cover; background:var(--line)}
+.photo-preview>span{display:grid; min-width:0; line-height:1.25}
+.photo-preview strong{overflow:hidden; font-size:.82rem; text-overflow:ellipsis; white-space:nowrap}
+.photo-preview small{font-size:.7rem}
+.photo-preview .btn-text{font-size:.78rem}
+.photo-nojs{color:var(--ink-soft); font-size:.75rem; font-weight:500}
+
+/* ---- Recipe image management ---- */
+.image-admin{max-width:920px; margin:0 auto}
+.image-admin-head{display:flex; align-items:flex-end; justify-content:space-between; gap:1.5rem; margin-bottom:1.5rem}
+.image-admin-head .lede{max-width:55ch}
+.image-count{flex:0 0 auto; margin-bottom:.4rem; padding:.28rem .7rem; border-radius:999px; background:rgba(95,107,67,.13); color:var(--olive); font-size:.78rem; font-weight:750}
+.photo-add-card{position:relative; padding:1.25rem; overflow:hidden; border:1px solid var(--line-strong); border-radius:18px; background:var(--paper-card); box-shadow:var(--shadow)}
+.photo-add-card::after{content:""; position:absolute; right:-4rem; top:-5rem; width:13rem; height:13rem; border:1.5rem solid rgba(207,154,60,.08); border-radius:50%; pointer-events:none}
+.photo-add-intro{position:relative; z-index:1; display:flex; align-items:center; gap:.8rem; margin-bottom:1rem}
+.photo-add-number{display:flex; align-items:center; justify-content:center; width:2.8rem; height:2.8rem; border-radius:50%; background:var(--accent); color:#fff; font-family:var(--serif); font-size:1.8rem; line-height:1}
+.photo-add-intro h2,.image-library-head h2{font-family:var(--serif); font-size:1.65rem; line-height:1.1}
+.recipe-image-form{position:relative; z-index:1; display:grid; gap:1rem}
+.image-fields{display:grid; grid-template-columns:minmax(0,.72fr) minmax(0,1.28fr); gap:.8rem}
+.image-fields label{display:grid; gap:.35rem; color:var(--ink); font-size:.82rem; font-weight:700}
+.image-fields .hint{color:var(--ink-soft); font-weight:500}
+.image-fields input,.image-fields select{width:100%; min-width:0; padding:.7rem .8rem; border:1.5px solid var(--line-strong); border-radius:10px; background:var(--paper-card); color:var(--ink); font:inherit; font-weight:450}
+.image-fields input:focus,.image-fields select:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(191,69,40,.12)}
+.image-cover-choice{font-size:.84rem; font-weight:650}
+.image-form-actions{display:flex; align-items:center; gap:1rem; flex-wrap:wrap}
+.image-form-actions small{color:var(--ink-soft); font-size:.72rem}
+.image-library{margin-top:2.5rem}
+.image-library-head{margin-bottom:1rem}
+.image-admin-grid{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem}
+.image-admin-card{overflow:hidden; border:1px solid var(--line); border-radius:16px; background:var(--paper-card); box-shadow:var(--shadow)}
+.image-admin-card figure{position:relative; aspect-ratio:16/10; overflow:hidden; background:var(--line)}
+.image-admin-card figure img{width:100%; height:100%; display:block; object-fit:cover}
+.image-rank{position:absolute; left:.7rem; bottom:.65rem; color:rgba(255,255,255,.92); font-family:var(--serif); font-size:2rem; font-weight:900; line-height:1; text-shadow:0 2px 12px rgba(42,32,26,.5)}
+.cover-badge{position:absolute; right:.65rem; top:.65rem; padding:.22rem .6rem; border-radius:999px; background:rgba(42,32,26,.82); color:#fff; font-size:.68rem; font-weight:750; letter-spacing:.03em}
+.image-card-form{display:grid; gap:.8rem; padding:1rem}
+.image-card-form .image-fields{grid-template-columns:1fr}
+.image-card-form>.btn-ghost{justify-self:start}
+.image-remove-form{padding:0 1rem 1rem}
+.image-remove-form .btn-text{font-size:.8rem}
+.image-empty{display:flex; align-items:center; gap:.8rem; margin-top:1.2rem; padding:1.2rem; border:1px dashed var(--line-strong); border-radius:14px; color:var(--ink-soft)}
+.image-empty>span{font-family:var(--serif); color:var(--honey); font-size:2rem}
+
 @media (max-width:560px){
   .shop-add{grid-template-columns:1fr auto}
   .shop-add-text{grid-column:1 / -1}
   .shop-add-quantity{width:auto}
+  .photo-choices,.image-fields,.image-admin-grid{grid-template-columns:1fr}
+  .photo-choice,.favorite-form .photo-choice{min-height:4rem}
+  .photo-preview{grid-template-columns:3.4rem minmax(0,1fr)}
+  .photo-preview img{width:3.4rem; height:3.4rem}
+  .photo-preview .btn-text{grid-column:2; justify-self:start; padding:.2rem 0}
+  .image-admin-head{align-items:flex-start; flex-direction:column; gap:.65rem; margin-bottom:1rem}
+  .image-count{margin:0}
+  .photo-add-card{padding:1rem .85rem}
+  .image-form-actions{align-items:stretch; flex-direction:column}
+  .image-form-actions .btn{justify-content:center}
 }
 
 /* ---- Mobile app shell + task-first hierarchy ---- */
@@ -408,7 +485,7 @@ body.has-favorite-sheet .wrap{z-index:90}
   .recipe-meta{margin-top:.85rem}
   .recipe-actions{display:grid; grid-template-columns:1fr 1fr; gap:.55rem; margin-top:1.1rem}
   .recipe-actions>form{min-width:0}
-  .recipe-actions>form .btn,.recipe-actions>form .btn-ghost{width:100%; height:100%; justify-content:center; padding:.65rem .55rem; text-align:center}
+  .recipe-actions>form .btn,.recipe-actions>form .btn-ghost,.recipe-photo-action{width:100%; height:100%; justify-content:center; padding:.65rem .55rem; text-align:center}
   .recipe-jump{display:flex; grid-column:1 / -1; justify-content:center}
   .recipe-more{grid-column:1 / -1; justify-self:start}
   .recipe-more summary{padding:.45rem .7rem; border-color:transparent; color:var(--ink-soft)}

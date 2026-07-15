@@ -18,6 +18,7 @@ from fastapi.responses import (HTMLResponse, RedirectResponse, PlainTextResponse
                                JSONResponse, FileResponse)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from PIL import Image, ImageOps, UnidentifiedImageError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import core
@@ -26,6 +27,15 @@ BASE = Path(__file__).resolve().parent
 app = FastAPI(title="Gusto")
 app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE / "templates"))
+
+MAX_WEB_IMAGE_BYTES = 25 * 1024 * 1024
+MAX_WEB_IMAGE_EDGE = 1920
+RECIPE_IMAGE_ROLES = [
+    ("result", "Fertiges Gericht"),
+    ("ingredients", "Zutaten"),
+    ("step", "Zubereitung"),
+    ("gallery", "Weitere Ansicht"),
+]
 
 
 # --- Helpers ----------------------------------------------------------------
@@ -96,20 +106,61 @@ def _error_redirect(path: str, message: str) -> RedirectResponse:
     )
 
 
+def _chosen_photo(camera: UploadFile | None,
+                  library: UploadFile | None) -> UploadFile | None:
+    chosen = [upload for upload in (camera, library)
+              if upload is not None and upload.filename]
+    if len(chosen) > 1:
+        raise ValueError("Bitte nur eine Aufnahme oder eine Bilddatei auswählen.")
+    return chosen[0] if chosen else None
+
+
 @contextmanager
-def _temporary_upload(upload: UploadFile | None):
-    """Expose an optional browser upload as a short-lived local file."""
-    if upload is None or not upload.filename:
+def _prepared_photo(camera: UploadFile | None,
+                    library: UploadFile | None):
+    """Normalize a browser photo before core copies it into owned storage."""
+    upload = _chosen_photo(camera, library)
+    if upload is None:
         yield None
         return
-    suffix = Path(upload.filename).suffix
+
+    upload.file.seek(0, 2)
+    size = upload.file.tell()
+    upload.file.seek(0)
+    if size > MAX_WEB_IMAGE_BYTES:
+        raise ValueError("Das Foto ist größer als 25 MB.")
+
+    suffix = Path(upload.filename).suffix or ".image"
+    source_path: Path | None = None
+    prepared_path: Path | None = None
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
         shutil.copyfileobj(upload.file, handle)
-        path = Path(handle.name)
+        source_path = Path(handle.name)
     try:
-        yield path
+        with Image.open(source_path) as opened:
+            opened.seek(0)
+            photo = ImageOps.exif_transpose(opened)
+            photo.thumbnail(
+                (MAX_WEB_IMAGE_EDGE, MAX_WEB_IMAGE_EDGE),
+                Image.Resampling.LANCZOS,
+            )
+            has_alpha = photo.mode in {"RGBA", "LA"} or (
+                photo.mode == "P" and "transparency" in photo.info
+            )
+            clean = photo.convert("RGBA" if has_alpha else "RGB")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".webp") as handle:
+                prepared_path = Path(handle.name)
+            clean.save(prepared_path, format="WEBP", quality=84, method=4)
+        yield prepared_path
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as error:
+        raise ValueError(
+            "Das Foto konnte nicht gelesen werden. Bitte JPG, PNG, WebP oder GIF verwenden."
+        ) from error
     finally:
-        path.unlink(missing_ok=True)
+        if source_path is not None:
+            source_path.unlink(missing_ok=True)
+        if prepared_path is not None:
+            prepared_path.unlink(missing_ok=True)
 
 
 # --- Pages ------------------------------------------------------------------
@@ -215,6 +266,57 @@ def update(slug: str, title: str = Form(...), tags: str = Form(""),
     except ValueError:
         raise StarletteHTTPException(status_code=404)
     return RedirectResponse(f"/recipe/{slug}", status_code=303)
+
+
+@app.get("/recipe/{slug}/images", response_class=HTMLResponse)
+def recipe_images_page(request: Request, slug: str, error: str = ""):
+    recipe = core.get(slug)
+    if recipe is None:
+        raise StarletteHTTPException(status_code=404)
+    return templates.TemplateResponse(request, "recipe_images.html", {
+        "nav": "recipes", "title": f"Bilder · {recipe.title}",
+        "r": recipe, "role_options": RECIPE_IMAGE_ROLES, "error": error,
+    })
+
+
+@app.post("/recipe/{slug}/images/add")
+def recipe_image_add_route(
+        slug: str, role: str = Form("gallery"), caption: str = Form(""),
+        cover: str = Form(""),
+        image_camera: UploadFile | None = File(None),
+        image_file: UploadFile | None = File(None)):
+    try:
+        with _prepared_photo(image_camera, image_file) as image_path:
+            if image_path is None:
+                raise ValueError("Bitte ein Foto aufnehmen oder ein Bild auswählen.")
+            core.add_recipe_image(
+                slug, image_path, role=role, caption=caption, cover=cover == "1",
+            )
+    except ValueError as error:
+        return _error_redirect(f"/recipe/{slug}/images", str(error))
+    return RedirectResponse(f"/recipe/{slug}/images", status_code=303)
+
+
+@app.post("/recipe/{slug}/images/{image_id}/set")
+def recipe_image_set_route(
+        slug: str, image_id: str, role: str = Form("gallery"),
+        caption: str = Form(""), cover: str = Form("")):
+    try:
+        core.update_recipe_image(slug, image_id, role=role, caption=caption)
+        if cover == "1":
+            core.set_recipe_cover(slug, image_id)
+    except ValueError as error:
+        return _error_redirect(f"/recipe/{slug}/images", str(error))
+    return RedirectResponse(f"/recipe/{slug}/images", status_code=303)
+
+
+@app.post("/recipe/{slug}/images/{image_id}/remove")
+def recipe_image_remove_route(slug: str, image_id: str):
+    try:
+        core.remove_recipe_image(slug, image_id)
+    except ValueError as error:
+        return _error_redirect(f"/recipe/{slug}/images", str(error))
+    return RedirectResponse(f"/recipe/{slug}/images", status_code=303)
 
 
 @app.post("/recipe/{slug}/cooked")
@@ -347,9 +449,10 @@ def favorite_alias_remove_route(need_id: str, alias: str = Form(...)):
 def favorite_product_add_route(
         need_id: str, name: str = Form(...), brand: str = Form(""),
         store: str = Form(""), note: str = Form(""),
-        image: UploadFile | None = File(None)):
+        image_camera: UploadFile | None = File(None),
+        image_file: UploadFile | None = File(None)):
     try:
-        with _temporary_upload(image) as image_path:
+        with _prepared_photo(image_camera, image_file) as image_path:
             core.favorite_add_product(
                 need_id, name, brand=brand, store=store, note=note,
                 image=image_path,
@@ -363,9 +466,11 @@ def favorite_product_add_route(
 def favorite_product_set_route(
         need_id: str, product_id: str, name: str = Form(...),
         brand: str = Form(""), store: str = Form(""), note: str = Form(""),
-        remove_image: str = Form(""), image: UploadFile | None = File(None)):
+        remove_image: str = Form(""),
+        image_camera: UploadFile | None = File(None),
+        image_file: UploadFile | None = File(None)):
     try:
-        with _temporary_upload(image) as image_path:
+        with _prepared_photo(image_camera, image_file) as image_path:
             core.favorite_update_product(
                 need_id, product_id, name=name, brand=brand, store=store,
                 note=note, image=image_path, remove_image=remove_image == "1",

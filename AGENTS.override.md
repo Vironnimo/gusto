@@ -139,6 +139,10 @@ add <slug> <path> --role <purpose> --caption "…"`. Gusto copies and owns the
 files. Recipes can have any number of images; the first is the default cover,
 and `--cover` or `gusto image cover` selects a different top image. Roles such
 as `result`, `ingredients`, or `step` are descriptive and remain open-ended.
+Human users can manage the same images in the web UI, with separate actions to
+take a photo using the outward-facing camera or choose an existing image.
+Browser uploads are normalized to metadata-free WebP with a 1920 px maximum
+edge; CLI imports remain unchanged and dependency-free.
 
 **Preferred product for a shopping item:** run `gusto favorites match "<shopping
 text>" --json`. A result is the shared household shopping need; its `products`
@@ -182,7 +186,7 @@ clear` if it should also remove bought items). Full round-trip in the skill
 ## Tech / pitfalls
 
 - Python (stdlib-only core/CLI). Web: FastAPI + uvicorn + Jinja2 + markdown +
-  `python-multipart` (forms). Tests: Playwright.
+  `python-multipart` (forms) + Pillow (photo normalization). Tests: Playwright.
 - Starlette ≥1.3: the signature is `TemplateResponse(request, "name.html", {...})`
   — `request` MUST be the first argument.
 - Windows console (cp1252): stdout in CLI/tests is switched to UTF-8, otherwise
@@ -202,11 +206,13 @@ typing, **tag facets**: multi-select grouped by category, OR within / AND across
 categories — `data/categories.json`, `gusto tags`), recipe view,
 create/edit/delete, "cooked today", suggestions, log, 404 page, Pi deployment
 (systemd), browser test, and **multiple stored recipe images** with a selected
-cover, gallery, free role/caption, and full agent control through `gusto image
-…`. **Shopping list** (core/CLI/web, `gusto shopping …`) with shared
+cover, gallery, free role/caption, full agent control through `gusto image …`,
+and direct camera/library management in the web UI. **Shopping list**
+(core/CLI/web, `gusto shopping …`) with shared
 **preferred products** (`gusto favorites …`): exact learned aliases, manually
 ranked product cards, optional owned photos/store/notes, a mobile bottom sheet,
-central management, no-JS fallback, and offline-readable recommendations;
+central management with direct camera/library photos, no-JS fallback, and
+offline-readable recommendations;
 incl. offline-capable **PWA**: service worker (app-shell cache, offline fallback)
 + full-state sync via "last writer wins" + tombstones. Sync contract:
 [docs/sync-kontrakt.md](docs/sync-kontrakt.md). Tests: `scripts/browser_check.py`

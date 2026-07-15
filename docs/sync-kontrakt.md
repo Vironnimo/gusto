@@ -20,7 +20,10 @@ Bestand**. `GET /api/favorites` liefert alle Einkaufsbedarfe, exakten Aliasse
 und geordneten Produktkarten. Der Browser spiegelt die Antwort unter dem
 localStorage-Key `gusto.favorites`, damit Empfehlungen offline lesbar bleiben;
 es gibt dafür keinen Offline-Merge und keine Offline-Mutation. Änderungen
-erfolgen online über Core/CLI oder die serverseitigen Formulare.
+erfolgen online über Core/CLI oder die serverseitigen Formulare. Das gilt auch
+für direkt aufgenommene oder ausgewählte Produktfotos: Sie werden online als
+metadatenfreies WebP mit maximal 1.920 Pixel Kantenlänge gespeichert; erst die
+fertige, in der Katalogantwort referenzierte Bild-URL wird offline gecacht.
 
 ## Item-Schema (identisch Client ⇄ Server)
 Ein Item ist exakt das Dict von `core.EinkaufItem.to_dict()`:
@@ -164,6 +167,7 @@ ok, muss aber nicht.
 /
 /static/style.css
 /static/app.js
+/static/photo-input.js
 /static/shopping-client.js
 /static/manifest.webmanifest
 /static/icons/icon-192.png

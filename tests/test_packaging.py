@@ -34,6 +34,10 @@ assert '"python-multipart"' in normalized, (
     "The web extra must install python-multipart because the application uses "
     "HTML form routes."
 )
+assert '"pillow"' in normalized, (
+    "The web extra must install Pillow because browser photo uploads are "
+    "resized and stripped of metadata before storage."
+)
 
 from gusto.web import app  # noqa: E402
 

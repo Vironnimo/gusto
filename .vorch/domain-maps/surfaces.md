@@ -20,6 +20,11 @@ The installed application command is `gusto`, backed by `gusto.cli:main`; `pytho
 
 The web application object is `gusto.web:app`. It serves catalog, log, suggestion, shopping, preferred-product management, and form pages; recipe and product media; shopping/favorite JSON; static assets; the root-scoped service worker; and a custom HTML 404. Entity URLs continue to use `/recipe/{slug}` because they address a recipe, not the application package.
 
+Browser photo forms use two explicit file controls: native outward-facing
+camera capture and image-library selection. Pillow in the web extra normalizes
+uploads before handing their temporary paths to the same core operations used
+by the CLI; JavaScript only adds selection previews and mutual exclusion.
+
 Templates and static assets are package-relative under `gusto/templates/` and `gusto/static/`. The PWA manifest names the installed browser app Gusto and starts at `/shopping`.
 
 At widths up to 720px, the web surface uses a fixed bottom primary navigation while the masthead retains the brand. Catalog filters and the shopping add form become compact disclosure panels; the recipe page exposes a direct jump to its content and keeps edit/delete actions in a secondary disclosure. Desktop keeps the conventional header navigation and visible catalog filters.
@@ -42,6 +47,10 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
 ## Constraints & Gotchas
 
 - Web imports require the optional dependency set, including form parsing support; the core and CLI must remain usable without it.
+- Web photo processing additionally requires Pillow from the `web` extra. It
+  accepts at most one of the camera/library controls, limits input to 25 MB,
+  applies orientation, resizes to a 1920 px maximum edge, and stores WebP without
+  source metadata.
 - Catalog filter markup is open by default so desktop and no-JavaScript use stay visible; `app.js` closes it only on an initial mobile load without selected tags. The mobile masthead must remain in a higher stacking context than main content so its fixed navigation cannot be covered by recipe cards.
 - Shopping items persist their recipe source as a slug. `gusto.web` supplies a slug-to-title presentation map to both the server fallback and offline client so the visible list uses recipe titles without changing the sync contract.
 - The offline shopping client duplicates only client-side state transitions required for optimistic use; authoritative merge and persistence rules remain in core. Keep both timestamp and merge behaviors aligned.

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% from "_photo_picker.html" import photo_picker %}
+{% block content %}
+<section class="image-admin">
+  <a class="back" href="/recipe/{{ r.slug }}">← Zurück zu {{ r.title }}</a>
+  <header class="image-admin-head">
+    <div>
+      <p class="eyebrow">Rezeptbilder</p>
+      <h1 class="page-title">Momente festhalten</h1>
+      <p class="lede">Direkt fotografieren oder ein vorhandenes Bild auswählen. Gusto macht daraus automatisch eine speicherfreundliche Kopie.</p>
+    </div>
+    <span class="image-count">{{ r.images|length }} {{ 'Bild' if r.images|length == 1 else 'Bilder' }}</span>
+  </header>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <section class="photo-add-card" id="neues-foto">
+    <div class="photo-add-intro">
+      <span class="photo-add-number">+</span>
+      <div><p class="eyebrow">Neues Bild</p><h2>Was möchtest du zeigen?</h2></div>
+    </div>
+    <form class="recipe-image-form" method="post" enctype="multipart/form-data"
+          action="/recipe/{{ r.slug }}/images/add" data-photo-form>
+      {{ photo_picker('recipe-new') }}
+      <div class="image-fields">
+        <label>Motiv
+          <select name="role">
+            {% for value, label in role_options %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Bildunterschrift <span class="hint">optional</span>
+          <input name="caption" placeholder="z.B. direkt aus dem Ofen">
+        </label>
+      </div>
+      <label class="favorite-check image-cover-choice"><input type="checkbox" name="cover" value="1"> Als Top-Bild des Rezepts verwenden</label>
+      <div class="image-form-actions">
+        <button class="btn" type="submit">Bild hinzufügen</button>
+        <small>Maximal 1.920 Pixel · Metadaten werden entfernt</small>
+      </div>
+    </form>
+  </section>
+
+  {% if r.images %}
+  <section class="image-library">
+    <div class="image-library-head"><p class="eyebrow">Im Rezept</p><h2>Gespeicherte Bilder</h2></div>
+    <div class="image-admin-grid">
+      {% for image in r.images %}
+      <article class="image-admin-card">
+        <figure>
+          <img src="/media/recipe/{{ r.slug }}/{{ image.id }}" alt="{{ image.caption or r.title }}">
+          <span class="image-rank">{{ '%02d'|format(loop.index) }}</span>
+          {% if r.cover_image and image.id == r.cover_image.id %}<span class="cover-badge">Top-Bild</span>{% endif %}
+        </figure>
+        <form class="image-card-form" method="post" action="/recipe/{{ r.slug }}/images/{{ image.id }}/set">
+          <div class="image-fields">
+            <label>Motiv
+              <select name="role">
+                {% set state = namespace(known=false) %}
+                {% for value, label in role_options %}
+                  {% if value == image.role %}{% set state.known = true %}{% endif %}
+                  <option value="{{ value }}"{{ ' selected' if value == image.role else '' }}>{{ label }}</option>
+                {% endfor %}
+                {% if not state.known %}<option value="{{ image.role }}" selected>{{ image.role }}</option>{% endif %}
+              </select>
+            </label>
+            <label>Bildunterschrift
+              <input name="caption" value="{{ image.caption }}" placeholder="Ohne Bildunterschrift">
+            </label>
+          </div>
+          {% if not r.cover_image or image.id != r.cover_image.id %}
+          <label class="favorite-check"><input type="checkbox" name="cover" value="1"> Als Top-Bild verwenden</label>
+          {% endif %}
+          <button class="btn-ghost" type="submit">Angaben speichern</button>
+        </form>
+        <form class="image-remove-form" method="post" action="/recipe/{{ r.slug }}/images/{{ image.id }}/remove"
+              onsubmit="return confirm('Dieses Bild wirklich entfernen?');">
+          <button class="btn-text" type="submit">Bild entfernen</button>
+        </form>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% else %}
+  <div class="image-empty"><span aria-hidden="true">◇</span><p>Noch keine Bilder. Die erste Aufnahme wird automatisch zum Top-Bild.</p></div>
+  {% endif %}
+</section>
+{% endblock %}

@@ -7,6 +7,7 @@ untouched.
 
 Usage:  .venv/Scripts/python.exe scripts/browser_check.py
 """
+import json
 import os
 import shutil
 import subprocess
@@ -16,6 +17,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from PIL import Image
 from playwright.sync_api import sync_playwright
 
 try:
@@ -40,6 +42,12 @@ shutil.copytree(ROOT / "recipes", TESTDATA / "recipes")
 shutil.copytree(ROOT / "data", TESTDATA / "data")
 if (ROOT / "images").exists():
     shutil.copytree(ROOT / "images", TESTDATA / "images")
+
+CAMERA_PHOTO = TESTDATA / "camera-original.jpg"
+camera_image = Image.new("RGB", (2400, 1200), "#c96b42")
+camera_exif = Image.Exif()
+camera_exif[0x010E] = "private camera metadata"
+camera_image.save(CAMERA_PHOTO, quality=92, exif=camera_exif)
 
 env = {**os.environ, "GUSTO_HOME": str(TESTDATA)}
 srv = subprocess.Popen(
@@ -186,6 +194,47 @@ try:
         check(page.url.endswith("/recipe/test-pfannkuchen"), "slug generated correctly")
         page.screenshot(path=str(SHOTS / "06_new.png"), full_page=True)
 
+        # Take or select recipe photos directly in the web UI.
+        page.locator(".recipe-photo-action").click()
+        page.wait_for_load_state("networkidle")
+        check("/recipe/test-pfannkuchen/images" in page.url,
+              "recipe photo action opens image management")
+        check(page.locator("input[name=image_camera]").first.get_attribute("capture") == "environment",
+              "recipe camera action asks for the outward-facing camera")
+        check(page.locator("input[name=image_file]").count() == 1,
+              "recipe image management keeps a separate library choice")
+        page.set_input_files("input[name=image_camera]", CAMERA_PHOTO)
+        check(page.locator(".photo-preview:not([hidden])").count() == 1,
+              "recipe photo selection shows a preview before upload")
+        page.select_option("form[action$='/images/add'] select[name=role]", "result")
+        page.fill("form[action$='/images/add'] input[name=caption]", "Direkt fotografiert")
+        page.locator("form[action$='/images/add'] button", has_text="Bild hinzufügen").click()
+        page.wait_for_load_state("networkidle")
+        check(page.locator(".image-admin-card").count() == 1,
+              "camera photo is stored on the recipe")
+        recipe_data = json.loads((TESTDATA / "data" / "recipes.json").read_text(encoding="utf-8"))
+        uploaded = next(item for item in recipe_data if item["slug"] == "test-pfannkuchen")["images"][0]
+        uploaded_path = TESTDATA / "images" / "test-pfannkuchen" / uploaded["filename"]
+        with Image.open(uploaded_path) as normalized:
+            check(normalized.format == "WEBP" and normalized.size == (1920, 960),
+                  "web photo is normalized to WebP and a 1920 px maximum edge")
+            check(not normalized.getexif(), "web photo metadata is removed")
+
+        page.set_input_files("input[name=image_file]", PRODUCT_PHOTO)
+        page.select_option("form[action$='/images/add'] select[name=role]", "step")
+        page.fill("form[action$='/images/add'] input[name=caption]", "Beim Wenden")
+        page.locator("form[action$='/images/add'] button", has_text="Bild hinzufügen").click()
+        page.wait_for_load_state("networkidle")
+        check(page.locator(".image-admin-card").count() == 2,
+              "existing image can be selected separately from the camera")
+        second_image = page.locator(".image-admin-card").nth(1)
+        second_image.locator("input[name=cover]").check()
+        second_image.locator("button", has_text="Angaben speichern").click()
+        page.wait_for_load_state("networkidle")
+        check(page.locator(".image-admin-card").nth(1).locator(".cover-badge").count() == 1,
+              "any recipe image can become the top image in the web UI")
+        page.screenshot(path=str(SHOTS / "06b_recipe_images.png"), full_page=True)
+
         # Edit (slug stays stable)
         page.goto(BASE + "/recipe/test-pfannkuchen/edit", wait_until="networkidle")
         page.fill("input[name=title]", "Test Pfannkuchen Deluxe")
@@ -235,14 +284,24 @@ try:
         page.fill(".favorite-product-create input[name=brand]", "De Cecco")
         page.fill(".favorite-product-create input[name=store]", "REWE")
         page.fill(".favorite-product-create textarea[name=note]", "Bleibt schön bissfest")
-        page.set_input_files(".favorite-product-create input[name=image]", PRODUCT_PHOTO)
+        check(page.locator(".favorite-product-create input[name=image_camera]").get_attribute("capture") == "environment",
+              "preferred product offers the outward-facing camera")
+        check(page.locator(".favorite-product-create input[name=image_file]").count() == 1,
+              "preferred product keeps a separate image-library choice")
+        page.set_input_files(".favorite-product-create input[name=image_camera]", PRODUCT_PHOTO)
+        check(page.locator(".favorite-product-create .photo-preview:not([hidden])").count() == 1,
+              "preferred-product photo selection shows a preview")
         add_product.locator("button", has_text="Produkt hinzufügen").click()
         page.wait_for_load_state("networkidle")
+        favorite_data = json.loads((TESTDATA / "data" / "favorites.json").read_text(encoding="utf-8"))
+        first_product_image = favorite_data["needs"][0]["products"][0]["image_filename"]
+        check(first_product_image.endswith(".webp"),
+              "preferred-product camera photo is stored in normalized form")
         page.locator(".favorite-product-create summary").click()
         page.fill(".favorite-product-create input[name=name]", "Barilla Spaghetti n. 5")
         page.fill(".favorite-product-create input[name=brand]", "Barilla")
         page.fill(".favorite-product-create input[name=store]", "EDEKA")
-        page.set_input_files(".favorite-product-create input[name=image]", PRODUCT_PHOTO)
+        page.set_input_files(".favorite-product-create input[name=image_file]", PRODUCT_PHOTO)
         page.locator(".favorite-product-create button", has_text="Produkt hinzufügen").click()
         page.wait_for_load_state("networkidle")
         check(page.locator(".favorite-admin-product").count() == 2,
@@ -252,6 +311,13 @@ try:
         page.wait_for_load_state("networkidle")
         check("Barilla" in page.locator(".favorite-admin-product").first.text_content(),
               "manual move changes the household ranking")
+        first_product = page.locator(".favorite-admin-product").first
+        first_product.locator("summary").click()
+        first_product.locator("input[name=image_camera]").set_input_files(CAMERA_PHOTO)
+        first_product.locator("button", has_text="Änderungen speichern").click()
+        page.wait_for_load_state("networkidle")
+        check(page.locator(".favorite-admin-product").first.locator("summary img").count() == 1,
+              "preferred-product photo can be replaced from the camera action")
         page.screenshot(path=str(SHOTS / "09b_favorites_admin.png"), full_page=True)
 
         page.goto(BASE + "/shopping", wait_until="networkidle")
@@ -307,6 +373,16 @@ try:
         # (state-independent: before/after instead of a fixed count)
         nojs = browser.new_context(java_script_enabled=False)
         njp = nojs.new_page()
+        njp.goto(BASE + "/recipe/rotes-linsen-dal/images", wait_until="domcontentloaded")
+        before_images = njp.locator(".image-admin-card").count()
+        check(njp.locator("input[name=image_camera]").count() == 1,
+              "no-JS: recipe camera upload remains available")
+        njp.set_input_files("input[name=image_camera]", PRODUCT_PHOTO)
+        njp.locator("form[action$='/images/add'] button", has_text="Bild hinzufügen").click()
+        njp.wait_for_load_state("domcontentloaded")
+        check(njp.locator(".image-admin-card").count() == before_images + 1,
+              "no-JS: camera-selected recipe photo is stored")
+
         njp.goto(BASE + "/shopping", wait_until="domcontentloaded")
         check(njp.locator("#shop-server form.shop-add").count() == 1, "no-JS: server form present")
         before = njp.locator("#shop-server .shop-item").count()
@@ -347,6 +423,15 @@ try:
         check(m.locator(".recipe-more").get_attribute("open") is None,
               "mobile: administration stays in the closed More menu")
         m.screenshot(path=str(SHOTS / "08_mobile_recipe.png"))
+        m.locator(".recipe-photo-action").click()
+        m.wait_for_load_state("networkidle")
+        check(m.locator(".photo-choice", has_text="Foto aufnehmen").is_visible()
+              and m.locator(".photo-choice", has_text="Bild auswählen").is_visible(),
+              "mobile: camera and library are separate, visible actions")
+        first_photo_choice = m.locator(".photo-choice").first.bounding_box()
+        check(first_photo_choice is not None and first_photo_choice["y"] < 520,
+              "mobile: photo actions appear before the existing image library")
+        m.screenshot(path=str(SHOTS / "08b_mobile_recipe_images.png"), full_page=True)
         m.goto(BASE + "/shopping", wait_until="networkidle")
         first_shop_item = m.locator("#shop-client .shop-item").first.bounding_box()
         check(m.locator("#shop-client .shop-add-panel").get_attribute("open") is None,

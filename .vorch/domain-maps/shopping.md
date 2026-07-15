@@ -47,6 +47,10 @@ and `product-add|product-set|product-move|product-remove`. The web exposes
 central management under `/favorites`, a no-JS match page, product media, and
 `GET /api/favorites` for the offline-readable browser copy.
 
+Product create/edit forms expose separate native camera and image-library
+actions. The web shell converts either browser upload to metadata-free WebP
+with a 1920 px maximum edge before invoking the existing core product mutation.
+
 ## Sync Contract
 
 - Merge is per item id. The version with the later valid `updated_at` wins; equal versions keep the receiving side's current value.
@@ -66,6 +70,9 @@ central management under `/favorites`, a no-JS match page, product media, and
 - Preference catalog mutations are server-side and require connectivity. The
   last successful catalog and content-specific product-image URLs remain
   readable offline; replacing an image creates a new filename.
+- Taking or selecting a product photo is an online catalog mutation and is not
+  queued by the shopping PWA. The camera control requests the outward-facing
+  camera as a hint; the separate library control remains the fallback.
 - The service worker uses network-only handling for the sync API and recipe media. Navigations are network-first with the cached shopping page as fallback; other same-origin static GETs are cache-first.
 - Update the cache version when changing cached assets or offline shell behavior.
 - Verify core behavior with `tests/test_shopping.py`, `tests/test_favorites.py`, and `tests/test_merge.py`; verify offline, two-device, API, manifest, product-image cache, and service-worker behavior with `scripts/pwa_check.py`.

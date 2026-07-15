@@ -66,6 +66,10 @@ Quality gates:
   manually ranked preferred-product cards with optional owned photos, store,
   and notes. Shopping recommendations and photos remain readable offline;
   catalog changes intentionally require an online server or the CLI.
+- 2026-07-15: Recipe and preferred-product forms now offer separate native
+  camera and image-library actions. Recipe images are fully manageable in the
+  web UI; all browser photo uploads are converted to metadata-free WebP with a
+  1920 px maximum edge, while CLI image imports remain unchanged.
 
 ## Domain Maps
 

@@ -11,7 +11,11 @@ Raspberry Pi on the local network, reachable from any device.
 - **Preferred products** connect recurring free-text shopping items to exact
   learned aliases and a shared, manually ranked household selection. Product
   cards contain a name and brand, may also include an owned photo, store, and
-  note, and remain visible in the shopping PWA while offline.
+  note, and remain visible in the shopping PWA while offline. On a phone, a
+  product photo can be taken directly or selected from the photo library.
+- **Recipe photos** can be captured or selected in the web UI and managed there
+  as cover, result, ingredient, step, or gallery images. Browser uploads are
+  resized to a 1920 px maximum edge, converted to WebP, and stripped of metadata.
 - **Two equal surfaces over the same core** (`gusto/core.py`): a **CLI** (also
   for agents; guide in [CLAUDE.md](CLAUDE.md) and as a skill under
   `skill/gusto/`) and a polished **web UI**. No feature exists in only one of them.
@@ -117,5 +121,5 @@ python tests/test_packaging.py     # fresh-install dependency declaration
 - [x] Web UI (FastAPI, responsive & nice)
 - [x] Shopping list & PWA (offline + sync)
 - [x] Shared preferred products (exact aliases, ranking, photos, offline view)
-- [x] Multiple stored images per recipe (cover + gallery, agent-managed via CLI)
+- [x] Multiple stored images per recipe (cover + gallery, CLI + web camera/library)
 - [ ] Weekly plan

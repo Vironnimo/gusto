@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_photo_picker.html" import photo_picker %}
 {% block content %}
 <section class="favorite-admin">
   <a class="back" href="/favorites">← Alle Lieblingsprodukte</a>
@@ -67,7 +68,10 @@
             <label>Marke<input name="brand" value="{{ product.brand }}" required></label>
             <label>Bevorzugter Laden<input name="store" value="{{ product.store }}"></label>
             <label class="favorite-form-wide">Notiz<textarea name="note" rows="2">{{ product.note }}</textarea></label>
-            <label class="favorite-form-wide">Neues Foto <span class="hint">optional</span><input type="file" name="image" accept="image/jpeg,image/png,image/webp,image/gif"></label>
+            <div class="favorite-form-wide">
+              <span class="photo-field-label">Neues Foto <span class="hint">optional</span></span>
+              {{ photo_picker('product-' ~ product.id) }}
+            </div>
             {% if product.image_filename %}<label class="favorite-check favorite-form-wide"><input type="checkbox" name="remove_image" value="1"> Vorhandenes Foto entfernen</label>{% endif %}
             <button class="btn" type="submit">Änderungen speichern</button>
           </form>
@@ -89,7 +93,10 @@
         <label>Marke<input name="brand" placeholder="z.B. Tante Fanny" required></label>
         <label>Bevorzugter Laden<input name="store" placeholder="z.B. REWE"></label>
         <label class="favorite-form-wide">Notiz<textarea name="note" rows="2" placeholder="z.B. wird besonders knusprig"></textarea></label>
-        <label class="favorite-form-wide">Foto <span class="hint">optional</span><input type="file" name="image" accept="image/jpeg,image/png,image/webp,image/gif"></label>
+        <div class="favorite-form-wide">
+          <span class="photo-field-label">Foto <span class="hint">optional</span></span>
+          {{ photo_picker('product-new') }}
+        </div>
         <button class="btn" type="submit">Produkt hinzufügen</button>
       </form>
     </details>

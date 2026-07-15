@@ -255,6 +255,8 @@ try:
         with urllib.request.urlopen(BASE + "/static/sw.js") as r:
             sw = r.read().decode("utf-8")
         check("addEventListener" in sw and "caches" in sw, "service worker is served")
+        check('"/static/photo-input.js"' in sw,
+              "service worker precaches the shared photo-picker enhancement")
         check(sw_ready(pg, 8000) is True, "service worker registered + active")
 
         # Catalog and its image are cached locally while online, then remain

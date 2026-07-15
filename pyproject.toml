@@ -7,7 +7,7 @@ dependencies = []
 
 [project.optional-dependencies]
 # Werden erst fuer die Web-UI gebraucht:
-web = ["fastapi", "uvicorn[standard]", "jinja2", "markdown", "python-multipart"]
+web = ["fastapi", "uvicorn[standard]", "jinja2", "markdown", "python-multipart", "pillow"]
 
 [project.scripts]
 gusto = "gusto.cli:main"

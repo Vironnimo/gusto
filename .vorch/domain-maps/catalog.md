@@ -34,6 +34,11 @@ The slug joins Markdown, metadata, image storage, log entries, shopping sources,
 
 The CLI exposes these capabilities through `gusto list|search|tags|show|new|edit|cooked|log|suggest|check|set|delete` and `gusto image ...`. Web catalog pages and form actions in `gusto/web.py` call the same core operations.
 
+The recipe detail page links to web image management. It can add a photo from
+the outward-facing camera or image library, edit role/caption, select the cover,
+and remove an image. Both browser choices use the same core image operations as
+the CLI.
+
 The shopping domain calls the catalog lookup and recipe-content reader when adding every bullet under `## Zutaten` to the shopping list; it does not own recipe parsing beyond that section rule.
 
 ## Conventions
@@ -41,6 +46,10 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
 - JSON writes use the shared atomic writer. New catalog behavior belongs in core before either surface.
 - Web create and edit always reconstruct the first Markdown line from the separate title field.
 - Images are copied into Gusto storage after extension and header/dimension validation. The first image becomes the cover unless another is explicitly selected.
+- Before core receives a browser photo, the web shell applies EXIF orientation,
+  limits the longest edge to 1920 px, converts it to WebP, and omits metadata.
+  CLI imports are copied in their supported original format so core/CLI remain
+  dependency-free.
 - `images/_favorites/` is reserved for the shopping domain and must be ignored
   when diagnosing recipe image folders.
 - `check` diagnoses index, Markdown, tag, image-file, image-folder, and cover-selection inconsistencies; it does not repair them.
@@ -51,4 +60,7 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
 - A duration limit excludes recipes whose duration is unknown, not only recipes over the limit.
 - Suggestions intentionally only exclude recently cooked recipes and order the rest by oldest `last_cooked`; meal intelligence belongs to the calling agent.
 - Removing the selected cover promotes the first remaining image. Deleting a recipe removes its Markdown and image folder but preserves cooking history.
+- Native camera capture is a browser hint (`environment`), not a custom live
+  camera. A separate library action remains available when the hint is ignored;
+  both uploads require a reachable server and have a 25 MB input limit.
 - Verify catalog changes with `tests/test_recipes.py`, `tests/test_cli.py`, and, for web-visible behavior, `scripts/browser_check.py` against throwaway data.
