@@ -26,12 +26,22 @@
       <span class="brand-mark">❖</span>
       <span class="brand-text">Gusto</span>
     </a>
-    <nav class="nav">
-      <a href="/" class="{{ 'is-active' if nav == 'recipes' else '' }}">Rezepte</a>
-      <a href="/suggestions" class="{{ 'is-active' if nav == 'suggestions' else '' }}">Vorschläge</a>
-      <a href="/shopping" class="{{ 'is-active' if nav == 'shopping' else '' }}">Einkauf</a>
-      <a href="/log" class="{{ 'is-active' if nav == 'log' else '' }}">Logbuch</a>
-      <a href="/new" class="nav-cta">＋ Neu</a>
+    <nav class="nav" aria-label="Hauptnavigation">
+      <a href="/" class="{{ 'is-active' if nav == 'recipes' else '' }}">
+        <span class="nav-symbol" aria-hidden="true">⌂</span><span>Rezepte</span>
+      </a>
+      <a href="/suggestions" class="{{ 'is-active' if nav == 'suggestions' else '' }}">
+        <span class="nav-symbol" aria-hidden="true">✦</span><span>Vorschläge</span>
+      </a>
+      <a href="/shopping" class="{{ 'is-active' if nav == 'shopping' else '' }}">
+        <span class="nav-symbol" aria-hidden="true">✓</span><span>Einkauf</span>
+      </a>
+      <a href="/log" class="{{ 'is-active' if nav == 'log' else '' }}">
+        <span class="nav-symbol" aria-hidden="true">◷</span><span>Logbuch</span>
+      </a>
+      <a href="/new" class="nav-cta {{ 'is-active' if nav == 'new' else '' }}">
+        <span class="nav-symbol" aria-hidden="true">＋</span><span>Neu</span>
+      </a>
     </nav>
   </header>
   <main class="wrap">

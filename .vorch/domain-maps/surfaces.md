@@ -22,6 +22,8 @@ The web application object is `gusto.web:app`. It serves catalog, log, suggestio
 
 Templates and static assets are package-relative under `gusto/templates/` and `gusto/static/`. The PWA manifest names the installed browser app Gusto and starts at `/shopping`.
 
+At widths up to 720px, the web surface uses a fixed bottom primary navigation while the masthead retains the brand. Catalog filters and the shopping add form become compact disclosure panels; the recipe page exposes a direct jump to its content and keeps edit/delete actions in a secondary disclosure. Desktop keeps the conventional header navigation and visible catalog filters.
+
 ## Packaging & Runtime
 
 - `pyproject.toml` declares project and package `gusto`, a `gusto` console script, no default dependencies, and optional web dependencies under `.[web]`.
@@ -38,5 +40,7 @@ Templates and static assets are package-relative under `gusto/templates/` and `g
 ## Constraints & Gotchas
 
 - Web imports require the optional dependency set, including form parsing support; the core and CLI must remain usable without it.
+- Catalog filter markup is open by default so desktop and no-JavaScript use stay visible; `app.js` closes it only on an initial mobile load without selected tags. The mobile masthead must remain in a higher stacking context than main content so its fixed navigation cannot be covered by recipe cards.
+- Shopping items persist their recipe source as a slug. `gusto.web` supplies a slug-to-title presentation map to both the server fallback and offline client so the visible list uses recipe titles without changing the sync contract.
 - The offline shopping client duplicates only client-side state transitions required for optimistic use; authoritative merge and persistence rules remain in core. Keep both timestamp and merge behaviors aligned.
 - Run `tests/test_packaging.py` after package, dependency, command, or import changes and `tests/test_cli.py` after CLI changes. Any web-visible change also requires `scripts/browser_check.py`; shopping PWA behavior additionally requires `scripts/pwa_check.py`.

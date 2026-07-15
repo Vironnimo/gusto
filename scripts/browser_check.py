@@ -193,6 +193,7 @@ try:
         check("Deluxe" in page.content(), "recipe edited")
 
         # Delete (clears the test recipe again)
+        page.locator(".recipe-more summary").click()
         page.locator("button.btn-text", has_text="Löschen").click()
         page.wait_for_load_state("networkidle")
         check("Test Pfannkuchen" not in page.content(), "recipe deleted")
@@ -212,9 +213,12 @@ try:
         check(page.url.endswith("/shopping"), "button leads to /shopping")
         page.wait_for_function("() => document.querySelectorAll('#shop-client .shop-item').length === 6")
         check(page.locator("#shop-client .shop-item").count() == 6, "6 Carbonara ingredients (client)")
+        check(page.locator("#shop-client .shop-source", has_text="Spaghetti Carbonara").count() == 6,
+              "recipe sources use the readable recipe title")
         page.screenshot(path=str(SHOTS / "09_shopping.png"), full_page=True)
 
         # Add manually (client form, optimistic + background sync)
+        page.locator("#shop-client .shop-add-panel summary").click()
         page.fill("#shop-client input[name=text]", "Backpapier")
         page.fill("#shop-client input[name=quantity]", "1 Rolle")
         page.locator("#shop-client form.shop-add button").click()
@@ -239,6 +243,7 @@ try:
         njp.goto(BASE + "/shopping", wait_until="domcontentloaded")
         check(njp.locator("#shop-server form.shop-add").count() == 1, "no-JS: server form present")
         before = njp.locator("#shop-server .shop-item").count()
+        njp.locator("#shop-server .shop-add-panel summary").click()
         njp.fill("#shop-server input[name=text]", "Senf")
         njp.locator("#shop-server form.shop-add button").click()
         njp.wait_for_load_state("domcontentloaded")
@@ -249,11 +254,30 @@ try:
         # Mobile views
         m = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2)
         m.goto(BASE, wait_until="networkidle")
-        m.screenshot(path=str(SHOTS / "07_mobile_home.png"), full_page=True)
+        first_card = m.locator(".card").first.bounding_box()
+        check(m.locator(".nav").evaluate("el => getComputedStyle(el).position") == "fixed",
+              "mobile: primary navigation stays at the bottom")
+        check(m.evaluate(
+            "() => !!document.elementFromPoint(innerWidth / 2, innerHeight - 20).closest('.nav')"),
+            "mobile: primary navigation stays above scrolling content")
+        check(m.locator(".filter-panel").get_attribute("open") is None,
+              "mobile: recipe filters start collapsed")
+        check(first_card is not None and first_card["y"] < 520,
+              "mobile: the first recipe is visible without a long filter wall")
+        m.screenshot(path=str(SHOTS / "07_mobile_home.png"))
         m.goto(BASE + "/recipe/rotes-linsen-dal", wait_until="networkidle")
-        m.screenshot(path=str(SHOTS / "08_mobile_recipe.png"), full_page=True)
+        check(m.locator(".recipe-jump").is_visible(),
+              "mobile: recipe content has a direct jump action")
+        check(m.locator(".recipe-more").get_attribute("open") is None,
+              "mobile: administration stays in the closed More menu")
+        m.screenshot(path=str(SHOTS / "08_mobile_recipe.png"))
         m.goto(BASE + "/shopping", wait_until="networkidle")
-        m.screenshot(path=str(SHOTS / "11_mobile_shopping.png"), full_page=True)
+        first_shop_item = m.locator("#shop-client .shop-item").first.bounding_box()
+        check(m.locator("#shop-client .shop-add-panel").get_attribute("open") is None,
+              "mobile: add-item form starts collapsed")
+        check(first_shop_item is not None and first_shop_item["y"] < 520,
+              "mobile: shopping items lead the screen")
+        m.screenshot(path=str(SHOTS / "11_mobile_shopping.png"))
 
         browser.close()
 finally:

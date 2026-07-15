@@ -79,11 +79,13 @@ def _tag_bar(q: str, selected: list[str]) -> list[dict]:
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, q: str = "", tag: list[str] = Query(default=[])):
     recipes = sorted(core.search(query=q, tags=tag), key=lambda r: r.title.lower())
+    selected_count = len({item.lower() for item in tag})
     return templates.TemplateResponse(request, "list.html", {
         "nav": "recipes", "title": "Rezepte",
         "recipes": recipes, "q": q,
         "tag_bar": _tag_bar(q, tag),
         "selected": bool(tag),
+        "selected_count": selected_count,
         "reset_href": _filter_href(q, []),
     })
 
@@ -210,9 +212,11 @@ def shopping_page(request: Request):
     items = core.shopping_list()
     open_items = [i for i in items if not i.checked]
     done_items = [i for i in items if i.checked]
+    source_titles = {recipe.slug: recipe.title for recipe in core.load_recipes()}
     return templates.TemplateResponse(request, "shopping.html", {
         "nav": "shopping", "title": "Einkaufsliste",
         "open_items": open_items, "done_items": done_items,
+        "source_titles": source_titles,
     })
 
 

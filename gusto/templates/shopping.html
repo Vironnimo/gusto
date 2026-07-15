@@ -7,8 +7,8 @@
   #shop-client[hidden] { display: none; }
 </style>
 
-<section class="page-head">
-  <p class="eyebrow">Vorrat &amp; Plan</p>
+<section class="page-head shop-page-head">
+  <p class="eyebrow">Für unterwegs</p>
   <h1 class="page-title">Einkaufsliste</h1>
   <p class="lede">Was noch ins Körbchen muss — Zutaten aus Rezepten landen hier mit einem Klick.</p>
 </section>
@@ -17,11 +17,14 @@
    (shopping-client.js) hides this block and renders into #shop-client with the
    same CSS classes. #}
 <div id="shop-server">
+<details class="shop-add-panel">
+<summary><span>Artikel hinzufügen</span><span aria-hidden="true">＋</span></summary>
 <form class="shop-add" method="post" action="/shopping/add">
   <input class="shop-add-text" type="text" name="text" placeholder="Was brauchst du? z.B. 200 g Spaghetti" autocomplete="off" required autofocus>
   <input class="shop-add-quantity" type="text" name="quantity" placeholder="Menge" autocomplete="off">
   <button class="btn" type="submit">Hinzufügen</button>
 </form>
+</details>
 
 {% if open_items or done_items %}
 <div class="shop-board">
@@ -37,7 +40,7 @@
         <div class="shop-body">
           <span class="shop-text">{{ item.text }}</span>
           {% if item.quantity %}<span class="shop-quantity">{{ item.quantity }}</span>{% endif %}
-          {% if item.source %}<a class="shop-source" href="/recipe/{{ item.source }}">aus „{{ item.source }}“</a>{% endif %}
+          {% if item.source %}<a class="shop-source" href="/recipe/{{ item.source }}">aus „{{ source_titles.get(item.source, item.source) }}“</a>{% endif %}
         </div>
         <form class="shop-remove" method="post" action="/shopping/{{ item.id }}/remove">
           <button class="shop-x" type="submit" aria-label="„{{ item.text }}“ entfernen">✕</button>
@@ -62,7 +65,7 @@
         <div class="shop-body">
           <span class="shop-text">{{ item.text }}</span>
           {% if item.quantity %}<span class="shop-quantity">{{ item.quantity }}</span>{% endif %}
-          {% if item.source %}<a class="shop-source" href="/recipe/{{ item.source }}">aus „{{ item.source }}“</a>{% endif %}
+          {% if item.source %}<a class="shop-source" href="/recipe/{{ item.source }}">aus „{{ source_titles.get(item.source, item.source) }}“</a>{% endif %}
         </div>
         <form class="shop-remove" method="post" action="/shopping/{{ item.id }}/remove">
           <button class="shop-x" type="submit" aria-label="„{{ item.text }}“ entfernen">✕</button>
@@ -86,5 +89,6 @@
 
 {# Filled by the client (shopping-client.js); stays hidden until JS runs. #}
 <div id="shop-client" hidden></div>
+<script type="application/json" id="shop-source-titles">{{ source_titles|tojson }}</script>
 <script src="/static/shopping-client.js" defer></script>
 {% endblock %}

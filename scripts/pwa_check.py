@@ -196,6 +196,7 @@ try:
         a.goto(BASE + "/shopping", wait_until="networkidle")
         b.goto(BASE + "/shopping", wait_until="networkidle")
 
+        a.locator("#shop-client .shop-add-panel summary").click()
         a.fill("#shop-client input[name=text]", "Apfel")
         a.locator("#shop-client form.shop-add button").click()
         check(wait_server(lambda its: any(i["text"] == "Apfel" for i in its)),
@@ -207,6 +208,7 @@ try:
         check(wait_server(lambda its: any(i["text"] == "Apfel" and i["checked"] for i in its)),
               "rapid add-then-check reaches the server")
 
+        b.locator("#shop-client .shop-add-panel summary").click()
         b.fill("#shop-client input[name=text]", "Banane")
         b.locator("#shop-client form.shop-add button").click()
         check(wait_server(lambda its: any(i["text"] == "Banane" for i in its)),

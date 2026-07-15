@@ -1,5 +1,14 @@
 // Kleine Progressive-Enhancement-Helfer (die App funktioniert auch ohne JS).
 
+// Auf grossen Bildschirmen und ohne JavaScript bleiben die Filter sichtbar.
+// Nur auf dem Handy starten sie kompakt; eine aktive Auswahl bleibt offen,
+// damit der aktuelle Zustand nicht versteckt wird.
+(function () {
+  const panel = document.querySelector(".filter-panel");
+  if (!panel || !window.matchMedia("(max-width: 720px)").matches) return;
+  if (panel.dataset.selected !== "true") panel.removeAttribute("open");
+})();
+
 // "/" fokussiert die Suche.
 document.addEventListener("keydown", (e) => {
   const tag = (document.activeElement.tagName || "").toLowerCase();

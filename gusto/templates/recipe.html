@@ -22,20 +22,26 @@
       <span>zuletzt&nbsp;gekocht:&nbsp;<strong>{{ r.last_cooked or 'noch nie' }}</strong></span>
     </div>
     <div class="recipe-actions">
+      <a class="btn recipe-jump" href="#rezept">Zum Rezept ↓</a>
       <form method="post" action="/recipe/{{ r.slug }}/cooked">
         <button class="btn" type="submit">Heute gekocht ✓</button>
       </form>
       <form method="post" action="/recipe/{{ r.slug }}/shopping">
-        <button class="btn-ghost" type="submit">Auf die Einkaufsliste</button>
+        <button class="btn-ghost" type="submit">Zutaten einkaufen</button>
       </form>
-      <a class="btn-ghost" href="/recipe/{{ r.slug }}/edit">Bearbeiten</a>
-      <form method="post" action="/recipe/{{ r.slug }}/delete"
-            onsubmit="return confirm('Rezept „{{ r.title }}“ wirklich löschen?');">
-        <button class="btn-text" type="submit">Löschen</button>
-      </form>
+      <details class="recipe-more">
+        <summary class="btn-ghost">Mehr …</summary>
+        <div class="recipe-more-menu">
+          <a href="/recipe/{{ r.slug }}/edit">Bearbeiten</a>
+          <form method="post" action="/recipe/{{ r.slug }}/delete"
+                onsubmit="return confirm('Rezept „{{ r.title }}“ wirklich löschen?');">
+            <button class="btn-text" type="submit">Löschen</button>
+          </form>
+        </div>
+      </details>
     </div>
   </header>
-  <div class="recipe-body">
+  <div class="recipe-body" id="rezept">
     {{ content_html|safe }}
   </div>
   {% if r.images|length > 1 %}

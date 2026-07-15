@@ -12,6 +12,7 @@
 
   var STORAGE_KEY = "gusto.shopping";
   var SYNC_URL = "/api/shopping/sync";
+  var sourceTitles = {};
 
   // --- localStorage binding --------------------------------------------------
 
@@ -101,7 +102,7 @@
     if (item.source) {
       var source = el("a", "shop-source");
       source.href = "/recipe/" + item.source;
-      source.textContent = "aus „" + item.source + "“";
+      source.textContent = "aus „" + (sourceTitles[item.source] || item.source) + "“";
       body.appendChild(source);
     }
 
@@ -148,8 +149,8 @@
 
     clientEl.textContent = "";
 
-    // Add form (own, same look as the server form).
-    clientEl.appendChild(renderAddForm());
+    // Compact add panel (same structure as the server-rendered fallback).
+    clientEl.appendChild(renderAddPanel());
 
     if (openItems.length === 0 && doneItems.length === 0) {
       clientEl.appendChild(renderEmpty());
@@ -211,6 +212,21 @@
     }
 
     clientEl.appendChild(board);
+  }
+
+  function renderAddPanel() {
+    var panel = el("details", "shop-add-panel");
+    var summary = el("summary");
+    var label = el("span");
+    label.textContent = "Artikel hinzufügen";
+    var plus = el("span");
+    plus.textContent = "＋";
+    plus.setAttribute("aria-hidden", "true");
+    summary.appendChild(label);
+    summary.appendChild(plus);
+    panel.appendChild(summary);
+    panel.appendChild(renderAddForm());
+    return panel;
   }
 
   // The client's own add form (same classes as the server form).
@@ -393,6 +409,18 @@
     serverEl = document.getElementById("shop-server");
     clientEl = document.getElementById("shop-client");
     if (!clientEl) return; // No container -> do nothing (server fallback stays).
+
+    var titlesEl = document.getElementById("shop-source-titles");
+    if (titlesEl) {
+      try {
+        var parsedTitles = JSON.parse(titlesEl.textContent);
+        if (parsedTitles && typeof parsedTitles === "object") {
+          sourceTitles = parsedTitles;
+        }
+      } catch (e) {
+        // A broken presentation map must not block the offline list.
+      }
+    }
 
     // JS active: hide the server part, show the client part.
     if (serverEl) serverEl.hidden = true;

@@ -7,7 +7,7 @@
 //                /media/...:   network-only (deleted images must stay deleted)
 //                other GET:    cache-first (static)
 
-const CACHE = "gusto-v4";
+const CACHE = "gusto-v5";
 
 const APP_SHELL = [
   "/shopping",

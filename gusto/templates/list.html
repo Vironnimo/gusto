@@ -7,22 +7,31 @@
 
 <form class="filters" method="get" action="/">
   <div class="search">
-    <input type="search" name="q" value="{{ q }}" placeholder="Suche nach Zutat, Name, Stichwort…" autocomplete="off">
-    <button type="submit">Suchen</button>
+    <input type="search" name="q" value="{{ q }}" placeholder="Rezept oder Zutat suchen …" autocomplete="off">
+    <button type="submit" aria-label="Suchen">
+      <span class="search-button-label">Suchen</span>
+      <span class="search-button-symbol" aria-hidden="true">⌕</span>
+    </button>
   </div>
-  <div class="tagfilter" id="tagfilter">
-    <a href="{{ reset_href }}" class="tagchip tagchip-all {{ 'is-on' if not selected else '' }}">Alle</a>
-    {% for group in tag_bar %}
-    <div class="taggroup">
-      <span class="taggroup-label">{{ group.label }}</span>
-      <div class="tagbar">
-        {% for chip in group.chips %}
-        <a href="{{ chip.href }}" class="tagchip {{ 'is-on' if chip.on else '' }}">{{ chip.name }}</a>
-        {% endfor %}
+  <details class="filter-panel" data-selected="{{ 'true' if selected else 'false' }}" open>
+    <summary>
+      <span>Rezepte filtern</span>
+      {% if selected_count %}<span class="filter-count">{{ selected_count }}</span>{% endif %}
+    </summary>
+    <div class="tagfilter" id="tagfilter">
+      <a href="{{ reset_href }}" class="tagchip tagchip-all {{ 'is-on' if not selected else '' }}">Alle</a>
+      {% for group in tag_bar %}
+      <div class="taggroup">
+        <span class="taggroup-label">{{ group.label }}</span>
+        <div class="tagbar">
+          {% for chip in group.chips %}
+          <a href="{{ chip.href }}" class="tagchip {{ 'is-on' if chip.on else '' }}">{{ chip.name }}</a>
+          {% endfor %}
+        </div>
       </div>
+      {% endfor %}
     </div>
-    {% endfor %}
-  </div>
+  </details>
 </form>
 
 <div id="results">
