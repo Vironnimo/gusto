@@ -92,6 +92,12 @@ For project-specific error patterns, log format, and logging setup → `.vorch/P
 
 Write tests **together with the feature** — never skip.
 
+### Browser verification
+
+- **Never use the internal Codex in-app browser or the Codex Browser plugin for this project.** It is unstable in this workspace and can crash the Codex app.
+- Perform visual and interactive web verification **only through the `playwright-cli` skill**.
+- If the `playwright-cli` skill is unavailable, report that verification as blocked. Do not fall back to the internal browser, another browser-control skill, or ad-hoc browser automation.
+
 | Type | When | How |
 |---|---|---|
 | **Unit** | Business logic, validation, calculations | Isolated, deps mocked |
