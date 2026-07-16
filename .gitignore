@@ -9,6 +9,7 @@ dist/
 
 .opencode/
 .claude/
+.agents/
 
 TODO.md
 
