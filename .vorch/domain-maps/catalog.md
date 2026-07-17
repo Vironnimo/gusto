@@ -34,6 +34,11 @@ The slug joins Markdown, metadata, image storage, log entries, shopping sources,
 
 The CLI exposes these capabilities through `gusto list|search|tags|show|new|edit|cooked|log|suggest|check|set|delete` and `gusto image ...`. Web catalog pages and form actions in `gusto/web.py` call the same core operations.
 
+Recipe titles must be non-empty, and duration/servings, when present, must be
+positive integers. `update_recipe` has explicit clear flags for the optional
+numeric values; the CLI exposes them through `gusto set --clear-duration` and
+`--clear-servings`, and blank web edit fields use the same core path.
+
 The recipe detail page links to web image management. It can add a photo from
 the outward-facing camera or image library, edit role/caption, select the cover,
 and remove an image. Both browser choices use the same core image operations as

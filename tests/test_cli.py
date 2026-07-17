@@ -55,6 +55,12 @@ def main():
     changed = as_json("set", slug, "--title", "Neue Suppe", "--duration", "30")
     check(changed["title"] == "Neue Suppe" and changed["duration_min"] == 30,
           "set --json must return updated metadata")
+    cleared = as_json("set", slug, "--clear-duration", "--clear-servings")
+    check(cleared["duration_min"] is None and cleared["servings"] is None,
+          "set must be able to remove optional duration and servings")
+    invalid = run("new", "Unmögliche Suppe", "--duration", "0", expect=1)
+    check("positive ganze Zahl" in invalid.stderr,
+          "invalid recipe numbers must fail through the CLI")
 
     first_photo = HOME / "cover.png"
     second_photo = HOME / "step.png"

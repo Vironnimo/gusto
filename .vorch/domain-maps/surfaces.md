@@ -18,6 +18,10 @@ No cross-cutting terms for this domain are currently defined in `.vorch/GLOSSARY
 
 The installed application command is `gusto`, backed by `gusto.cli:main`; `python -m gusto` reaches the same entry point. Every command accepts `--json`, and the CLI converts expected core `ValueError` failures into non-zero command exits.
 
+`gusto set` can remove optional duration or serving metadata with
+`--clear-duration` and `--clear-servings`; these are mutually exclusive with
+setting the corresponding value.
+
 The web application object is `gusto.web:app`. It serves catalog, log, suggestion, shopping, preferred-product management, and form pages; recipe and product media; shopping/favorite JSON; static assets; the root-scoped service worker; and a custom HTML 404. Entity URLs continue to use `/recipe/{slug}` because they address a recipe, not the application package.
 
 Browser photo forms use two explicit file controls: native outward-facing

@@ -219,6 +219,9 @@ def slugify(title: str) -> str:
 
 def add_recipe(title: str, tags=None, duration_min=None, servings=None,
                content: str | None = None, slug: str | None = None) -> Recipe:
+    title = _recipe_title(title)
+    _positive_recipe_number(duration_min, "Die Dauer")
+    _positive_recipe_number(servings, "Die Portionszahl")
     recipes = load_recipes()
     slug = slug or slugify(title)
     if any(r.slug == slug for r in recipes):
@@ -236,6 +239,20 @@ def add_recipe(title: str, tags=None, duration_min=None, servings=None,
 
 def _template(title: str) -> str:
     return f"# {title}\n\n## Zutaten\n\n- \n\n## Zubereitung\n\n1. \n"
+
+
+def _recipe_title(value: str) -> str:
+    """Return a normalized non-empty recipe title."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Das Rezept braucht einen Titel.")
+    return value.strip()
+
+
+def _positive_recipe_number(value: int | None, label: str) -> None:
+    """Validate optional recipe counts shared by CLI and web."""
+    if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 1):
+        raise ValueError(f"{label} muss eine positive ganze Zahl sein.")
 
 
 # --- Categories (facets) ----------------------------------------------------
@@ -385,20 +402,33 @@ def suggest(days: int = 7, limit: int | None = None) -> list[Recipe]:
 
 def update_recipe(slug: str, title: str | None = None, tags=None,
                   duration_min=None, servings=None,
-                  content: str | None = None) -> Recipe:
+                  content: str | None = None, *,
+                  clear_duration: bool = False,
+                  clear_servings: bool = False) -> Recipe:
     """Update a recipe. None means 'leave unchanged' (exception: tags=[] clears
-    the tags). `content` overwrites the .md file."""
+    the tags). Explicit clear flags remove optional numeric metadata; `content`
+    overwrites the .md file."""
+    if clear_duration and duration_min is not None:
+        raise ValueError("Die Dauer kann nicht gleichzeitig gesetzt und entfernt werden.")
+    if clear_servings and servings is not None:
+        raise ValueError("Die Portionszahl kann nicht gleichzeitig gesetzt und entfernt werden.")
+    _positive_recipe_number(duration_min, "Die Dauer")
+    _positive_recipe_number(servings, "Die Portionszahl")
     recipes = load_recipes()
     target = next((r for r in recipes if r.slug == slug), None)
     if target is None:
         raise ValueError(f"Kein Rezept mit Slug '{slug}'.")
     if title is not None:
-        target.title = title
+        target.title = _recipe_title(title)
     if tags is not None:
         target.tags = tags
-    if duration_min is not None:
+    if clear_duration:
+        target.duration_min = None
+    elif duration_min is not None:
         target.duration_min = duration_min
-    if servings is not None:
+    if clear_servings:
+        target.servings = None
+    elif servings is not None:
         target.servings = servings
     if content is not None:
         recipe_file(slug).write_text(content, encoding="utf-8")
@@ -1201,8 +1231,28 @@ def shopping_merge(remote_items: list[dict]) -> list[ShoppingItem]:
     # Local state (incl. tombstones) as the source of truth, indexed by id.
     merged: dict[str, ShoppingItem] = {i.id: i for i in shopping_load()}
 
+    if not isinstance(remote_items, list):
+        raise ValueError("Der Einkaufslisten-Stand muss eine Liste sein.")
+
     for raw in remote_items:
-        remote = ShoppingItem.from_dict(raw)
+        if not isinstance(raw, dict):
+            raise ValueError("Jeder Einkaufslisten-Eintrag muss ein Objekt sein.")
+        try:
+            remote = ShoppingItem.from_dict(raw)
+        except TypeError as error:
+            raise ValueError("Ein Einkaufslisten-Eintrag ist unvollständig.") from error
+        if not isinstance(remote.id, str) or not remote.id:
+            raise ValueError("Jeder Einkaufslisten-Eintrag braucht eine id.")
+        if not isinstance(remote.text, str):
+            raise ValueError("Der Text eines Einkaufslisten-Eintrags ist ungültig.")
+        if not isinstance(remote.quantity, str):
+            raise ValueError("Die Menge eines Einkaufslisten-Eintrags ist ungültig.")
+        if not isinstance(remote.checked, bool) or not isinstance(remote.deleted, bool):
+            raise ValueError("Der Status eines Einkaufslisten-Eintrags ist ungültig.")
+        if remote.source is not None and not isinstance(remote.source, str):
+            raise ValueError("Die Quelle eines Einkaufslisten-Eintrags ist ungültig.")
+        if not isinstance(remote.created_at, str) or not isinstance(remote.updated_at, str):
+            raise ValueError("Der Zeitstempel eines Einkaufslisten-Eintrags ist ungültig.")
         local = merged.get(remote.id)
         # id only remote -> take it over.
         # id on both sides -> later updated_at wins;

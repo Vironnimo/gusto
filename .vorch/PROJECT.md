@@ -75,6 +75,9 @@ Quality gates:
 - 2026-07-17: Built wheels include all templates, static assets, manifest, and
   PWA icons. The Pi installer generates a systemd unit from the actual user,
   project path, and optional data path instead of assuming `/home/pi/gusto`.
+- 2026-07-17: Optional recipe duration/servings can be removed in web and CLI;
+  recipe titles and numeric metadata are validated in core. Malformed shopping
+  sync states are rejected with HTTP 400 before persistence.
 
 ## Domain Maps
 

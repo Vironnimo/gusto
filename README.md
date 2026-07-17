@@ -73,6 +73,7 @@ gusto search "linsen kokos"         # full-text incl. ingredients in the body
 gusto show spaghetti-carbonara
 gusto new "Title" --tags a,b --duration 25 --servings 2
 gusto set <slug> --servings 4       # change metadata
+gusto set <slug> --clear-servings   # remove optional metadata again
 gusto cooked <slug>                 # cooked today -> log
 gusto suggest --days 7              # suggestions for the next meal
 gusto delete <slug>

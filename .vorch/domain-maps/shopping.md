@@ -36,6 +36,10 @@ offline reading only.
 
 Core operations load and save full state, add individual entries, import ingredients from a recipe, list visible entries, set or toggle checked state, tombstone entries, clear completed entries, and merge a remote full state.
 
+The sync endpoint accepts only an object containing an `items` list. Core
+validates each remote item's required fields and field types before merging;
+malformed JSON shapes return HTTP 400 and are never persisted.
+
 The CLI exposes these through `gusto shopping list|add|add-recipe|check|uncheck|remove|clear`; explicit check and uncheck are idempotent and suited to agents synchronizing an external checklist.
 
 The web provides server-rendered `/shopping` forms when JavaScript is unavailable. With JavaScript, the client hides that fallback, mutates local state first, and synchronizes in the background. `GET /api/shopping` returns all server items including tombstones; `POST /api/shopping/sync` accepts `{ "items": [...] }` and returns the merged full state.

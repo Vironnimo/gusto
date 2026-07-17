@@ -59,7 +59,8 @@ English.)
 
 **Edit · log · shopping**
 - `gusto set <slug> --tags a,b --duration N` (`--tags` replaces the list);
-  edit the body by rewriting `recipes/<slug>.md`.
+  `--clear-duration` / `--clear-servings` remove optional numeric metadata.
+  Edit the body by rewriting `recipes/<slug>.md`.
 - `gusto cooked <slug>` — record a cook (updates the log + `last_cooked`).
 - `gusto shopping add-recipe <slug>` (all ingredients), `shopping add "<text>"`,
   `shopping list [--pending]`, `shopping check|uncheck|remove <id>`,

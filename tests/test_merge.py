@@ -50,6 +50,16 @@ def by_id(items: list[core.ShoppingItem]) -> dict[str, core.ShoppingItem]:
     return {i.id: i for i in items}
 
 
+def expect_valueerror(value) -> None:
+    global checks
+    try:
+        core.shopping_merge(value)
+    except ValueError:
+        checks += 1
+        return
+    raise AssertionError(f"expected ValueError for invalid remote state: {value!r}")
+
+
 # --- 1) empty local + remote items -> taken over ----------------------------
 reset_local([])
 result = core.shopping_merge([item("a", "2026-06-23T18:00:00Z", text="Milch")])
@@ -162,6 +172,14 @@ m = by_id(result)
 check(m["x"].text == "Brot", "robust: known fields taken over")
 check(m["x"].quantity == "" and m["x"].checked is False and m["x"].deleted is False,
       "robust: missing fields fall back to defaults")
+
+
+# --- 12) malformed remote state is rejected before it reaches persistence --
+expect_valueerror("not-a-list")
+expect_valueerror(["not-an-object"])
+expect_valueerror([{}])
+expect_valueerror([item([], "2026-06-23T18:00:00Z")])
+expect_valueerror([item("x", 123)])
 
 
 print(f"OK - {checks} checks passed (test_merge.py)")

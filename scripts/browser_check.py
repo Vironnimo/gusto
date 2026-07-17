@@ -238,9 +238,15 @@ try:
         # Edit (slug stays stable)
         page.goto(BASE + "/recipe/test-pfannkuchen/edit", wait_until="networkidle")
         page.fill("input[name=title]", "Test Pfannkuchen Deluxe")
+        page.fill("input[name=duration]", "")
+        page.fill("input[name=servings]", "")
         page.locator("button.btn", has_text="Speichern").click()
         page.wait_for_load_state("networkidle")
         check("Deluxe" in page.content(), "recipe edited")
+        recipe_data = json.loads((TESTDATA / "data" / "recipes.json").read_text(encoding="utf-8"))
+        edited = next(item for item in recipe_data if item["slug"] == "test-pfannkuchen")
+        check(edited["duration_min"] is None and edited["servings"] is None,
+              "recipe edit can clear optional duration and servings")
 
         # Delete (clears the test recipe again)
         page.locator(".recipe-more summary").click()

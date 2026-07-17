@@ -58,6 +58,9 @@ def main():
     check(pasta.slug == "pasta-pomodoro", "title must become the expected slug")
     check(len(core.load_recipes()) == 3, "three recipes must round-trip")
     expect_valueerror(core.add_recipe, "Pasta Pomodoro")
+    expect_valueerror(core.add_recipe, "   ")
+    expect_valueerror(core.add_recipe, "Zeitreise", duration_min=0)
+    expect_valueerror(core.add_recipe, "Hungrige Runde", servings=-1)
 
     check([r.slug for r in core.search("kokosmilch")] == [curry.slug],
           "full-text search must include recipe content")
@@ -75,6 +78,15 @@ def main():
     check(updated.title == "Gurkensalat" and updated.duration_min == 12,
           "recipe metadata must update")
     check(updated.content() == "# Gurkensalat\n", "recipe content must update")
+    cleared = core.update_recipe(
+        quick.slug, clear_duration=True, clear_servings=True,
+    )
+    check(cleared.duration_min is None and cleared.servings is None,
+          "optional duration and servings must be removable")
+    expect_valueerror(
+        core.update_recipe, quick.slug, duration_min=10, clear_duration=True,
+    )
+    expect_valueerror(core.update_recipe, quick.slug, title="  ")
 
     # Multiple stored images, free roles/captions, and one selected cover.
     first_source = HOME / "finished.png"

@@ -32,8 +32,10 @@ All commands: `python -m gusto <command>` (or `gusto <command>` after
 - `new "<title>" [--tags a,b] [--duration N] [--servings N] [--edit] [--json]`
   Create the `.md` (a template) **and** the index entry. `--edit` opens
   `$EDITOR` (interactive — skip it when headless; write the file directly).
-- `set <slug> [--title ...] [--tags a,b] [--duration N] [--servings N] [--json]`
-  Update metadata. `--tags` **replaces** the whole list.
+- `set <slug> [--title ...] [--tags a,b]
+  [--duration N|--clear-duration] [--servings N|--clear-servings] [--json]`
+  Update metadata. `--tags` **replaces** the whole list; the clear flags remove
+  optional duration or serving values.
 - `edit <slug>`
   Open the `.md` in `$EDITOR`. Interactive; for a headless agent, rewrite
   `recipes/<slug>.md` directly instead.

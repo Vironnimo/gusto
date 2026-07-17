@@ -119,6 +119,17 @@ def api_sync(items):
     with urllib.request.urlopen(req) as r:
         return json.loads(r.read())["items"]
 
+def api_sync_status(payload):
+    req = urllib.request.Request(
+        BASE + "/api/shopping/sync",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req) as response:
+            return response.status
+    except urllib.error.HTTPError as error:
+        return error.code
+
 def api_favorites():
     with urllib.request.urlopen(BASE + "/api/favorites") as r:
         return json.loads(r.read())["needs"]
@@ -163,6 +174,10 @@ try:
     check(api_get() == [], "GET /api/shopping: empty list at start")
     check(api_favorites()[0]["products"][0]["image_url"].startswith("/media/favorite/"),
           "GET /api/favorites: ranked catalog includes its product image URL")
+    check(api_sync_status([]) == 400,
+          "POST sync: non-object JSON is rejected as a client error")
+    check(api_sync_status({"items": [{}]}) == 400,
+          "POST sync: malformed items are rejected as a client error")
 
     def itm(ts, **kw):
         base = {"id": "milch", "text": "Milch", "quantity": "", "checked": False,

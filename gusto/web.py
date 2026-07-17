@@ -57,7 +57,12 @@ def _render(text: str) -> str:
 
 def _int_or_none(v: str | None):
     v = (v or "").strip()
-    return int(v) if v.lstrip("-").isdigit() else None
+    if not v:
+        return None
+    try:
+        return int(v)
+    except ValueError as error:
+        raise ValueError("Dauer und Portionen müssen ganze Zahlen sein.") from error
 
 
 def _tags(s: str | None):
@@ -255,16 +260,27 @@ def edit_form(request: Request, slug: str):
 
 
 @app.post("/recipe/{slug}/edit")
-def update(slug: str, title: str = Form(...), tags: str = Form(""),
+def update(request: Request, slug: str, title: str = Form(...), tags: str = Form(""),
            duration: str = Form(""), servings: str = Form(""),
            content: str = Form("")):
+    recipe = core.get(slug)
+    if recipe is None:
+        raise StarletteHTTPException(status_code=404)
     body = f"# {title.strip()}\n\n{content.strip()}\n"
     try:
         core.update_recipe(slug, title=title.strip(), tags=_tags(tags),
                            duration_min=_int_or_none(duration),
-                           servings=_int_or_none(servings), content=body)
-    except ValueError:
-        raise StarletteHTTPException(status_code=404)
+                           servings=_int_or_none(servings), content=body,
+                           clear_duration=not duration.strip(),
+                           clear_servings=not servings.strip())
+    except ValueError as error:
+        form = {"title": title, "tags": tags, "duration": duration,
+                "servings": servings, "content": content.strip()}
+        return templates.TemplateResponse(request, "form.html", {
+            "nav": "recipes", "title": f"{recipe.title} bearbeiten",
+            "r": recipe, "form": form,
+            "form_action": f"/recipe/{slug}/edit", "error": str(error),
+        }, status_code=400)
     return RedirectResponse(f"/recipe/{slug}", status_code=303)
 
 
@@ -585,7 +601,12 @@ async def api_shopping_sync(request: Request):
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "invalid JSON"}, status_code=400)
-    merged = core.shopping_merge(body.get("items", []))
+    if not isinstance(body, dict) or not isinstance(body.get("items"), list):
+        return JSONResponse({"error": "invalid shopping state"}, status_code=400)
+    try:
+        merged = core.shopping_merge(body["items"])
+    except ValueError:
+        return JSONResponse({"error": "invalid shopping state"}, status_code=400)
     return JSONResponse({"items": [i.to_dict() for i in merged]})
 
 

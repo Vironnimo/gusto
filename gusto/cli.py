@@ -199,7 +199,9 @@ def cmd_set(args):
         tags = [t.strip() for t in args.tags.split(",") if t.strip()]
     try:
         r = core.update_recipe(args.slug, title=args.title, tags=tags,
-                               duration_min=args.duration, servings=args.servings)
+                               duration_min=args.duration, servings=args.servings,
+                               clear_duration=args.clear_duration,
+                               clear_servings=args.clear_servings)
     except ValueError as e:
         sys.exit(str(e))
     if args.json:
@@ -623,8 +625,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("slug")
     sp.add_argument("--title")
     sp.add_argument("--tags", help="Kommagetrennt; ersetzt die bisherigen Tags.")
-    sp.add_argument("--duration", type=int)
-    sp.add_argument("--servings", type=int)
+    duration = sp.add_mutually_exclusive_group()
+    duration.add_argument("--duration", type=int)
+    duration.add_argument("--clear-duration", action="store_true",
+                          help="Gespeicherte Dauer entfernen.")
+    servings = sp.add_mutually_exclusive_group()
+    servings.add_argument("--servings", type=int)
+    servings.add_argument("--clear-servings", action="store_true",
+                          help="Gespeicherte Portionszahl entfernen.")
     sp.set_defaults(func=cmd_set)
 
     sp = sub.add_parser("delete", parents=[base], help="Rezept loeschen (.md + Index).")

@@ -88,7 +88,7 @@ gusto new    "<Title>" [--tags a,b] [--duration N] [--servings N]
 gusto edit   <slug>                          Open the .md in the editor
 gusto cooked <slug> [--date YYYY-MM-DD]      Record in the cooking log
 gusto log    [--days N]                       Show the cooking log
-gusto set    <slug> [--title ...] [--tags a,b] [--duration N] [--servings N]
+gusto set    <slug> [--title ...] [--tags a,b] [--duration N|--clear-duration] [--servings N|--clear-servings]
 gusto delete <slug>                           Delete a recipe
 gusto suggest [--days N] [--limit N]          Candidates for the next meal
 gusto check                                   Consistency index <-> .md (+ unsorted tags)
