@@ -18,7 +18,8 @@ schreibt sofort nach Gusto zurück. Zielgruppe u. a. ältere Menschen: **mehr al
 ## Gusto-CLI-Kontrakt (verifiziert)
 
 Aufruf: `gusto shopping <cmd>` bzw. `python -m gusto shopping <cmd>`, immer mit
-`--json`. `GUSTO_HOME` zeigt auf den Datenordner (auf dem Pi gesetzt).
+`--json`. `GUSTO_HOME` kann auf dem jeweiligen Gusto-Host einen abweichenden
+Datenordner setzen; `gusto home --json` zeigt die aktive Auflösung.
 
 | Kommando | Rückgabe (`--json`) |
 |---|---|

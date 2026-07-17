@@ -3,7 +3,7 @@
 ## Ziel
 Integrierte Einkaufsliste in Gusto. Zutaten eines Rezepts per Knopf (Web)
 bzw. per CLI/Agent auf die Liste setzen. Unterwegs **offline** nutzbar als
-**PWA**, die zu Hause im LAN mit dem Pi synchronisiert. Der Pi bleibt die
+**PWA**, die zu Hause im LAN mit dem Gusto-Server synchronisiert. Der Host bleibt die
 einzige Quelle der Wahrheit. Datenfluss ist asymmetrisch: *Schreiben* zu Hause
 (Agent/Web), *Lesen + Abhaken* unterwegs (offline).
 

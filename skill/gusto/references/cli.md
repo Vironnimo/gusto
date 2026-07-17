@@ -1,12 +1,16 @@
 # Gusto CLI — Full Reference
 
 All commands: `python -m gusto <command>` (or `gusto <command>` after
-`pip install -e .`). Every command accepts `--json` for machine-readable output.
+`python install.py`). Every command accepts `--json` for machine-readable output.
 
 ## Commands
 
 ### Reading
 
+- `home [--json]`
+  Show the active store root and whether it came from `GUSTO_HOME`, the normal
+  platform user-data directory, or the compatibility fallback for an existing
+  checkout. JSON also includes `platform_default`.
 - `list [--tag T ...] [--max-time N] [--json]`
   List/filter recipes. `--tag` is repeatable **and** comma-separated
   (`--tag a --tag b` ≡ `--tag a,b`). `--max-time` caps `duration_min`.
@@ -213,6 +217,10 @@ prints one such object or `null`; it does not create an alias automatically.
   it under the right key in `categories.json` to make it filterable as a facet.
 
 ## Data files
+
+Resolve the root with `gusto home --json`. Normal installs use
+`%LOCALAPPDATA%\Gusto` on Windows or `$XDG_DATA_HOME/gusto` /
+`~/.local/share/gusto` on Linux; `GUSTO_HOME` is the explicit override.
 
 | File | Content |
 |---|---|

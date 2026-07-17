@@ -14,7 +14,7 @@ English.)
 ## Invocation
 
 - `python -m gusto <command> --json` (or `gusto <command>` if installed).
-- Side-effect-free: `list`, `search`, `show`, `tags`, `log`, `suggest`, `check`,
+- Side-effect-free: `home`, `list`, `search`, `show`, `tags`, `log`, `suggest`, `check`,
   `favorites list|show|match`.
 - Change state: `new`, `set`, `delete`, `cooked`, `image …`, `shopping …`,
   and the remaining `favorites …` commands.
@@ -121,6 +121,8 @@ stays the source of truth. The keyboard has **two kinds of buttons**:
 
 ## Data model
 
+- `gusto home --json` reports the root containing the following paths. Normal
+  installs use the Windows/Linux user-data directory; `GUSTO_HOME` overrides it.
 - `recipes/<slug>.md` — recipe content, no frontmatter.
 - `data/recipes.json` — metadata including `images[]` and `cover_image_id`.
 - `images/<slug>/` — original image files copied into and owned by Gusto.
@@ -135,6 +137,8 @@ manual edit run `gusto check`.
 ## Pitfalls
 
 - Parsing output? always `--json`.
+- Do not assume data lives beside the checkout; resolve it with
+  `gusto home --json` before direct file access.
 - The `.md` holds content only — never put metadata/frontmatter in it.
 - Don't hand-write a `.md` without an index entry — use `gusto new`, or add the
   entry and run `gusto check`.

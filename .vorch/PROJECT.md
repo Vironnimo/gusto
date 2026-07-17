@@ -6,10 +6,11 @@ Remove sections that don't apply to your project. Keep entries short and factual
 
 ## Project
 
-Gusto is a self-hosted, German-language recipe system for home use on a
-Raspberry Pi. Recipes remain portable Markdown files while metadata, cooking
-history, and the shopping list live in JSON. Every user capability must also be
-available through the JSON-capable CLI so an agent can operate the product.
+Gusto is a self-hosted, German-language recipe system for home use on Windows
+and Linux. A Raspberry Pi is the first Linux deployment target, not an
+exclusive platform. Recipes remain portable Markdown files while metadata,
+cooking history, and the shopping list live in JSON. Every user capability must
+also be available through the JSON-capable CLI so an agent can operate the product.
 
 ## Architecture
 
@@ -29,11 +30,13 @@ and every CLI command accepts `--json`. MCP is explicitly out of scope.
 
 ## Development
 
-Create a virtual environment and install `-e ".[web]"`; run `gusto serve` for
-the LAN web app. `GUSTO_HOME` relocates the recipes and data directories. Web
-browser tests always use throwaway data through this environment variable. On
-Linux/Raspberry Pi, `deploy/install.sh` performs the environment, web install,
-data-directory, and systemd setup using the actual user and checkout path.
+`install.py` performs the normal Windows/Linux installation into `.venv`; an
+editable `-e ".[web]"` install remains available for development. Normal stores
+use `%LOCALAPPDATA%\Gusto` on Windows or the XDG user-data directory on Linux.
+`GUSTO_HOME` overrides the store; `install.py` copies existing checkout data
+once into an empty platform store, while core retains a compatibility fallback.
+Browser tests always use throwaway data through `GUSTO_HOME`. Linux systemd and
+Windows logon autostart are optional deployment helpers under `deploy/`.
 
 ## Testing
 
@@ -48,6 +51,7 @@ Quality gates:
 - `python tests/test_merge.py`
 - `python tests/test_recipes.py`
 - `python tests/test_cli.py`
+- `python tests/test_paths.py`
 - `python scripts/browser_check.py`
 - `python scripts/pwa_check.py`
 
@@ -73,8 +77,11 @@ Quality gates:
   web UI; all browser photo uploads are converted to metadata-free WebP with a
   1920 px maximum edge, while CLI image imports remain unchanged.
 - 2026-07-17: Built wheels include all templates, static assets, manifest, and
-  PWA icons. The Pi installer generates a systemd unit from the actual user,
-  project path, and optional data path instead of assuming `/home/pi/gusto`.
+  PWA icons. `install.py` is the shared Windows/Linux installer; platform
+  autostart is a separate optional systemd or Windows logon adapter.
+- 2026-07-17: Normal installs store data in the operating system's per-user
+  directory. `GUSTO_HOME` remains the explicit override, existing checkout data
+  has a non-destructive fallback, and `gusto home --json` explains the result.
 - 2026-07-17: Optional recipe duration/servings can be removed in web and CLI;
   recipe titles and numeric metadata are validated in core. Malformed shopping
   sync states are rejected with HTTP 400 before persistence.

@@ -82,6 +82,22 @@ def cmd_tags(args):
         print("  " + (", ".join(g["tags"]) if g["tags"] else "—"))
 
 
+def cmd_home(args):
+    info = core.storage_info()
+    if args.json:
+        _dump(info)
+        return
+    labels = {
+        "environment": "GUSTO_HOME",
+        "legacy": "bestehender Checkout (Kompatibilitätsmodus)",
+        "platform_default": "Standard-Benutzerdatenordner",
+    }
+    print(info["path"])
+    print(f"  Quelle: {labels.get(info['source'], info['source'])}")
+    if info["source"] == "legacy":
+        print(f"  Neuer Plattformstandard: {info['platform_default']}")
+
+
 def cmd_show(args):
     r = core.get(args.slug)
     if r is None:
@@ -586,6 +602,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--all", action="store_true",
                     help="Alle definierten Kategorien/Tags (nicht nur verwendete).")
     sp.set_defaults(func=cmd_tags)
+
+    sp = sub.add_parser("home", parents=[base],
+                        help="Aktiven Gusto-Datenordner anzeigen.")
+    sp.set_defaults(func=cmd_home)
 
     sp = sub.add_parser("show", parents=[base], help="Ein Rezept ausgeben.")
     sp.add_argument("slug")

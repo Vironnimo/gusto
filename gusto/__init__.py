@@ -1,3 +1,3 @@
-"""Rezept-System – Markdown-Rezepte, steuerbar per CLI und (später) Web."""
+"""Rezept-System – Markdown-Rezepte, steuerbar per CLI und Web."""
 
 __version__ = "0.1.0"

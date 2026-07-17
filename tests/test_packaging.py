@@ -19,19 +19,50 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.fspath(ROOT))
 
+import install as gusto_installer  # noqa: E402
+
 
 manifest = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 assert re.search(r'^name\s*=\s*"gusto"$', manifest, re.MULTILINE)
 assert re.search(r'^gusto\s*=\s*"gusto\.cli:main"$', manifest, re.MULTILINE)
 assert not (ROOT / "recipe").exists()
 
-installer = ROOT / "deploy" / "install.sh"
+installer = ROOT / "install.py"
+linux_autostart = ROOT / "deploy" / "install-systemd.sh"
+windows_autostart = ROOT / "deploy" / "install-windows-task.ps1"
 service_template = (ROOT / "deploy" / "gusto.service").read_text(encoding="utf-8")
 assert installer.is_file()
+assert linux_autostart.is_file()
+assert windows_autostart.is_file()
 assert "User=pi" not in service_template
 assert "/home/pi/gusto" not in service_template
-for marker in ["@GUSTO_USER@", "@GUSTO_PROJECT@", "@GUSTO_HOME@", "@GUSTO_PYTHON@"]:
+assert "@GUSTO_PROJECT@" not in service_template
+for marker in ["@GUSTO_USER@", "@GUSTO_HOME@", "@GUSTO_PYTHON@", "@GUSTO_PORT@"]:
     assert marker in service_template
+
+with tempfile.TemporaryDirectory(prefix="gusto-installer-test-") as install_dir:
+    dry_run = subprocess.run(
+        [sys.executable, os.fspath(installer), "--dry-run", "--venv",
+         os.fspath(Path(install_dir) / "venv")],
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+    )
+    assert dry_run.returncode == 0, dry_run.stdout + dry_run.stderr
+    assert "CLI + Web" in dry_run.stdout
+    assert not (Path(install_dir) / "venv").exists()
+
+with tempfile.TemporaryDirectory(prefix="gusto-migration-test-") as migration_dir:
+    migration_root = Path(migration_dir)
+    source = migration_root / "checkout"
+    destination = migration_root / "user-data"
+    (source / "recipes").mkdir(parents=True)
+    (source / "data").mkdir()
+    (source / "recipes" / "suppe.md").write_text("# Suppe\n", encoding="utf-8")
+    (source / "data" / "recipes.json").write_text("[]\n", encoding="utf-8")
+    assert gusto_installer.migrate_checkout_data(source, destination)
+    assert (destination / "recipes" / "suppe.md").is_file()
+    (destination / "recipes" / "suppe.md").write_text("changed\n", encoding="utf-8")
+    assert not gusto_installer.migrate_checkout_data(source, destination)
+    assert (destination / "recipes" / "suppe.md").read_text(encoding="utf-8") == "changed\n"
 
 optional_dependencies = re.search(
     r"\[project\.optional-dependencies\](.*?)(?=\n\[|\Z)", manifest, re.DOTALL

@@ -37,6 +37,10 @@ def as_json(*arguments):
 
 
 def main():
+    home = as_json("home")
+    check(Path(home["path"]) == HOME and home["source"] == "environment",
+          "home --json must explain the active GUSTO_HOME data directory")
+
     created = as_json(
         "new", "Test Suppe", "--tags", "vegan,schnell",
         "--duration", "25", "--servings", "4",

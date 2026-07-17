@@ -1,9 +1,9 @@
 # Gusto — project context for Claude
 
-Self-hosted, **markdown-based recipe system** for home use. Goal: it runs on a
-Raspberry Pi and is reachable from any device on the local network. Built to
-replace paper recipes and to enable e.g. meal suggestions based on the last few
-days.
+Self-hosted, **markdown-based recipe system** for home use on Windows and Linux,
+reachable from any device on the local network. A Raspberry Pi is the first
+Linux deployment target, not an exclusive platform. Built to replace paper
+recipes and to enable e.g. meal suggestions based on the last few days.
 
 ## Guiding principles (important!)
 
@@ -58,21 +58,24 @@ categories. Tags without a category are reported by `gusto check` as
 ## Usage
 
 ```bash
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[web]"        # the pure CLI needs no dependencies
-./deploy/install.sh             # one-command Pi install incl. systemd autostart
-gusto serve                   # web on 0.0.0.0:8000 (across the LAN)
-python -m gusto <command>     # CLI, if not installed
+python install.py              # Windows/Linux normal install incl. web UI
+python install.py --cli-only   # the pure CLI needs no dependencies
+# Windows: .venv\Scripts\gusto.exe serve
+# Linux:   ./.venv/bin/gusto serve
+python -m gusto <command>      # CLI during development
 ```
 
-All commands understand `--json` (machine-readable, for agents). `GUSTO_HOME`
-(env) relocates the full recipe store (`recipes/` + `images/` + `data/`), handy
-on the Pi.
+All commands understand `--json` (machine-readable, for agents). By default the
+store lives under `%LOCALAPPDATA%\Gusto` on Windows or
+`$XDG_DATA_HOME/gusto` / `~/.local/share/gusto` on Linux. `GUSTO_HOME` relocates
+the full store (`recipes/` + `images/` + `data/`); `gusto home --json` reports
+the active location and resolution source.
 
 ```
 gusto list   [--tag T ...] [--max-time N]    Filter; --tag repeatable/comma-separated
 gusto search "<terms>" [--match any|all] [--tag T ...]   Full-text (incl. ingredients)
 gusto tags   [--all]                          Show tag categories (facets)
+gusto home                                    Show active data directory
 gusto show   <slug>                          Print a recipe (--json: incl. content)
 gusto new    "<Title>" [--tags a,b] [--duration N] [--servings N]
 gusto edit   <slug>                          Open the .md in the editor
@@ -160,7 +163,8 @@ clear` if it should also remove bought items). Full round-trip in the skill
 - `gusto/web.py` — FastAPI app (server-rendered, Jinja2)
 - `gusto/templates/`, `gusto/static/` — UI + CSS/JS
 - `scripts/browser_check.py` — end-to-end browser test (Playwright)
-- `deploy/install.sh`, `deploy/gusto.service` — one-command Pi setup + systemd template
+- `install.py` — cross-platform Windows/Linux installation
+- `deploy/install-systemd.sh`, `deploy/install-windows-task.ps1` — optional platform autostart
 - `skill/gusto/` — skill (SKILL.md + `references/cli.md`) for operating the
   system via the CLI; mirrors "Usage" / "Typical tasks" — **keep in sync** (principle 8).
 
@@ -182,6 +186,10 @@ clear` if it should also remove bought items). Full round-trip in the skill
   — `request` MUST be the first argument.
 - Windows console (cp1252): stdout in CLI/tests is switched to UTF-8, otherwise
   characters like "✓" break.
+- Normal installs use per-user platform data directories. Existing checkout
+  data is copied there once by `install.py` when the destination is empty and
+  otherwise remains visible through a legacy fallback; `GUSTO_HOME` always
+  wins explicitly.
 
 ## Design
 
@@ -195,8 +203,8 @@ staggered fade-in. UI and data fields are German.
 **Done:** data model, core, CLI, web UI (list/search incl. **live search** while
 typing, **tag facets**: multi-select grouped by category, OR within / AND across
 categories — `data/categories.json`, `gusto tags`), recipe view,
-create/edit/delete, "cooked today", suggestions, log, 404 page, Pi deployment
-(systemd), browser test, and **multiple stored recipe images** with a selected
+create/edit/delete, "cooked today", suggestions, log, 404 page, optional Linux
+systemd and Windows logon deployment, browser test, and **multiple stored recipe images** with a selected
 cover, gallery, free role/caption, full agent control through `gusto image …`,
 and direct camera/library management in the web UI. **Shopping list**
 (core/CLI/web, `gusto shopping …`) with shared

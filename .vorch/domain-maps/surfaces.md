@@ -8,7 +8,8 @@ The surfaces domain adapts Gusto's core capabilities to the agent-facing CLI and
 
 ## Terms
 
-No cross-cutting terms for this domain are currently defined in `.vorch/GLOSSARY.md`.
+GLOSSARY → Deployment-Ziel distinguishes an important runtime target from the
+general installation and supported-platform contracts owned here.
 
 ### Thin shell
 
@@ -17,6 +18,10 @@ No cross-cutting terms for this domain are currently defined in `.vorch/GLOSSARY
 ## Interfaces
 
 The installed application command is `gusto`, backed by `gusto.cli:main`; `python -m gusto` reaches the same entry point. Every command accepts `--json`, and the CLI converts expected core `ValueError` failures into non-zero command exits.
+
+`gusto home` reports the active store root, its resolution source, and the
+normal platform default. Installation and deployment tooling uses this contract
+instead of inferring data paths from the checkout.
 
 `gusto set` can remove optional duration or serving metadata with
 `--clear-duration` and `--clear-servings`; these are mutually exclusive with
@@ -36,15 +41,18 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
 ## Packaging & Runtime
 
 - `pyproject.toml` declares project and package `gusto`, a `gusto` console script, no default dependencies, optional web dependencies under `.[web]`, and packages the templates, CSS/JavaScript, manifest, and PWA icons required by an installed web app.
-- `GUSTO_HOME` relocates the complete runtime store (`recipes/`, `images/`, and `data/`). Without it, the store is resolved beside the source package.
+- Normal stores live under `%LOCALAPPDATA%\Gusto` on Windows and
+  `$XDG_DATA_HOME/gusto` or `~/.local/share/gusto` on Linux. `GUSTO_HOME` is the
+  explicit override. If the platform store is empty but the old package-parent
+  location already contains Gusto data, the legacy location remains active.
 - `gusto serve` imports Uvicorn only when invoked and starts `gusto.web:app`.
-  The systemd template runs the same module entry point from the installer-
-  supplied virtual environment and working directory.
-- `deploy/install.sh` is the supported one-command Linux/Pi setup. It creates
-  `.venv`, installs `.[web]`, creates the data directories, renders
-  `deploy/gusto.service` with the actual user and absolute paths, and enables
-  the service; `--data-dir`, `--no-service`, and `--dry-run` cover alternate
-  data placement, manual startup, and inspection.
+  Both platform deployment helpers run the installed module from `.venv`.
+- `install.py` owns normal Windows/Linux environment creation and package
+  installation. It copies existing checkout data only when the platform store
+  is empty and never removes the original. `deploy/install-systemd.sh`
+  optionally adds Linux autostart; `deploy/install-windows-task.ps1` optionally
+  adds Windows logon autostart. These adapters do not define application
+  capabilities or platform support.
 
 ## Conventions
 
@@ -60,6 +68,9 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
 - Web imports require the optional dependency set, including form parsing support; the core and CLI must remain usable without it.
 - Packaging tests build and inspect a real wheel so editable installs cannot
   conceal missing web runtime assets.
+- `tests/test_paths.py` locks the Windows/Linux platform defaults,
+  `GUSTO_HOME` precedence, and legacy-store transition. Do not remove the legacy
+  fallback without an explicit data migration path.
 - Web photo processing additionally requires Pillow from the `web` extra. It
   accepts at most one of the camera/library controls, limits input to 25 MB,
   applies orientation, resizes to a 1920 px maximum edge, and stores WebP without

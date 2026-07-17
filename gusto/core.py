@@ -22,19 +22,76 @@ import json
 import os
 import re
 import shutil
+import sys
 import uuid
 from dataclasses import dataclass, field, asdict, fields
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 
-# --- Paths (overridable via GUSTO_HOME, e.g. on the Pi) ----------------------
+# --- Paths (platform default, overridable via GUSTO_HOME) --------------------
+
+def default_data_root(platform_name: str | None = None,
+                      environ: dict[str, str] | None = None,
+                      home: str | Path | None = None) -> Path:
+    """Return the normal per-user data directory for the operating system."""
+    platform_name = platform_name or sys.platform
+    environ = os.environ if environ is None else environ
+    user_home = Path.home() if home is None else Path(home)
+
+    if platform_name.startswith("win"):
+        base = Path(environ.get("LOCALAPPDATA") or user_home / "AppData" / "Local")
+        return (base / "Gusto").expanduser().resolve()
+    if platform_name == "darwin":
+        return (user_home / "Library" / "Application Support" / "Gusto").resolve()
+    base = Path(environ.get("XDG_DATA_HOME") or user_home / ".local" / "share")
+    return (base / "gusto").expanduser().resolve()
+
+
+def _legacy_data_root() -> Path:
+    """Location used before Gusto adopted per-user platform data directories."""
+    return Path(__file__).resolve().parent.parent
+
+
+def contains_gusto_data(root: Path) -> bool:
+    """Return whether a directory contains a recognizable Gusto store."""
+    data = root / "data"
+    if any((data / name).is_file() for name in (
+            "recipes.json", "categories.json", "log.json",
+            "shopping_list.json", "favorites.json")):
+        return True
+    recipes = root / "recipes"
+    return recipes.is_dir() and next(recipes.glob("*.md"), None) is not None
+
+
+def _resolve_data_root(environ: dict[str, str] | None = None,
+                       default: Path | None = None,
+                       legacy: Path | None = None) -> tuple[Path, str, Path]:
+    environ = os.environ if environ is None else environ
+    configured = environ.get("GUSTO_HOME")
+    default = default_data_root(environ=environ) if default is None else default
+    if configured:
+        return Path(configured).expanduser().resolve(), "environment", default
+
+    legacy = _legacy_data_root() if legacy is None else legacy
+    if (legacy != default and contains_gusto_data(legacy)
+            and not contains_gusto_data(default)):
+        return legacy, "legacy", default
+    return default, "platform_default", default
+
 
 def project_root() -> Path:
-    env = os.environ.get("GUSTO_HOME")
-    if env:
-        return Path(env).expanduser()
-    return Path(__file__).resolve().parent.parent
+    return _resolve_data_root()[0]
+
+
+def storage_info() -> dict[str, str]:
+    """Explain the active data root for CLI users and installation tooling."""
+    path, source, default = _resolve_data_root()
+    return {
+        "path": os.fspath(path),
+        "source": source,
+        "platform_default": os.fspath(default),
+    }
 
 
 def recipes_dir() -> Path:

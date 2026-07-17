@@ -1,7 +1,8 @@
 # Gusto
 
-A small, **markdown-based recipe system** for self-hosting – made for a
-Raspberry Pi on the local network, reachable from any device.
+A small, **markdown-based recipe system** for self-hosting on **Windows or
+Linux**, reachable from any device on the local network. A Raspberry Pi is an
+important Linux deployment target, not a separate or exclusive edition.
 
 - **Recipes are plain Markdown files** in `recipes/` – directly readable and
   editable, no lock-in, no frontmatter.
@@ -24,37 +25,52 @@ The UI and the data fields are German; the code is English.
 
 ## Installation
 
-### Raspberry Pi (empfohlen)
+Gusto needs Python 3.10 or newer. The same Python installer creates an isolated
+environment and installs the complete web application on Windows and Linux.
 
-Nach dem Klonen reicht ein Befehl:
+### Windows
 
-```bash
-./deploy/install.sh
+```powershell
+py -3 install.py
+.\.venv\Scripts\gusto.exe serve
 ```
 
-Der Installer prüft Python 3.10+, legt `.venv` an, installiert die Web-UI,
-erzeugt die systemd-Unit mit dem **tatsächlichen Benutzer und Projektpfad** und
-startet Gusto. Er wird ohne `sudo` aufgerufen und fragt nur für die systemd-
-Schritte danach. Danach ist Gusto unter
-`http://<pi-hostname>.local:8000` erreichbar und startet beim Booten mit.
-
-Optional kann der Datenbestand getrennt vom Code liegen:
+### Linux
 
 ```bash
-./deploy/install.sh --data-dir /home/meinname/gusto-daten
-./deploy/install.sh --dry-run       # nur Pfade und systemd-Unit anzeigen
+python3 install.py
+./.venv/bin/gusto serve
 ```
 
-### Manuell / Entwicklung
+Then open `http://<computer-name>:8000` from another device in the LAN, or
+`http://localhost:8000` on the same computer. `python install.py --dry-run`
+shows the planned paths without changing anything; `--cli-only` omits the web
+dependencies.
+
+Recipe data is independent of the installation and lives in the normal user
+data directory:
+
+- Windows: `%LOCALAPPDATA%\Gusto`
+- Linux: `$XDG_DATA_HOME/gusto`, otherwise `~/.local/share/gusto`
+
+`gusto home` (`--json` for agents) shows the active location and why it was
+chosen. `GUSTO_HOME` still overrides it for a portable store or server setup.
+On the first normal install, existing checkout data is copied into an empty
+user directory without deleting the original. Outside the installer, an older
+checkout remains a compatibility fallback until the platform store contains
+data, so an update never appears to erase recipes.
+
+### Development checkout
 
 ```bash
 python -m venv .venv
-# Windows:        .venv\Scripts\activate
-# Linux/macOS/Pi: source .venv/bin/activate
-python -m pip install -e ".[web]"  # Web-UI; ohne [web] reicht es für die CLI
+# Windows: .venv\Scripts\activate
+# Linux:   source .venv/bin/activate
+python -m pip install -e ".[web]"
 ```
 
-The CLI runs without any dependencies: `python -m gusto list`
+Editable installs intentionally keep existing checkout data visible through the
+legacy fallback. The pure CLI has no third-party dependencies.
 
 ## Start the web UI
 
@@ -63,12 +79,13 @@ gusto serve                 # http://0.0.0.0:8000 – reachable across the LAN
 gusto serve --port 9000     # different port
 ```
 
-Then open `http://<machine-or-pi>:8000` in the browser.
+Then open `http://<machine>:8000` in the browser.
 
 ## CLI
 
 ```bash
 gusto list                          # all recipes
+gusto home                          # active user-data directory
 gusto search "linsen kokos"         # full-text incl. ingredients in the body
 gusto show spaghetti-carbonara
 gusto new "Title" --tags a,b --duration 25 --servings 2
@@ -105,22 +122,32 @@ gusto/cli.py       the CLI
 gusto/web.py       the FastAPI web app
 gusto/templates/   Jinja2 templates
 gusto/static/      CSS + JS
-deploy/             one-command Pi installer + systemd template
+install.py          cross-platform Windows/Linux installer
+deploy/             optional Linux systemd + Windows logon autostart
 scripts/            end-to-end tests of the web UI (Playwright)
 skill/gusto/        skill for operating it via the CLI (for agents)
 ```
 
-## Betrieb auf dem Raspberry Pi
+## Optional autostart
 
-`deploy/install.sh` richtet den Autostart ein. Die Datei
-`deploy/gusto.service` ist die dafür verwendete Vorlage und wird vom Installer
-mit Benutzer, Projektpfad, Python-Pfad und `GUSTO_HOME` befüllt; sie soll nicht
-unverändert nach `/etc/systemd/system/` kopiert werden. Für eine Installation
-ohne Autostart gibt es `./deploy/install.sh --no-service`.
+Installation and autostart are deliberately separate. Gusto works normally
+without either helper.
 
-Mit `GUSTO_HOME` bzw. `--data-dir` kann der Rezeptbestand (`recipes/` +
-`images/` + `data/`) getrennt vom Code liegen – praktisch für Backups als
-eigenes Git-Repo.
+Linux systems with systemd, including a Raspberry Pi:
+
+```bash
+./deploy/install-systemd.sh
+./deploy/install-systemd.sh --data-dir /srv/gusto --port 9000
+```
+
+Windows can start Gusto when the current user signs in:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy\install-windows-task.ps1
+```
+
+Both helpers call the same general installer first. They only add the
+platform-specific background-start mechanism.
 
 ## Tests
 
@@ -134,6 +161,7 @@ python tests/test_merge.py         # full-state sync merge rule
 python tests/test_recipes.py       # recipe/search/log/suggestion core logic
 python tests/test_cli.py           # agent-facing JSON CLI
 python tests/test_packaging.py     # fresh-install dependency declaration
+python tests/test_paths.py         # Windows/Linux data-directory contract
 ```
 
 ## Roadmap

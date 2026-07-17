@@ -5,6 +5,10 @@ Telegram-Weg ([telegram-shopping-handoff.md](telegram-shopping-handoff.md)),
 falls der zu aufwändig wird. Vorteil: **ist schon zur Hälfte gebaut** — die PWA
 existiert im Repo, diese Option macht sie auf dem Handy nur nutzbar.
 
+Die Anleitung beschreibt bewusst das Raspberry-Pi/Linux-Deployment. Gusto
+selbst und seine normale Installation bleiben unabhängig davon Windows- und
+Linux-fähig.
+
 ## Das Problem in einem Satz
 
 Die PWA (offline + „installieren") braucht einen **Service Worker**, und der

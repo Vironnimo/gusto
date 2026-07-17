@@ -9,10 +9,10 @@ diesen Kontrakt.
 `/shopping` ist server-gerendert und funktioniert online auch ohne JS
 (Phase 1). Phase 2 macht die Seite **offline-fähig**: ein Service-Worker cacht
 die App-Shell, und `shopping-client.js` rendert die Liste aus **localStorage**
-und hakt **optimistisch offline** ab. Sync gegen den Pi ist **Voll-State**:
+und hakt **optimistisch offline** ab. Sync gegen den Gusto-Server ist **Voll-State**:
 der Client schickt seinen kompletten lokalen Stand, der Server merged
 ("letzter gewinnt" pro `id` + Tombstones) und schickt den gemergten
-Gesamtstand zurück, den der Client übernimmt. Der Pi bleibt die einzige
+Gesamtstand zurück, den der Client übernimmt. Der Gusto-Server bleibt die einzige
 Quelle der Wahrheit.
 
 Lieblingsprodukte sind bewusst ein **separater, servergeführter Stammdaten-

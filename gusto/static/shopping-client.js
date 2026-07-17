@@ -1,7 +1,7 @@
 // shopping-client.js — offline-capable client for the Gusto shopping list.
 //
-// Renders the list from localStorage (local source of truth: the Pi), mutates
-// optimistically offline and syncs in the background via a full-state POST to
+// Renders the list from localStorage, mutates optimistically offline and syncs
+// in the background with the durable Gusto server via a full-state POST to
 // /api/shopping/sync. Uses exactly the same CSS classes as the server-rendered
 // version in shopping.html — no extra CSS needed.
 //
