@@ -31,7 +31,9 @@ and every CLI command accepts `--json`. MCP is explicitly out of scope.
 
 Create a virtual environment and install `-e ".[web]"`; run `gusto serve` for
 the LAN web app. `GUSTO_HOME` relocates the recipes and data directories. Web
-browser tests always use throwaway data through this environment variable.
+browser tests always use throwaway data through this environment variable. On
+Linux/Raspberry Pi, `deploy/install.sh` performs the environment, web install,
+data-directory, and systemd setup using the actual user and checkout path.
 
 ## Testing
 
@@ -70,6 +72,9 @@ Quality gates:
   camera and image-library actions. Recipe images are fully manageable in the
   web UI; all browser photo uploads are converted to metadata-free WebP with a
   1920 px maximum edge, while CLI image imports remain unchanged.
+- 2026-07-17: Built wheels include all templates, static assets, manifest, and
+  PWA icons. The Pi installer generates a systemd unit from the actual user,
+  project path, and optional data path instead of assuming `/home/pi/gusto`.
 
 ## Domain Maps
 

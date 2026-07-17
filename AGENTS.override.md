@@ -70,6 +70,7 @@ categories. Tags without a category are reported by `gusto check` as
 ```bash
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[web]"        # the pure CLI needs no dependencies
+./deploy/install.sh             # one-command Pi install incl. systemd autostart
 gusto serve                   # web on 0.0.0.0:8000 (across the LAN)
 python -m gusto <command>     # CLI, if not installed
 ```
@@ -169,7 +170,7 @@ clear` if it should also remove bought items). Full round-trip in the skill
 - `gusto/web.py` — FastAPI app (server-rendered, Jinja2)
 - `gusto/templates/`, `gusto/static/` — UI + CSS/JS
 - `scripts/browser_check.py` — end-to-end browser test (Playwright)
-- `deploy/gusto.service` — systemd unit for the Pi
+- `deploy/install.sh`, `deploy/gusto.service` — one-command Pi setup + systemd template
 - `skill/gusto/` — skill (SKILL.md + `references/cli.md`) for operating the
   system via the CLI; mirrors "Usage" / "Typical tasks" in the agent guides — **keep every copy in sync** (principle 8).
 

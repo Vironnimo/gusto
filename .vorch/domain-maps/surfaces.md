@@ -31,9 +31,16 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
 
 ## Packaging & Runtime
 
-- `pyproject.toml` declares project and package `gusto`, a `gusto` console script, no default dependencies, and optional web dependencies under `.[web]`.
+- `pyproject.toml` declares project and package `gusto`, a `gusto` console script, no default dependencies, optional web dependencies under `.[web]`, and packages the templates, CSS/JavaScript, manifest, and PWA icons required by an installed web app.
 - `GUSTO_HOME` relocates the complete runtime store (`recipes/`, `images/`, and `data/`). Without it, the store is resolved beside the source package.
-- `gusto serve` imports Uvicorn only when invoked and starts `gusto.web:app`. The systemd example runs the same module entry point from `/home/pi/gusto`.
+- `gusto serve` imports Uvicorn only when invoked and starts `gusto.web:app`.
+  The systemd template runs the same module entry point from the installer-
+  supplied virtual environment and working directory.
+- `deploy/install.sh` is the supported one-command Linux/Pi setup. It creates
+  `.venv`, installs `.[web]`, creates the data directories, renders
+  `deploy/gusto.service` with the actual user and absolute paths, and enables
+  the service; `--data-dir`, `--no-service`, and `--dry-run` cover alternate
+  data placement, manual startup, and inspection.
 
 ## Conventions
 
@@ -47,6 +54,8 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
 ## Constraints & Gotchas
 
 - Web imports require the optional dependency set, including form parsing support; the core and CLI must remain usable without it.
+- Packaging tests build and inspect a real wheel so editable installs cannot
+  conceal missing web runtime assets.
 - Web photo processing additionally requires Pillow from the `web` extra. It
   accepts at most one of the camera/library controls, limits input to 25 MB,
   applies orientation, resizes to a 1920 px maximum edge, and stores WebP without

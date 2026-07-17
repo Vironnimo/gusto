@@ -24,11 +24,34 @@ The UI and the data fields are German; the code is English.
 
 ## Installation
 
+### Raspberry Pi (empfohlen)
+
+Nach dem Klonen reicht ein Befehl:
+
+```bash
+./deploy/install.sh
+```
+
+Der Installer prüft Python 3.10+, legt `.venv` an, installiert die Web-UI,
+erzeugt die systemd-Unit mit dem **tatsächlichen Benutzer und Projektpfad** und
+startet Gusto. Er wird ohne `sudo` aufgerufen und fragt nur für die systemd-
+Schritte danach. Danach ist Gusto unter
+`http://<pi-hostname>.local:8000` erreichbar und startet beim Booten mit.
+
+Optional kann der Datenbestand getrennt vom Code liegen:
+
+```bash
+./deploy/install.sh --data-dir /home/meinname/gusto-daten
+./deploy/install.sh --dry-run       # nur Pfade und systemd-Unit anzeigen
+```
+
+### Manuell / Entwicklung
+
 ```bash
 python -m venv .venv
 # Windows:        .venv\Scripts\activate
 # Linux/macOS/Pi: source .venv/bin/activate
-pip install -e ".[web]"     # with web UI; without [web] the pure CLI is enough
+python -m pip install -e ".[web]"  # Web-UI; ohne [web] reicht es für die CLI
 ```
 
 The CLI runs without any dependencies: `python -m gusto list`
@@ -81,25 +104,22 @@ gusto/cli.py       the CLI
 gusto/web.py       the FastAPI web app
 gusto/templates/   Jinja2 templates
 gusto/static/      CSS + JS
-deploy/             systemd unit for the Raspberry Pi
+deploy/             one-command Pi installer + systemd template
 scripts/            end-to-end tests of the web UI (Playwright)
 skill/gusto/        skill for operating it via the CLI (for agents)
 ```
 
-## On the Raspberry Pi (autostart)
+## Betrieb auf dem Raspberry Pi
 
-1. Copy the project to e.g. `/home/pi/gusto`, create a venv,
-   `pip install -e ".[web]"`.
-2. Adjust `deploy/gusto.service` to your paths and install it:
-   ```bash
-   sudo cp deploy/gusto.service /etc/systemd/system/
-   sudo systemctl enable --now gusto
-   ```
-3. Reachable at `http://<pi-hostname>.local:8000`.
+`deploy/install.sh` richtet den Autostart ein. Die Datei
+`deploy/gusto.service` ist die dafür verwendete Vorlage und wird vom Installer
+mit Benutzer, Projektpfad, Python-Pfad und `GUSTO_HOME` befüllt; sie soll nicht
+unverändert nach `/etc/systemd/system/` kopiert werden. Für eine Installation
+ohne Autostart gibt es `./deploy/install.sh --no-service`.
 
-With the environment variable `GUSTO_HOME` the recipe store (`recipes/` +
-`images/` + `data/`) can be placed anywhere – handy for backing it up as its
-own git repo.
+Mit `GUSTO_HOME` bzw. `--data-dir` kann der Rezeptbestand (`recipes/` +
+`images/` + `data/`) getrennt vom Code liegen – praktisch für Backups als
+eigenes Git-Repo.
 
 ## Tests
 

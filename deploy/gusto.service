@@ -5,12 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# --- an deine Umgebung anpassen ---
-User=pi
-WorkingDirectory=/home/pi/gusto
-ExecStart=/home/pi/gusto/.venv/bin/python -m gusto serve --host 0.0.0.0 --port 8000
-# Optional: Daten woanders ablegen (sonst neben dem Code)
-# Environment=GUSTO_HOME=/home/pi/gusto-daten
+User=@GUSTO_USER@
+WorkingDirectory="@GUSTO_PROJECT@"
+Environment="GUSTO_HOME=@GUSTO_HOME@"
+ExecStart="@GUSTO_PYTHON@" -m gusto serve --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=3
 
