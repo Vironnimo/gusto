@@ -10,9 +10,10 @@ on Windows or `~/.local/opt/gusto/bin/gusto` on Linux. Every command accepts
 ### Reading
 
 - `home [--json]`
-  Show the active store root and whether it came from `GUSTO_HOME`, the normal
-  platform user-data directory, or the compatibility fallback for an existing
-  checkout. JSON also includes `platform_default`.
+  Show the active store root and whether it came from `GUSTO_HOME`, the
+  instance's `gusto.settings.json`, the normal platform user-data directory, or
+  the compatibility fallback. JSON also includes `platform_default` and, when
+  present, `settings_path`.
 - `list [--tag T ...] [--max-time N] [--json]`
   List/filter recipes. `--tag` is repeatable **and** comma-separated
   (`--tag a --tag b` ≡ `--tag a,b`). `--max-time` caps `duration_min`.
@@ -220,9 +221,11 @@ prints one such object or `null`; it does not create an alias automatically.
 
 ## Data files
 
-Resolve the root with `gusto home --json`. Normal installs use
-`%LOCALAPPDATA%\Gusto` on Windows or `$XDG_DATA_HOME/gusto` /
-`~/.local/share/gusto` on Linux; `GUSTO_HOME` is the explicit override.
+Resolve the root with `gusto home --json`. Each runtime owns an adjacent
+`gusto.settings.json`; the checkout selects the platform data sibling
+`gusto-dev`, while installed releases select their production store. A relative
+`data_dir` is resolved beside the platform default. `GUSTO_HOME` is the explicit
+override used by isolated runs and tests.
 
 | File | Content |
 |---|---|

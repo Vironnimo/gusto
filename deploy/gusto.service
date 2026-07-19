@@ -7,7 +7,6 @@ Wants=network-online.target
 Type=simple
 User=@GUSTO_USER@
 WorkingDirectory="@GUSTO_HOME@"
-Environment="GUSTO_HOME=@GUSTO_HOME@"
 ExecStart="@GUSTO_PYTHON@" -m gusto serve --host 0.0.0.0 --port @GUSTO_PORT@
 Restart=on-failure
 RestartSec=3

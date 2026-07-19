@@ -123,8 +123,10 @@ stays the source of truth. The keyboard has **two kinds of buttons**:
 
 ## Data model
 
-- `gusto home --json` reports the root containing the following paths. Normal
-  installs use the Windows/Linux user-data directory; `GUSTO_HOME` overrides it.
+- `gusto home --json` reports the root containing the following paths and the
+  instance settings that selected it. The checkout uses the platform data
+  sibling `gusto-dev`; an installed release uses its configured production
+  store. `GUSTO_HOME` overrides both for isolated runs and tests.
 - `recipes/<slug>.md` — recipe content, no frontmatter.
 - `data/recipes.json` — metadata including `images[]` and `cover_image_id`.
 - `images/<slug>/` — original image files copied into and owned by Gusto.

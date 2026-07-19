@@ -7,6 +7,7 @@ dependency list is checked directly as well.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -39,10 +40,12 @@ assert windows_autostart.is_file()
 assert "User=pi" not in service_template
 assert "/home/pi/gusto" not in service_template
 assert "@GUSTO_PROJECT@" not in service_template
+assert 'Environment="GUSTO_HOME=' not in service_template
 for marker in ["@GUSTO_USER@", "@GUSTO_HOME@", "@GUSTO_PYTHON@", "@GUSTO_PORT@"]:
     assert marker in service_template
 assert 'project_dir/.venv' not in linux_autostart_text
 assert 'Join-Path $ProjectDir ".venv"' not in windows_autostart_text
+assert "$escapedData" not in windows_autostart_text
 assert "--install-dir" in linux_autostart_text
 assert "$InstallDir" in windows_autostart_text
 
@@ -89,6 +92,16 @@ with tempfile.TemporaryDirectory(prefix="gusto-migration-test-") as migration_di
     (destination / "recipes" / "suppe.md").write_text("changed\n", encoding="utf-8")
     assert not gusto_installer.migrate_checkout_data(source, destination)
     assert (destination / "recipes" / "suppe.md").read_text(encoding="utf-8") == "changed\n"
+
+with tempfile.TemporaryDirectory(prefix="gusto-settings-test-") as settings_dir:
+    settings_root = Path(settings_dir)
+    data_root = settings_root / "user-data"
+    settings_path = gusto_installer.write_instance_settings(
+        settings_root / "application", data_root,
+    )
+    assert json.loads(settings_path.read_text(encoding="utf-8")) == {
+        "data_dir": os.fspath(data_root.resolve()),
+    }
 
 optional_dependencies = re.search(
     r"\[project\.optional-dependencies\](.*?)(?=\n\[|\Z)", manifest, re.DOTALL
@@ -156,6 +169,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as release_dir:
     assert any(name.endswith("/deploy/install-systemd.sh") for name in bundled)
     assert any(name.endswith("/deploy/install-windows-task.ps1") for name in bundled)
     assert sum(name.endswith(".whl") for name in bundled) == 1
+    assert not any(name.endswith("/gusto.settings.json") for name in bundled)
     with zipfile.ZipFile(archives[0]) as archive:
         systemd_script = next(
             info for info in archive.infolist()

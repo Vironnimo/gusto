@@ -71,11 +71,9 @@ foreach ($name in @("recipes", "images", "data")) {
 }
 
 $launcher = Join-Path $DataDir "start-gusto.ps1"
-$escapedData = $DataDir.Replace("'", "''")
 $escapedPython = $VenvPython.Replace("'", "''")
 @(
     '$ErrorActionPreference = "Stop"'
-    "`$env:GUSTO_HOME = '$escapedData'"
     "& '$escapedPython' -m gusto serve --host 0.0.0.0 --port $Port"
 ) | Set-Content -LiteralPath $launcher -Encoding utf8
 

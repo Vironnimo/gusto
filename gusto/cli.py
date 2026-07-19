@@ -89,11 +89,14 @@ def cmd_home(args):
         return
     labels = {
         "environment": "GUSTO_HOME",
+        "settings": "Instanz-Settings",
         "legacy": "bestehender Checkout (Kompatibilitätsmodus)",
         "platform_default": "Standard-Benutzerdatenordner",
     }
     print(info["path"])
     print(f"  Quelle: {labels.get(info['source'], info['source'])}")
+    if info["source"] == "settings":
+        print(f"  Settings: {info['settings_path']}")
     if info["source"] == "legacy":
         print(f"  Neuer Plattformstandard: {info['platform_default']}")
 

@@ -20,8 +20,9 @@ general installation and supported-platform contracts owned here.
 The installed application command is `gusto`, backed by `gusto.cli:main`; `python -m gusto` reaches the same entry point. Every command accepts `--json`, and the CLI converts expected core `ValueError` failures into non-zero command exits.
 
 `gusto home` reports the active store root, its resolution source, and the
-normal platform default. Installation and deployment tooling uses this contract
-instead of inferring data paths from the checkout.
+normal platform default. It also reports the instance `gusto.settings.json`
+when present. Installation and deployment tooling uses this contract instead
+of inferring data paths from the checkout.
 
 `gusto set` can remove optional duration or serving metadata with
 `--clear-duration` and `--clear-servings`; these are mutually exclusive with
@@ -49,8 +50,11 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
   checkout and the data store. `install.py --venv` overrides this location.
 - Normal stores live under `%LOCALAPPDATA%\Gusto` on Windows and
   `$XDG_DATA_HOME/gusto` or `~/.local/share/gusto` on Linux. `GUSTO_HOME` is the
-  explicit override. If the platform store is empty but the old package-parent
-  location already contains Gusto data, the legacy location remains active.
+  highest-precedence explicit override. Each runtime otherwise reads its own
+  `gusto.settings.json`; relative `data_dir` values resolve beside the platform
+  default. The checkout selects `gusto-dev`, while installed settings select the
+  production store. Without settings, an existing legacy checkout remains a
+  compatibility fallback.
 - `gusto serve` imports Uvicorn only when invoked and starts `gusto.web:app`.
   Both platform deployment helpers run the installed module from the normal
   per-user application directory.
@@ -76,8 +80,8 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
 - Packaging tests build and inspect a real wheel so editable installs cannot
   conceal missing web runtime assets.
 - `tests/test_paths.py` locks the Windows/Linux platform defaults,
-  `GUSTO_HOME` precedence, and legacy-store transition. Do not remove the legacy
-  fallback without an explicit data migration path.
+  per-instance settings, `GUSTO_HOME` precedence, and legacy-store transition.
+  Do not remove the legacy fallback without an explicit data migration path.
 - Web photo processing additionally requires Pillow from the `web` extra. It
   accepts at most one of the camera/library controls, limits input to 25 MB,
   applies orientation, resizes to a 1920 px maximum edge, and stores WebP without

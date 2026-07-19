@@ -76,11 +76,12 @@ python install.py --cli-only   # the pure CLI needs no dependencies
 python -m gusto <command>      # CLI during development
 ```
 
-All commands understand `--json` (machine-readable, for agents). By default the
-store lives under `%LOCALAPPDATA%\Gusto` on Windows or
-`$XDG_DATA_HOME/gusto` / `~/.local/share/gusto` on Linux. `GUSTO_HOME` relocates
-the full store (`recipes/` + `images/` + `data/`); `gusto home --json` reports
-the active location and resolution source.
+All commands understand `--json` (machine-readable, for agents). Each runtime
+uses its adjacent `gusto.settings.json`: the checkout selects the platform data
+sibling `gusto-dev`, while the installer writes the production data path beside
+the installed app. `GUSTO_HOME` overrides settings for isolated tests or an
+explicit portable store. `gusto home --json` reports the active path, source,
+platform default, and settings file.
 
 ```
 gusto list   [--tag T ...] [--max-time N]    Filter; --tag repeatable/comma-separated
@@ -175,6 +176,7 @@ clear` if it should also remove bought items). Full round-trip in the skill
 - `gusto/templates/`, `gusto/static/` — UI + CSS/JS
 - `scripts/browser_check.py` — end-to-end browser test (Playwright)
 - `install.py` — cross-platform Windows/Linux installation
+- `gusto.settings.json` — development instance data selection (`gusto-dev`)
 - `scripts/build_release.py` — builds the transferable wheel + installer ZIP
 - `deploy/install-systemd.sh`, `deploy/install-windows-task.ps1` — optional platform autostart
 - `skill/gusto/` — skill (SKILL.md + `references/cli.md`) for operating the
@@ -198,10 +200,10 @@ clear` if it should also remove bought items). Full round-trip in the skill
   — `request` MUST be the first argument.
 - Windows console (cp1252): stdout in CLI/tests is switched to UTF-8, otherwise
   characters like "✓" break.
-- Normal installs use per-user platform data directories. Existing checkout
-  data is copied there once by `install.py` when the destination is empty and
-  otherwise remains visible through a legacy fallback; `GUSTO_HOME` always
-  wins explicitly.
+- Every source or installed runtime owns instance settings for its data path.
+  Relative names resolve beside the platform data default. The checkout uses
+  `gusto-dev`; installed production uses the normal platform data directory;
+  `GUSTO_HOME` always wins explicitly.
 
 ## Design
 

@@ -66,6 +66,13 @@ Application and data stay separate:
 - Windows data: `%LOCALAPPDATA%\Gusto`
 - Linux data: `$XDG_DATA_HOME/gusto`, otherwise `~/.local/share/gusto`
 
+Every instance owns a `gusto.settings.json` beside its application runtime. The
+installer writes the production data path into the installed application
+directory. The development checkout carries its own settings file with
+`"data_dir": "gusto-dev"`; relative names resolve beside the normal platform
+data directory. Development therefore uses `%LOCALAPPDATA%\gusto-dev` on
+Windows or `~/.local/share/gusto-dev` on Linux without a different start command.
+
 `gusto home` (`--json` for agents) shows the active location and why it was
 chosen. `GUSTO_HOME` still overrides it for a portable store or server setup.
 When the installer runs directly from a source checkout, existing checkout data
@@ -82,8 +89,8 @@ python -m venv .venv
 python -m pip install -e ".[web]"
 ```
 
-Editable installs intentionally keep existing checkout data visible through the
-legacy fallback. The pure CLI has no third-party dependencies.
+The checkout's `gusto.settings.json` keeps manual development isolated from
+production data. The pure CLI has no third-party dependencies.
 
 ## Start the web UI
 
@@ -136,6 +143,7 @@ gusto/web.py       the FastAPI web app
 gusto/templates/   Jinja2 templates
 gusto/static/      CSS + JS
 install.py          cross-platform Windows/Linux installer
+gusto.settings.json development instance data selection
 deploy/             optional Linux systemd + Windows logon autostart
 scripts/build_release.py  build the transferable release archive
 scripts/            end-to-end tests of the web UI (Playwright)

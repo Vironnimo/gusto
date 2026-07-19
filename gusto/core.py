@@ -29,7 +29,11 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 
-# --- Paths (platform default, overridable via GUSTO_HOME) --------------------
+# --- Paths (instance settings, overridable via GUSTO_HOME) ------------------
+
+SETTINGS_FILENAME = "gusto.settings.json"
+_AUTO_SETTINGS = object()
+
 
 def default_data_root(platform_name: str | None = None,
                       environ: dict[str, str] | None = None,
@@ -53,6 +57,42 @@ def _legacy_data_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def default_settings_path(package_root: str | Path | None = None,
+                          prefix: str | Path | None = None) -> Path:
+    """Return the settings file belonging to this source or installed instance."""
+    package_root = (_legacy_data_root() if package_root is None
+                    else Path(package_root))
+    if (package_root / "pyproject.toml").is_file():
+        return package_root / SETTINGS_FILENAME
+    install_root = Path(sys.prefix) if prefix is None else Path(prefix)
+    return install_root / SETTINGS_FILENAME
+
+
+def _settings_data_root(settings_path: Path, default: Path) -> Path | None:
+    if not settings_path.is_file():
+        return None
+    try:
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(
+            f"Ungültige Gusto-Settings in '{settings_path}': {error}"
+        ) from error
+    if not isinstance(settings, dict):
+        raise ValueError(
+            f"Ungültige Gusto-Settings in '{settings_path}': JSON-Objekt erwartet."
+        )
+    configured = settings.get("data_dir")
+    if not isinstance(configured, str) or not configured.strip():
+        raise ValueError(
+            f"Ungültige Gusto-Settings in '{settings_path}': "
+            "'data_dir' muss ein nicht-leerer Text sein."
+        )
+    configured_path = Path(os.path.expandvars(configured)).expanduser()
+    if not configured_path.is_absolute():
+        configured_path = default.parent / configured_path
+    return configured_path.resolve()
+
+
 def contains_gusto_data(root: Path) -> bool:
     """Return whether a directory contains a recognizable Gusto store."""
     data = root / "data"
@@ -66,12 +106,21 @@ def contains_gusto_data(root: Path) -> bool:
 
 def _resolve_data_root(environ: dict[str, str] | None = None,
                        default: Path | None = None,
-                       legacy: Path | None = None) -> tuple[Path, str, Path]:
+                       legacy: Path | None = None,
+                       settings_path: Path | None | object = _AUTO_SETTINGS,
+                       ) -> tuple[Path, str, Path]:
     environ = os.environ if environ is None else environ
     configured = environ.get("GUSTO_HOME")
     default = default_data_root(environ=environ) if default is None else default
     if configured:
         return Path(configured).expanduser().resolve(), "environment", default
+
+    if settings_path is _AUTO_SETTINGS:
+        settings_path = default_settings_path()
+    if settings_path is not None:
+        settings_root = _settings_data_root(Path(settings_path), default)
+        if settings_root is not None:
+            return settings_root, "settings", default
 
     legacy = _legacy_data_root() if legacy is None else legacy
     if (legacy != default and contains_gusto_data(legacy)
@@ -87,11 +136,15 @@ def project_root() -> Path:
 def storage_info() -> dict[str, str]:
     """Explain the active data root for CLI users and installation tooling."""
     path, source, default = _resolve_data_root()
-    return {
+    info = {
         "path": os.fspath(path),
         "source": source,
         "platform_default": os.fspath(default),
     }
+    settings_path = default_settings_path()
+    if settings_path.is_file():
+        info["settings_path"] = os.fspath(settings_path)
+    return info
 
 
 def recipes_dir() -> Path:

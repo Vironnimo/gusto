@@ -36,9 +36,11 @@ need no repository access. Normal application installs use
 `%LOCALAPPDATA%\Programs\Gusto` on Windows or `~/.local/opt/gusto` on Linux; an
 editable `-e ".[web]"` checkout install remains available for development.
 Stores remain separate under `%LOCALAPPDATA%\Gusto` or the XDG user-data
-directory. `GUSTO_HOME` overrides the store; `install.py` copies existing
-checkout data once into an empty platform store, while core retains a
-compatibility fallback. Browser tests always use throwaway data through
+directory. Every source or installed runtime owns an adjacent
+`gusto.settings.json`; the checkout selects the platform-data sibling
+`gusto-dev`, while the installer records the production data path beside the
+installed runtime. `GUSTO_HOME` overrides instance settings for tests and
+explicit portable stores. Browser tests always use throwaway data through
 `GUSTO_HOME`. Linux systemd and Windows logon autostart use the installed
 runtime and are optional deployment helpers under `deploy/`.
 
@@ -93,6 +95,10 @@ Quality gates:
   with a wheel and standalone installer. Application runtimes live outside the
   source checkout; bundled Windows/systemd adapters point at that installed
   runtime, while recipe and shopping data remain in the platform data store.
+- 2026-07-19: Each runtime reads its own `gusto.settings.json` for the data
+  directory. The checkout uses the separate `gusto-dev` store; installers write
+  the production store into the installed runtime. `GUSTO_HOME` remains the
+  highest-precedence override for isolated tests.
 
 ## Domain Maps
 

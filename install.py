@@ -12,6 +12,7 @@ import venv
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+SETTINGS_FILENAME = "gusto.settings.json"
 RECOGNIZABLE_DATA_FILES = (
     "recipes.json", "categories.json", "log.json",
     "shopping_list.json", "favorites.json",
@@ -76,6 +77,20 @@ def migrate_checkout_data(source: Path, destination: Path) -> bool:
         if source_dir.is_dir():
             shutil.copytree(source_dir, destination / name, dirs_exist_ok=True)
     return True
+
+
+def write_instance_settings(install_dir: Path, data_root: Path) -> Path:
+    """Persist the data directory beside the installed application runtime."""
+    settings_path = install_dir / SETTINGS_FILENAME
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = settings_path.with_suffix(settings_path.suffix + ".tmp")
+    content = json.dumps(
+        {"data_dir": os.fspath(data_root.resolve())},
+        ensure_ascii=False, indent=2,
+    ) + "\n"
+    temporary_path.write_text(content, encoding="utf-8")
+    os.replace(temporary_path, settings_path)
+    return settings_path
 
 
 def installation_source(root: Path = ROOT) -> tuple[Path, str]:
@@ -170,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
         return home_result.returncode
     data_root = Path(json.loads(home_result.stdout)["path"])
     try:
+        settings_path = write_instance_settings(venv_dir, data_root)
         source_has_data = contains_gusto_data(ROOT)
         destination_has_data = contains_gusto_data(data_root)
         migrated = migrate_checkout_data(ROOT, data_root)
@@ -182,6 +198,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print()
     print("Gusto ist installiert.")
+    print(f"Settings: {settings_path}")
     print(f"Daten: {data_root}")
     if migrated:
         print("Bestehende Checkout-Daten wurden dorthin kopiert; das Original bleibt erhalten.")
