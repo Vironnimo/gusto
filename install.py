@@ -1,4 +1,4 @@
-"""Cross-platform Gusto installer for Windows, Linux, and macOS."""
+"""Install Gusto from a source checkout or a self-contained release bundle."""
 from __future__ import annotations
 
 import argparse
@@ -11,10 +11,29 @@ import sys
 import venv
 from pathlib import Path
 
-from gusto import core
-
-
 ROOT = Path(__file__).resolve().parent
+RECOGNIZABLE_DATA_FILES = (
+    "recipes.json", "categories.json", "log.json",
+    "shopping_list.json", "favorites.json",
+)
+
+
+def default_install_dir(platform_name: str | None = None,
+                        environ: dict[str, str] | None = None,
+                        home: str | Path | None = None) -> Path:
+    """Return the per-user application directory for the operating system."""
+    platform_name = platform_name or sys.platform
+    environ = os.environ if environ is None else environ
+    user_home = Path.home() if home is None else Path(home)
+
+    if platform_name.startswith("win"):
+        base = Path(environ.get("LOCALAPPDATA")
+                    or user_home / "AppData" / "Local")
+        return (base / "Programs" / "Gusto").expanduser().resolve()
+    if platform_name == "darwin":
+        return (user_home / "Library" / "Application Support"
+                / "Gusto" / "app").resolve()
+    return (user_home / ".local" / "opt" / "gusto").resolve()
 
 
 def venv_python(venv_dir: Path, platform_name: str | None = None) -> Path:
@@ -37,12 +56,20 @@ def display_command(arguments: list[str]) -> str:
     return shlex.join(arguments)
 
 
+def contains_gusto_data(root: Path) -> bool:
+    """Return whether a directory contains a recognizable Gusto store."""
+    data = root / "data"
+    if any((data / name).is_file() for name in RECOGNIZABLE_DATA_FILES):
+        return True
+    recipes = root / "recipes"
+    return recipes.is_dir() and next(recipes.glob("*.md"), None) is not None
+
+
 def migrate_checkout_data(source: Path, destination: Path) -> bool:
     """Copy an old checkout store once, without overwriting an active store."""
     if source.resolve() == destination.resolve():
         return False
-    if (not core.contains_gusto_data(source)
-            or core.contains_gusto_data(destination)):
+    if not contains_gusto_data(source) or contains_gusto_data(destination):
         return False
     for name in ("recipes", "images", "data"):
         source_dir = source / name
@@ -51,13 +78,28 @@ def migrate_checkout_data(source: Path, destination: Path) -> bool:
     return True
 
 
+def installation_source(root: Path = ROOT) -> tuple[Path, str]:
+    """Find the bundled wheel, falling back to a complete source checkout."""
+    wheels = sorted(root.glob("gusto-*.whl"))
+    if len(wheels) > 1:
+        names = ", ".join(wheel.name for wheel in wheels)
+        raise ValueError(f"mehrere Gusto-Wheels gefunden: {names}")
+    if wheels:
+        return wheels[0], "Release-Paket"
+    if (root / "pyproject.toml").is_file() and (root / "gusto").is_dir():
+        return root, "Projekt-Checkout"
+    raise ValueError(
+        "weder ein Gusto-Wheel noch ein vollständiger Projekt-Checkout gefunden"
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Gusto plattformübergreifend in einer virtuellen Umgebung installieren.",
     )
     parser.add_argument(
-        "--venv", type=Path, default=ROOT / ".venv",
-        help="Ziel der virtuellen Umgebung (Standard: .venv im Projektordner).",
+        "--venv", type=Path,
+        help="Installationsordner (Standard: plattformüblicher Benutzer-App-Ordner).",
     )
     parser.add_argument(
         "--cli-only", action="store_true",
@@ -80,17 +122,27 @@ def main(argv: list[str] | None = None) -> int:
         print("Fehler: Gusto braucht Python 3.10 oder neuer.", file=sys.stderr)
         return 1
 
-    venv_dir = args.venv.expanduser().resolve()
+    default_venv = ROOT / ".venv" if args.editable else default_install_dir()
+    venv_dir = (args.venv or default_venv).expanduser().resolve()
     python = venv_python(venv_dir)
     command = gusto_command(venv_dir)
-    project = os.fspath(ROOT) + ("" if args.cli_only else "[web]")
+    try:
+        source, source_kind = installation_source()
+    except ValueError as error:
+        print(f"Fehler: {error}.", file=sys.stderr)
+        return 1
+    if args.editable and source_kind == "Release-Paket":
+        print("Fehler: --editable ist nur in einem Projekt-Checkout möglich.",
+              file=sys.stderr)
+        return 2
+    project = os.fspath(source) + ("" if args.cli_only else "[web]")
     install = [os.fspath(python), "-m", "pip", "install"]
     if args.editable:
         install.append("--editable")
     install.append(project)
 
-    print(f"Projekt: {ROOT}")
-    print(f"Umgebung: {venv_dir}")
+    print(f"Quelle: {source_kind} ({source})")
+    print(f"Installation: {venv_dir}")
     print("Variante: " + ("CLI" if args.cli_only else "CLI + Web"))
     if args.dry_run:
         print("Geplant:")
@@ -118,8 +170,8 @@ def main(argv: list[str] | None = None) -> int:
         return home_result.returncode
     data_root = Path(json.loads(home_result.stdout)["path"])
     try:
-        source_has_data = core.contains_gusto_data(ROOT)
-        destination_has_data = core.contains_gusto_data(data_root)
+        source_has_data = contains_gusto_data(ROOT)
+        destination_has_data = contains_gusto_data(data_root)
         migrated = migrate_checkout_data(ROOT, data_root)
         for name in ("recipes", "images", "data"):
             (data_root / name).mkdir(parents=True, exist_ok=True)

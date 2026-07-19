@@ -30,13 +30,17 @@ and every CLI command accepts `--json`. MCP is explicitly out of scope.
 
 ## Development
 
-`install.py` performs the normal Windows/Linux installation into `.venv`; an
-editable `-e ".[web]"` install remains available for development. Normal stores
-use `%LOCALAPPDATA%\Gusto` on Windows or the XDG user-data directory on Linux.
-`GUSTO_HOME` overrides the store; `install.py` copies existing checkout data
-once into an empty platform store, while core retains a compatibility fallback.
-Browser tests always use throwaway data through `GUSTO_HOME`. Linux systemd and
-Windows logon autostart are optional deployment helpers under `deploy/`.
+`scripts/build_release.py` creates a transferable ZIP containing a regular
+wheel, standalone `install.py`, and both optional autostart adapters; targets
+need no repository access. Normal application installs use
+`%LOCALAPPDATA%\Programs\Gusto` on Windows or `~/.local/opt/gusto` on Linux; an
+editable `-e ".[web]"` checkout install remains available for development.
+Stores remain separate under `%LOCALAPPDATA%\Gusto` or the XDG user-data
+directory. `GUSTO_HOME` overrides the store; `install.py` copies existing
+checkout data once into an empty platform store, while core retains a
+compatibility fallback. Browser tests always use throwaway data through
+`GUSTO_HOME`. Linux systemd and Windows logon autostart use the installed
+runtime and are optional deployment helpers under `deploy/`.
 
 ## Testing
 
@@ -85,6 +89,10 @@ Quality gates:
 - 2026-07-17: Optional recipe duration/servings can be removed in web and CLI;
   recipe titles and numeric metadata are validated in core. Malformed shopping
   sync states are rejected with HTTP 400 before persistence.
+- 2026-07-19: Private-repository deployment uses a transferable release ZIP
+  with a wheel and standalone installer. Application runtimes live outside the
+  source checkout; bundled Windows/systemd adapters point at that installed
+  runtime, while recipe and shopping data remain in the platform data store.
 
 ## Domain Maps
 

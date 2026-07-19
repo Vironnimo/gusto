@@ -25,40 +25,53 @@ The UI and the data fields are German; the code is English.
 
 ## Installation
 
-Gusto needs Python 3.10 or newer. The same Python installer creates an isolated
-environment and installs the complete web application on Windows and Linux.
+Gusto needs Python 3.10 or newer. A transferable release archive contains a
+regular Python wheel, the standalone installer, and the optional autostart
+adapters. The target computer needs neither the private repository nor GitHub
+credentials.
+
+Build the archive once in a development checkout:
+
+```powershell
+py -3 scripts/build_release.py
+```
+
+Copy `dist/gusto-<version>-release.zip` to the Windows or Linux target and
+extract it. Run the following commands inside that extracted folder.
 
 ### Windows
 
 ```powershell
 py -3 install.py
-.\.venv\Scripts\gusto.exe serve
+& "$env:LOCALAPPDATA\Programs\Gusto\Scripts\gusto.exe" serve
 ```
 
 ### Linux
 
 ```bash
 python3 install.py
-./.venv/bin/gusto serve
+"$HOME/.local/opt/gusto/bin/gusto" serve
 ```
 
 Then open `http://<computer-name>:8000` from another device in the LAN, or
 `http://localhost:8000` on the same computer. `python install.py --dry-run`
 shows the planned paths without changing anything; `--cli-only` omits the web
-dependencies.
+dependencies. The same installer can run directly from a complete source
+checkout, but the release archive is the normal deployment artifact.
 
-Recipe data is independent of the installation and lives in the normal user
-data directory:
+Application and data stay separate:
 
-- Windows: `%LOCALAPPDATA%\Gusto`
-- Linux: `$XDG_DATA_HOME/gusto`, otherwise `~/.local/share/gusto`
+- Windows application: `%LOCALAPPDATA%\Programs\Gusto`
+- Linux application: `~/.local/opt/gusto`
+- Windows data: `%LOCALAPPDATA%\Gusto`
+- Linux data: `$XDG_DATA_HOME/gusto`, otherwise `~/.local/share/gusto`
 
 `gusto home` (`--json` for agents) shows the active location and why it was
 chosen. `GUSTO_HOME` still overrides it for a portable store or server setup.
-On the first normal install, existing checkout data is copied into an empty
-user directory without deleting the original. Outside the installer, an older
-checkout remains a compatibility fallback until the platform store contains
-data, so an update never appears to erase recipes.
+When the installer runs directly from a source checkout, existing checkout data
+is copied into an empty user directory without deleting the original. Release
+archives intentionally contain application code only; existing user data is
+transferred separately.
 
 ### Development checkout
 
@@ -124,6 +137,7 @@ gusto/templates/   Jinja2 templates
 gusto/static/      CSS + JS
 install.py          cross-platform Windows/Linux installer
 deploy/             optional Linux systemd + Windows logon autostart
+scripts/build_release.py  build the transferable release archive
 scripts/            end-to-end tests of the web UI (Playwright)
 skill/gusto/        skill for operating it via the CLI (for agents)
 ```
@@ -146,8 +160,10 @@ Windows can start Gusto when the current user signs in:
 powershell -ExecutionPolicy Bypass -File .\deploy\install-windows-task.ps1
 ```
 
-Both helpers call the same general installer first. They only add the
-platform-specific background-start mechanism.
+Both helpers call the same bundled installer first, use the normal per-user
+application directory, and then add only the platform-specific background-start
+mechanism. `--install-dir` on Linux and `-InstallDir` on Windows override the
+application location.
 
 ## Tests
 

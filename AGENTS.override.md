@@ -68,10 +68,11 @@ categories. Tags without a category are reported by `gusto check` as
 ## Usage
 
 ```bash
-python install.py              # Windows/Linux normal install incl. web UI
+python scripts/build_release.py # transferable ZIP; no repo access on target
+python install.py              # install release/source into the user app dir
 python install.py --cli-only   # the pure CLI needs no dependencies
-# Windows: .venv\Scripts\gusto.exe serve
-# Linux:   ./.venv/bin/gusto serve
+# Windows: %LOCALAPPDATA%\Programs\Gusto\Scripts\gusto.exe serve
+# Linux:   ~/.local/opt/gusto/bin/gusto serve
 python -m gusto <command>      # CLI during development
 ```
 
@@ -174,6 +175,7 @@ clear` if it should also remove bought items). Full round-trip in the skill
 - `gusto/templates/`, `gusto/static/` — UI + CSS/JS
 - `scripts/browser_check.py` — end-to-end browser test (Playwright)
 - `install.py` — cross-platform Windows/Linux installation
+- `scripts/build_release.py` — builds the transferable wheel + installer ZIP
 - `deploy/install-systemd.sh`, `deploy/install-windows-task.ps1` — optional platform autostart
 - `skill/gusto/` — skill (SKILL.md + `references/cli.md`) for operating the
   system via the CLI; mirrors "Usage" / "Typical tasks" in the agent guides — **keep every copy in sync** (principle 8).

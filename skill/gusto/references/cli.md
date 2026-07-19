@@ -1,7 +1,9 @@
 # Gusto CLI — Full Reference
 
-All commands: `python -m gusto <command>` (or `gusto <command>` after
-`python install.py`). Every command accepts `--json` for machine-readable output.
+All commands: `python -m gusto <command>` in a development checkout. Installed
+release executables live under `%LOCALAPPDATA%\Programs\Gusto\Scripts\gusto.exe`
+on Windows or `~/.local/opt/gusto/bin/gusto` on Linux. Every command accepts
+`--json` for machine-readable output.
 
 ## Commands
 

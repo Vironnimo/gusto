@@ -13,7 +13,9 @@ English.)
 
 ## Invocation
 
-- `python -m gusto <command> --json` (or `gusto <command>` if installed).
+- Development checkout: `python -m gusto <command> --json`.
+- Installed release: `%LOCALAPPDATA%\Programs\Gusto\Scripts\gusto.exe` on
+  Windows or `~/.local/opt/gusto/bin/gusto` on Linux, followed by the command.
 - Side-effect-free: `home`, `list`, `search`, `show`, `tags`, `log`, `suggest`, `check`,
   `favorites list|show|match`.
 - Change state: `new`, `set`, `delete`, `cooked`, `image …`, `shopping …`,

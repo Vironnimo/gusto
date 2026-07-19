@@ -41,18 +41,25 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
 ## Packaging & Runtime
 
 - `pyproject.toml` declares project and package `gusto`, a `gusto` console script, no default dependencies, optional web dependencies under `.[web]`, and packages the templates, CSS/JavaScript, manifest, and PWA icons required by an installed web app.
+- `scripts/build_release.py` builds a transferable ZIP containing the regular
+  wheel, standalone installer, and both deployment adapters. A target installs
+  without the private repository or GitHub credentials.
+- Normal application runtimes live under `%LOCALAPPDATA%\Programs\Gusto` on
+  Windows and `~/.local/opt/gusto` on Linux, separate from both the source
+  checkout and the data store. `install.py --venv` overrides this location.
 - Normal stores live under `%LOCALAPPDATA%\Gusto` on Windows and
   `$XDG_DATA_HOME/gusto` or `~/.local/share/gusto` on Linux. `GUSTO_HOME` is the
   explicit override. If the platform store is empty but the old package-parent
   location already contains Gusto data, the legacy location remains active.
 - `gusto serve` imports Uvicorn only when invoked and starts `gusto.web:app`.
-  Both platform deployment helpers run the installed module from `.venv`.
-- `install.py` owns normal Windows/Linux environment creation and package
-  installation. It copies existing checkout data only when the platform store
-  is empty and never removes the original. `deploy/install-systemd.sh`
-  optionally adds Linux autostart; `deploy/install-windows-task.ps1` optionally
-  adds Windows logon autostart. These adapters do not define application
-  capabilities or platform support.
+  Both platform deployment helpers run the installed module from the normal
+  per-user application directory.
+- `install.py` installs from either the wheel beside it in a release bundle or
+  a complete source checkout. It copies existing checkout data only when the
+  platform store is empty and never removes the original.
+  `deploy/install-systemd.sh` optionally adds Linux autostart;
+  `deploy/install-windows-task.ps1` optionally adds Windows logon autostart.
+  These adapters do not define application capabilities or platform support.
 
 ## Conventions
 

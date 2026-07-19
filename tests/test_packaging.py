@@ -31,6 +31,8 @@ installer = ROOT / "install.py"
 linux_autostart = ROOT / "deploy" / "install-systemd.sh"
 windows_autostart = ROOT / "deploy" / "install-windows-task.ps1"
 service_template = (ROOT / "deploy" / "gusto.service").read_text(encoding="utf-8")
+linux_autostart_text = linux_autostart.read_text(encoding="utf-8")
+windows_autostart_text = windows_autostart.read_text(encoding="utf-8")
 assert installer.is_file()
 assert linux_autostart.is_file()
 assert windows_autostart.is_file()
@@ -39,6 +41,20 @@ assert "/home/pi/gusto" not in service_template
 assert "@GUSTO_PROJECT@" not in service_template
 for marker in ["@GUSTO_USER@", "@GUSTO_HOME@", "@GUSTO_PYTHON@", "@GUSTO_PORT@"]:
     assert marker in service_template
+assert 'project_dir/.venv' not in linux_autostart_text
+assert 'Join-Path $ProjectDir ".venv"' not in windows_autostart_text
+assert "--install-dir" in linux_autostart_text
+assert "$InstallDir" in windows_autostart_text
+
+with tempfile.TemporaryDirectory(prefix="gusto-app-path-test-") as path_dir:
+    path_root = Path(path_dir)
+    fake_home = path_root / "home"
+    windows_default = gusto_installer.default_install_dir(
+        "win32", {"LOCALAPPDATA": os.fspath(path_root / "LocalAppData")}, fake_home,
+    )
+    linux_default = gusto_installer.default_install_dir("linux", {}, fake_home)
+    assert windows_default == (path_root / "LocalAppData" / "Programs" / "Gusto").resolve()
+    assert linux_default == (fake_home / ".local" / "opt" / "gusto").resolve()
 
 with tempfile.TemporaryDirectory(prefix="gusto-installer-test-") as install_dir:
     dry_run = subprocess.run(
@@ -48,7 +64,17 @@ with tempfile.TemporaryDirectory(prefix="gusto-installer-test-") as install_dir:
     )
     assert dry_run.returncode == 0, dry_run.stdout + dry_run.stderr
     assert "CLI + Web" in dry_run.stdout
+    assert "Projekt-Checkout" in dry_run.stdout
     assert not (Path(install_dir) / "venv").exists()
+
+editable_dry_run = subprocess.run(
+    [sys.executable, os.fspath(installer), "--dry-run", "--editable"],
+    cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+)
+assert editable_dry_run.returncode == 0, (
+    editable_dry_run.stdout + editable_dry_run.stderr
+)
+assert os.fspath((ROOT / ".venv").resolve()) in editable_dry_run.stdout
 
 with tempfile.TemporaryDirectory(prefix="gusto-migration-test-") as migration_dir:
     migration_root = Path(migration_dir)
@@ -110,6 +136,44 @@ with tempfile.TemporaryDirectory(prefix="gusto-wheel-test-") as wheel_dir:
     assert not missing_assets, (
         "The wheel is missing web runtime assets: " + ", ".join(sorted(missing_assets))
     )
+
+# A release bundle must install without a checkout or GitHub access. It contains
+# one regular wheel, the standalone installer, and both optional autostart adapters.
+with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as release_dir:
+    release_root = Path(release_dir)
+    build_release = subprocess.run(
+        [sys.executable, os.fspath(ROOT / "scripts" / "build_release.py"),
+         "--output-dir", os.fspath(release_root)],
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+    )
+    assert build_release.returncode == 0, build_release.stdout + build_release.stderr
+    archives = list(release_root.glob("gusto-*-release.zip"))
+    assert len(archives) == 1, f"Expected one release archive, found: {archives}"
+    with zipfile.ZipFile(archives[0]) as archive:
+        archive.extractall(release_root / "extracted")
+        bundled = set(archive.namelist())
+    assert any(name.endswith("/install.py") for name in bundled)
+    assert any(name.endswith("/deploy/install-systemd.sh") for name in bundled)
+    assert any(name.endswith("/deploy/install-windows-task.ps1") for name in bundled)
+    assert sum(name.endswith(".whl") for name in bundled) == 1
+    with zipfile.ZipFile(archives[0]) as archive:
+        systemd_script = next(
+            info for info in archive.infolist()
+            if info.filename.endswith("/deploy/install-systemd.sh")
+        )
+    assert (systemd_script.external_attr >> 16) & 0o111
+
+    bundle_root = next((release_root / "extracted").iterdir())
+    standalone_dry_run = subprocess.run(
+        [sys.executable, os.fspath(bundle_root / "install.py"), "--dry-run",
+         "--venv", os.fspath(release_root / "installed")],
+        cwd=bundle_root, capture_output=True, text=True, encoding="utf-8",
+    )
+    assert standalone_dry_run.returncode == 0, (
+        standalone_dry_run.stdout + standalone_dry_run.stderr
+    )
+    assert "Release-Paket" in standalone_dry_run.stdout
+    assert not (release_root / "installed").exists()
 
 from gusto.web import app  # noqa: E402
 

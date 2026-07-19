@@ -5,7 +5,8 @@ usage() {
   cat <<'EOF'
 Optionalen Linux-systemd-Autostart für Gusto einrichten:
 
-  ./deploy/install-systemd.sh [--data-dir PFAD] [--port N] [--dry-run]
+  ./deploy/install-systemd.sh [--install-dir PFAD] [--data-dir PFAD]
+                                [--port N] [--dry-run]
 
 Die normale plattformübergreifende Installation übernimmt install.py. Dieser
 Helper ergänzt ausschließlich den Linux-Autostart und funktioniert auch auf
@@ -16,11 +17,17 @@ EOF
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 python_bin="${PYTHON_BIN:-python3}"
 data_arg="${GUSTO_HOME:-}"
+install_arg=""
 port=8000
 dry_run=0
 
 while (($#)); do
   case "$1" in
+    --install-dir)
+      [[ $# -ge 2 ]] || { echo "Fehler: --install-dir braucht einen Pfad." >&2; exit 2; }
+      install_arg="$2"
+      shift 2
+      ;;
     --data-dir)
       [[ $# -ge 2 ]] || { echo "Fehler: --data-dir braucht einen Pfad." >&2; exit 2; }
       data_arg="$2"
@@ -78,9 +85,13 @@ else
   data_dir="$("$python_bin" -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve())' "$data_dir")"
 fi
 
-venv_dir="$project_dir/.venv"
+if [[ -n "$install_arg" ]]; then
+  install_dir="$("$python_bin" -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).expanduser().resolve())' "$install_arg")"
+else
+  install_dir="$("$python_bin" -c 'from pathlib import Path; print((Path.home() / ".local" / "opt" / "gusto").resolve())')"
+fi
 service_user="$(id -un)"
-service_python="$venv_dir/bin/python"
+service_python="$install_dir/bin/python"
 service_template="$project_dir/deploy/gusto.service"
 service_preview="$("$python_bin" - "$service_template" "$service_user" "$data_dir" "$service_python" "$port" <<'PY'
 from pathlib import Path
@@ -105,13 +116,14 @@ print(text, end="")
 PY
 )"
 
-echo "Projekt: $project_dir"
-echo "Daten:   $data_dir"
-echo "Port:    $port"
+echo "Quelle:       $project_dir"
+echo "Installation: $install_dir"
+echo "Daten:        $data_dir"
+echo "Port:         $port"
 
 if ((dry_run)); then
   echo
-  "$python_bin" "$project_dir/install.py" --dry-run
+  "$python_bin" "$project_dir/install.py" --dry-run --venv "$install_dir"
   echo
   echo "Geplante systemd-Unit:"
   printf '%s\n' "$service_preview"
@@ -125,9 +137,9 @@ if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
 fi
 
 if [[ -n "$data_arg" ]]; then
-  GUSTO_HOME="$data_dir" "$python_bin" "$project_dir/install.py"
+  GUSTO_HOME="$data_dir" "$python_bin" "$project_dir/install.py" --venv "$install_dir"
 else
-  "$python_bin" "$project_dir/install.py"
+  "$python_bin" "$project_dir/install.py" --venv "$install_dir"
 fi
 mkdir -p -- "$data_dir/recipes" "$data_dir/images" "$data_dir/data"
 

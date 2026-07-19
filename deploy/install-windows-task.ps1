@@ -1,5 +1,6 @@
 param(
     [string]$DataDir = "",
+    [string]$InstallDir = "",
     [ValidateRange(1, 65535)]
     [int]$Port = 8000,
     [switch]$DryRun
@@ -7,9 +8,19 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectDir = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
-$VenvDir = Join-Path $ProjectDir ".venv"
-$VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 $Installer = Join-Path $ProjectDir "install.py"
+
+if (-not $InstallDir) {
+    $localData = $env:LOCALAPPDATA
+    if (-not $localData) {
+        $localData = [Environment]::GetFolderPath("LocalApplicationData")
+    }
+    $InstallDir = Join-Path $localData "Programs\Gusto"
+}
+$InstallDir = [IO.Path]::GetFullPath(
+    [Environment]::ExpandEnvironmentVariables($InstallDir)
+)
+$VenvPython = Join-Path $InstallDir "Scripts\python.exe"
 
 if (-not $DataDir) {
     $localData = $env:LOCALAPPDATA
@@ -28,10 +39,12 @@ if ($bootstrap) {
     $bootstrap = Get-Command python.exe -ErrorAction Stop
 }
 $bootstrapArguments += $Installer
+$bootstrapArguments += @("--venv", $InstallDir)
 
-Write-Output "Projekt: $ProjectDir"
-Write-Output "Daten:   $DataDir"
-Write-Output "Port:    $Port"
+Write-Output "Quelle:       $ProjectDir"
+Write-Output "Installation: $InstallDir"
+Write-Output "Daten:        $DataDir"
+Write-Output "Port:         $Port"
 
 if ($DryRun) {
     Write-Output ""
