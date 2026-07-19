@@ -29,8 +29,8 @@ werden benötigt.
 Windows (PowerShell):
   py -3 install.py
 
-  Start:
-  & "$env:LOCALAPPDATA\\Programs\\Gusto\\Scripts\\gusto.exe" serve
+  Danach eine neue Konsole öffnen. Start:
+  gusto serve
 
   Optionaler Autostart:
   powershell -ExecutionPolicy Bypass -File .\\deploy\\install-windows-task.ps1

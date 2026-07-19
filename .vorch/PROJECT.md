@@ -42,7 +42,9 @@ directory. Every source or installed runtime owns an adjacent
 installed runtime. `GUSTO_HOME` overrides instance settings for tests and
 explicit portable stores. Browser tests always use throwaway data through
 `GUSTO_HOME`. Linux systemd and Windows logon autostart use the installed
-runtime and are optional deployment helpers under `deploy/`.
+runtime and are optional deployment helpers under `deploy/`. Windows installs
+add the runtime command directory to the user `PATH`; new consoles can invoke
+`gusto` directly.
 
 ## Testing
 
@@ -99,6 +101,8 @@ Quality gates:
   directory. The checkout uses the separate `gusto-dev` store; installers write
   the production store into the installed runtime. `GUSTO_HOME` remains the
   highest-precedence override for isolated tests.
+- 2026-07-19: Windows installation persists Gusto's command directory in the
+  user `PATH`, making `gusto` directly available to newly opened consoles.
 
 ## Domain Maps
 

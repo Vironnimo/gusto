@@ -71,7 +71,7 @@ categories. Tags without a category are reported by `gusto check` as
 python scripts/build_release.py # transferable ZIP; no repo access on target
 python install.py              # install release/source into the user app dir
 python install.py --cli-only   # the pure CLI needs no dependencies
-# Windows: %LOCALAPPDATA%\Programs\Gusto\Scripts\gusto.exe serve
+# Windows (new console after install): gusto serve
 # Linux:   ~/.local/opt/gusto/bin/gusto serve
 python -m gusto <command>      # CLI during development
 ```
@@ -204,6 +204,8 @@ clear` if it should also remove bought items). Full round-trip in the skill
   Relative names resolve beside the platform data default. The checkout uses
   `gusto-dev`; installed production uses the normal platform data directory;
   `GUSTO_HOME` always wins explicitly.
+- Windows installs add Gusto's command directory to the user `PATH`; already
+  open consoles must be reopened before `gusto` resolves directly.
 
 ## Design
 

@@ -57,6 +57,52 @@ def display_command(arguments: list[str]) -> str:
     return shlex.join(arguments)
 
 
+def append_path_entry(current: str, directory: Path) -> tuple[str, bool]:
+    """Append a directory unless PATH already contains the same location."""
+    directory_text = os.fspath(directory.resolve())
+    normalized = os.path.normcase(os.path.normpath(directory_text))
+    entries = [entry for entry in current.split(os.pathsep) if entry]
+    for entry in entries:
+        candidate = os.path.expandvars(entry.strip().strip('"'))
+        if os.path.normcase(os.path.normpath(candidate)) == normalized:
+            return current, False
+    separator = "" if not current or current.endswith(os.pathsep) else os.pathsep
+    return current + separator + directory_text, True
+
+
+def add_windows_user_path(directory: Path,
+                          platform_name: str | None = None) -> bool:
+    """Persist a command directory in the Windows user PATH."""
+    platform_name = platform_name or sys.platform
+    if not platform_name.startswith("win"):
+        return False
+
+    import ctypes
+    import winreg
+
+    with winreg.CreateKeyEx(
+            winreg.HKEY_CURRENT_USER, "Environment", access=winreg.KEY_READ
+            | winreg.KEY_SET_VALUE) as key:
+        try:
+            current, value_type = winreg.QueryValueEx(key, "Path")
+        except FileNotFoundError:
+            current, value_type = "", winreg.REG_EXPAND_SZ
+        updated, changed = append_path_entry(current, directory)
+        if not changed:
+            return False
+        winreg.SetValueEx(key, "Path", 0, value_type, updated)
+
+    try:
+        result = ctypes.c_ulong()
+        ctypes.windll.user32.SendMessageTimeoutW(
+            0xFFFF, 0x001A, 0, ctypes.c_wchar_p("Environment"),
+            0x0002, 5000, ctypes.byref(result),
+        )
+    except (AttributeError, OSError, ctypes.ArgumentError):
+        pass
+    return True
+
+
 def contains_gusto_data(root: Path) -> bool:
     """Return whether a directory contains a recognizable Gusto store."""
     data = root / "data"
@@ -186,6 +232,7 @@ def main(argv: list[str] | None = None) -> int:
     data_root = Path(json.loads(home_result.stdout)["path"])
     try:
         settings_path = write_instance_settings(venv_dir, data_root)
+        path_changed = add_windows_user_path(command.parent)
         source_has_data = contains_gusto_data(ROOT)
         destination_has_data = contains_gusto_data(data_root)
         migrated = migrate_checkout_data(ROOT, data_root)
@@ -200,6 +247,8 @@ def main(argv: list[str] | None = None) -> int:
     print("Gusto ist installiert.")
     print(f"Settings: {settings_path}")
     print(f"Daten: {data_root}")
+    if path_changed:
+        print("Der Befehl 'gusto' ist ab der nächsten Konsole verfügbar.")
     if migrated:
         print("Bestehende Checkout-Daten wurden dorthin kopiert; das Original bleibt erhalten.")
     elif (source_has_data and destination_has_data
@@ -208,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
         print("Sie wurden nicht automatisch zusammengeführt; beide Bestände "
               "bleiben unverändert.")
     print("Start:")
-    print(f"  {display_command([os.fspath(command), 'serve'])}")
+    print("  gusto serve")
     return 0
 
 

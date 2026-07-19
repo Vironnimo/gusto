@@ -43,7 +43,8 @@ extract it. Run the following commands inside that extracted folder.
 
 ```powershell
 py -3 install.py
-& "$env:LOCALAPPDATA\Programs\Gusto\Scripts\gusto.exe" serve
+# Open a new PowerShell after installation:
+gusto serve
 ```
 
 ### Linux
@@ -58,6 +59,8 @@ Then open `http://<computer-name>:8000` from another device in the LAN, or
 shows the planned paths without changing anything; `--cli-only` omits the web
 dependencies. The same installer can run directly from a complete source
 checkout, but the release archive is the normal deployment artifact.
+On Windows the installer adds its command directory to the user `PATH`, so a
+new console can invoke `gusto` directly.
 
 Application and data stay separate:
 

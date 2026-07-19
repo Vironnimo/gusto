@@ -48,6 +48,8 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
 - Normal application runtimes live under `%LOCALAPPDATA%\Programs\Gusto` on
   Windows and `~/.local/opt/gusto` on Linux, separate from both the source
   checkout and the data store. `install.py --venv` overrides this location.
+  Windows installation also adds the runtime's `Scripts` directory to the user
+  `PATH`; a new console can invoke `gusto` directly.
 - Normal stores live under `%LOCALAPPDATA%\Gusto` on Windows and
   `$XDG_DATA_HOME/gusto` or `~/.local/share/gusto` on Linux. `GUSTO_HOME` is the
   highest-precedence explicit override. Each runtime otherwise reads its own

@@ -59,6 +59,16 @@ with tempfile.TemporaryDirectory(prefix="gusto-app-path-test-") as path_dir:
     assert windows_default == (path_root / "LocalAppData" / "Programs" / "Gusto").resolve()
     assert linux_default == (fake_home / ".local" / "opt" / "gusto").resolve()
 
+    command_dir = path_root / "LocalAppData" / "Programs" / "Gusto" / "Scripts"
+    updated_path, changed = gusto_installer.append_path_entry(
+        os.pathsep.join([os.fspath(path_root / "existing"), "second"]), command_dir,
+    )
+    assert changed and updated_path.endswith(os.fspath(command_dir.resolve()))
+    duplicate_path, changed = gusto_installer.append_path_entry(
+        updated_path, command_dir,
+    )
+    assert not changed and duplicate_path == updated_path
+
 with tempfile.TemporaryDirectory(prefix="gusto-installer-test-") as install_dir:
     dry_run = subprocess.run(
         [sys.executable, os.fspath(installer), "--dry-run", "--venv",
