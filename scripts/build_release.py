@@ -19,6 +19,9 @@ BUNDLE_FILES = (
     Path("deploy/install-systemd.sh"),
     Path("deploy/install-windows-task.ps1"),
 )
+BUNDLE_DIRECTORIES = (
+    Path("skill/gusto"),
+)
 INSTALLATION_GUIDE = """Gusto installieren
 ==================
 
@@ -53,6 +56,11 @@ Linux / Raspberry Pi (als normaler Benutzer, nicht mit sudo):
 
   Deinstallation (interaktive Auswahl App / App + Daten):
   "$HOME/.local/opt/gusto/bin/gusto" uninstall
+
+Agent-Skill:
+  Der vollständige, generische Gusto-Skill liegt unter skill/gusto.
+  Agent-Hosts importieren diesen Ordner nach ihrer jeweiligen Skill-Konvention.
+  install.py verändert keine Agent-Konfiguration.
 
 Nutzdaten liegen getrennt von der Anwendung unter %LOCALAPPDATA%\\Gusto auf
 Windows beziehungsweise ~/.local/share/gusto auf Linux. GUSTO_HOME kann den
@@ -101,6 +109,12 @@ def build_release(output_dir: Path) -> Path:
             destination = staging / relative_path
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / relative_path, destination)
+        for relative_path in BUNDLE_DIRECTORIES:
+            shutil.copytree(
+                ROOT / relative_path,
+                staging / relative_path,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            )
         (staging / "INSTALLATION.txt").write_text(
             INSTALLATION_GUIDE, encoding="utf-8",
         )

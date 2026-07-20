@@ -44,8 +44,9 @@ for machine-readable output.
   Update metadata. `--tags` **replaces** the whole list; the clear flags remove
   optional duration or serving values.
 - `edit <slug>`
-  Open the `.md` in `$EDITOR`. Interactive; for a headless agent, rewrite
-  `recipes/<slug>.md` directly instead.
+  Open the `.md` in `$EDITOR`. Interactive; for a headless agent, first read
+  `gusto home --json`, then rewrite `<path>/recipes/<slug>.md` directly. Never
+  assume the checkout's `recipes/` directory is the active store.
 - `cooked <slug> [--date YYYY-MM-DD] [--json]`
   Add a log entry (default: today) and bump `last_cooked`.
 - `delete <slug> [--json]`

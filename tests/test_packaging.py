@@ -39,12 +39,15 @@ assert not (ROOT / "recipe").exists()
 installer = ROOT / "install.py"
 linux_autostart = ROOT / "deploy" / "install-systemd.sh"
 windows_autostart = ROOT / "deploy" / "install-windows-task.ps1"
+skill_root = ROOT / "skill" / "gusto"
 service_template = (ROOT / "deploy" / "gusto.service").read_text(encoding="utf-8")
 linux_autostart_text = linux_autostart.read_text(encoding="utf-8")
 windows_autostart_text = windows_autostart.read_text(encoding="utf-8")
 assert installer.is_file()
 assert linux_autostart.is_file()
 assert windows_autostart.is_file()
+assert (skill_root / "SKILL.md").is_file()
+assert (skill_root / "references" / "cli.md").is_file()
 assert "User=pi" not in service_template
 assert "/home/pi/gusto" not in service_template
 assert "@GUSTO_PROJECT@" not in service_template
@@ -285,8 +288,9 @@ with tempfile.TemporaryDirectory(prefix="gusto-task-path-test-") as task_dir:
         expected_launcher = install_with_spaces / "Scripts" / "gusto-autostart.exe"
         assert f'"{expected_launcher}" --host 0.0.0.0 --port 8123' in dry_task.stdout
 
-# A release bundle must install without a checkout or GitHub access. It contains
-# one regular wheel, the standalone installer, and both optional autostart adapters.
+# A release bundle must work without a checkout or GitHub access. It contains
+# one regular wheel, the standalone installer, both optional autostart adapters,
+# and the complete self-contained agent skill.
 with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as release_dir:
     release_root = Path(release_dir)
     build_release = subprocess.run(
@@ -305,6 +309,35 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as release_dir:
     assert any(name.endswith("/deploy/install-windows-task.ps1") for name in bundled)
     assert sum(name.endswith(".whl") for name in bundled) == 1
     assert not any(name.endswith("/gusto.settings.json") for name in bundled)
+    bundle_prefix = next(
+        name[:-len("install.py")] for name in bundled
+        if name.endswith("/install.py")
+    )
+    source_skill = {
+        path.relative_to(ROOT).as_posix(): path.read_bytes()
+        for path in skill_root.rglob("*")
+        if (path.is_file() and "__pycache__" not in path.parts
+            and path.suffix != ".pyc")
+    }
+    bundled_skill = {
+        name[len(bundle_prefix):]
+        for name in bundled if name.startswith(bundle_prefix + "skill/gusto/")
+    }
+    assert bundled_skill == set(source_skill), (
+        "The release skill differs from skill/gusto: "
+        f"missing={sorted(set(source_skill) - bundled_skill)}, "
+        f"extra={sorted(bundled_skill - set(source_skill))}"
+    )
+    with zipfile.ZipFile(archives[0]) as archive:
+        for relative, expected in source_skill.items():
+            assert archive.read(bundle_prefix + relative) == expected, (
+                f"Bundled skill file is stale: {relative}"
+            )
+        installation_guide = archive.read(
+            bundle_prefix + "INSTALLATION.txt"
+        ).decode("utf-8")
+    assert "skill/gusto" in installation_guide
+    assert "install.py verändert keine" in installation_guide
     with zipfile.ZipFile(archives[0]) as archive:
         systemd_script = next(
             info for info in archive.infolist()

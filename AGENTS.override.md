@@ -68,7 +68,7 @@ categories. Tags without a category are reported by `gusto check` as
 ## Usage
 
 ```bash
-python scripts/build_release.py # transferable ZIP; no repo access on target
+python scripts/build_release.py # transferable ZIP incl. skill; no repo access
 python install.py              # install release/source into the user app dir
 python install.py --cli-only   # the pure CLI needs no dependencies
 # Windows (new console after install): gusto serve
@@ -85,7 +85,7 @@ platform default, and settings file.
 
 ```
 gusto list   [--tag T ...] [--max-time N]    Filter; --tag repeatable/comma-separated
-gusto search "<terms>" [--match any|all] [--tag T ...]   Full-text (incl. ingredients)
+gusto search "<terms>" [--match any|all] [--tag T ...] [--max-time N]  Full-text
 gusto tags   [--all]                          Show tag categories (facets)
 gusto home                                    Show active data directory
 gusto show   <slug>                          Print a recipe (--json: incl. content)
@@ -178,10 +178,12 @@ clear` if it should also remove bought items). Full round-trip in the skill
 - `scripts/browser_check.py` — end-to-end browser test (Playwright)
 - `install.py` — cross-platform Windows/Linux installation
 - `gusto.settings.json` — development instance data selection (`gusto-dev`)
-- `scripts/build_release.py` — builds the transferable wheel + installer ZIP
+- `scripts/build_release.py` — builds the transferable wheel + installer + skill ZIP
 - `deploy/install-systemd.sh`, `deploy/install-windows-task.ps1` — optional platform autostart
-- `skill/gusto/` — skill (SKILL.md + `references/cli.md`) for operating the
-  system via the CLI; mirrors "Usage" / "Typical tasks" in the agent guides — **keep every copy in sync** (principle 8).
+- `skill/gusto/` — self-contained generic skill (`SKILL.md` and
+  `references/cli.md`) for operating the system via the CLI; it is shipped in
+  every release ZIP and mirrors "Usage" / "Typical tasks" in the agent guides
+  — **keep every copy in sync** (principle 8).
 
 ## Commits
 

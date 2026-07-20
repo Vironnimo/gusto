@@ -31,8 +31,10 @@ and every CLI command accepts `--json`. MCP is explicitly out of scope.
 ## Development
 
 `scripts/build_release.py` creates a transferable ZIP containing a regular
-wheel, standalone `install.py`, and both optional autostart adapters; targets
-need no repository access. Normal application installs use
+wheel, standalone `install.py`, both optional autostart adapters, and the
+self-contained `skill/gusto/` agent skill; targets need no repository access.
+The app installer does not mutate agent-host configuration. Normal application
+installs use
 `%LOCALAPPDATA%\Programs\Gusto` on Windows or `~/.local/opt/gusto` on Linux; an
 editable `-e ".[web]"` checkout install remains available for development.
 Stores remain separate under `%LOCALAPPDATA%\Gusto` or the XDG user-data
@@ -115,6 +117,10 @@ Quality gates:
   default while preserving the separately stored recipes and household data.
   Permanent data removal is a distinct confirmed choice; a one-shot external
   helper performs self-deletion after the CLI exits.
+- 2026-07-20: Transferable release ZIPs include the complete, validated
+  `skill/gusto/` agent skill alongside the application artifacts. `install.py`
+  remains application-only because skill discovery and installation are owned
+  by the selected agent host.
 
 ## Domain Maps
 

@@ -16,11 +16,14 @@ English.)
 - Development checkout: `python -m gusto <command> --json`.
 - Installed release: `gusto <command>` in a new Windows console, or
   `~/.local/opt/gusto/bin/gusto <command>` on Linux.
-- Side-effect-free: `home`, `list`, `search`, `show`, `tags`, `log`, `suggest`, `check`,
-  `favorites list|show|match`.
-- Change state: `new`, `set`, `delete`, `cooked`, `image …`, `shopping …`,
-  the remaining `favorites …` commands, and `uninstall` (only when the user
-  explicitly asks to remove the installed application).
+- Read-only: `home`, `list`, `search`, `show`, `tags`, `log`, `suggest`,
+  `check`, `image list`, `shopping list`, and `favorites list|show|match`.
+- Change state: `new`, `set`, `delete`, `cooked`, `image add|set|cover|remove`,
+  `shopping add|add-recipe|check|uncheck|remove|clear`, the remaining
+  `favorites …` commands, and `uninstall` (only when the user explicitly asks
+  to remove the installed application).
+- Interactive/runtime: `edit` opens the configured editor and may change the
+  recipe body; `serve` starts the long-running web server.
 
 ## Workflows
 
@@ -43,11 +46,12 @@ English.)
 **Add a recipe**
 - `gusto new "<title>" --tags a,b --duration 25 --servings 2 --json` writes the
   `.md` (a template) and the index entry.
-- Then write the body into `recipes/<slug>.md`: first line `# <title>`, then a
-  `## Zutaten` bullet list and a `## Zubereitung` numbered list. No frontmatter.
-  (From Python in one step: `core.add_recipe(title, tags=..., content=md)`.)
-- Used a new tag? add it under a category in `data/categories.json`;
-  `gusto check` reports uncategorized tags.
+- Before direct file access, run `gusto home --json` and use its `path`. Then
+  write the body into `<path>/recipes/<slug>.md`: first line `# <title>`, then
+  a `## Zutaten` bullet list and a `## Zubereitung` numbered list. No
+  frontmatter. Never assume the checkout's `recipes/` directory is active.
+- Used a new tag? Add it under a category in
+  `<path>/data/categories.json`; `gusto check` reports uncategorized tags.
 
 **Add and manage recipe images**
 - Inspect the source image yourself, then add it to the matching recipe with
@@ -63,7 +67,8 @@ English.)
 **Edit · log · shopping**
 - `gusto set <slug> --tags a,b --duration N` (`--tags` replaces the list);
   `--clear-duration` / `--clear-servings` remove optional numeric metadata.
-  Edit the body by rewriting `recipes/<slug>.md`.
+  For a headless body edit, resolve `gusto home --json` and rewrite
+  `<path>/recipes/<slug>.md`; do not infer the store from the working directory.
 - `gusto cooked <slug>` — record a cook (updates the log + `last_cooked`).
 - `gusto shopping add-recipe <slug>` (all ingredients), `shopping add "<text>"`,
   `shopping list [--pending]`, `shopping check|uncheck|remove <id>`,

@@ -26,9 +26,9 @@ The UI and the data fields are German; the code is English.
 ## Installation
 
 Gusto needs Python 3.10 or newer. A transferable release archive contains a
-regular Python wheel, the standalone installer, and the optional autostart
-adapters. The target computer needs neither the private repository nor GitHub
-credentials.
+regular Python wheel, the standalone installer, the optional autostart
+adapters, and the complete `skill/gusto/` agent skill. The target computer
+needs neither the private repository nor GitHub credentials.
 
 Build the archive once in a development checkout:
 
@@ -62,6 +62,13 @@ checkout, but the release archive is the normal deployment artifact.
 On Windows the installer adds its command directory to the user `PATH`, so a
 new console can invoke `gusto` directly.
 
+### Agent skill
+
+The extracted release contains the self-contained, generic skill under
+`skill/gusto/`. Agent hosts import that complete folder according to their own
+skill convention. `install.py` installs only the Gusto application and
+deliberately does not mutate agent-host configuration.
+
 Application and data stay separate:
 
 - Windows application: `%LOCALAPPDATA%\Programs\Gusto`
@@ -80,8 +87,8 @@ Windows or `~/.local/share/gusto-dev` on Linux without a different start command
 chosen. `GUSTO_HOME` still overrides it for a portable store or server setup.
 When the installer runs directly from a source checkout, existing checkout data
 is copied into an empty user directory without deleting the original. Release
-archives intentionally contain application code only; existing user data is
-transferred separately.
+archives contain application code and the agent skill, but never existing user
+data; user data is transferred separately.
 
 ### Development checkout
 
@@ -152,7 +159,7 @@ gusto.settings.json development instance data selection
 deploy/             optional Linux systemd + Windows logon autostart
 scripts/build_release.py  build the transferable release archive
 scripts/            end-to-end tests of the web UI (Playwright)
-skill/gusto/        skill for operating it via the CLI (for agents)
+skill/gusto/        self-contained CLI skill, also shipped in the release ZIP
 ```
 
 ## Optional autostart

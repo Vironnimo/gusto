@@ -59,8 +59,11 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
   dependencies under `.[web]`, and includes the templates, CSS/JavaScript,
   manifest, and PWA icons required by an installed web app.
 - `scripts/build_release.py` builds a transferable ZIP containing the regular
-  wheel, standalone installer, and both deployment adapters. A target installs
-  without the private repository or GitHub credentials.
+  wheel, standalone installer, both deployment adapters, and the complete
+  self-contained `skill/gusto/` agent skill. A target installs without the
+  private repository or GitHub credentials. `install.py` remains
+  application-only; importing the bundled skill is owned by the target's agent
+  host and does not alter Gusto's runtime or data-store contracts.
 - Normal application runtimes live under `%LOCALAPPDATA%\Programs\Gusto` on
   Windows and `~/.local/opt/gusto` on Linux, separate from both the source
   checkout and the data store. `install.py --venv` overrides this location.
