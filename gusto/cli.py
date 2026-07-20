@@ -17,7 +17,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, datetime
 from pathlib import Path
 
-from . import core
+from . import core, uninstall
 
 
 def _dump(data) -> None:
@@ -572,6 +572,95 @@ def cmd_serve(args):
     uvicorn.run("gusto.web:app", host=args.host, port=args.port, reload=args.reload)
 
 
+def _uninstall_choice(
+    args,
+    targets: uninstall.UninstallTargets,
+    *,
+    interactive: bool,
+    input_func: Callable[[str], str] = input,
+) -> bool | None:
+    """Return whether to delete data; ``None`` means an interactive cancel."""
+    if args.keep_data:
+        return False
+    if args.delete_data:
+        if args.yes or args.dry_run:
+            return True
+        if not interactive:
+            raise uninstall.UninstallError(
+                "--delete-data braucht in nicht-interaktiven Aufrufen zusätzlich --yes."
+            )
+        answer = input_func(
+            f"Alle Rezepte und Daten unter '{targets.data}' löschen? "
+            "Tippe exakt DATEN LÖSCHEN: "
+        )
+        if answer != "DATEN LÖSCHEN":
+            return None
+        return True
+
+    if not interactive:
+        raise uninstall.UninstallError(
+            "Wähle --keep-data oder --delete-data; mit --delete-data ist --yes nötig."
+        )
+
+    print(f"Installation: {targets.application}")
+    print(f"Daten:        {targets.data}")
+    print()
+    print("Was soll entfernt werden?")
+    print("  1  Nur die Gusto-App (Rezepte und Daten behalten)")
+    print("  2  Gusto-App und alle Rezepte/Daten unwiderruflich löschen")
+    print("  3  Abbrechen")
+    while True:
+        choice = input_func("Auswahl [1-3]: ").strip()
+        if choice == "1":
+            return False
+        if choice == "3":
+            return None
+        if choice == "2":
+            if args.yes or args.dry_run:
+                return True
+            answer = input_func("Tippe zur Bestätigung exakt DATEN LÖSCHEN: ")
+            return True if answer == "DATEN LÖSCHEN" else None
+        print("Bitte 1, 2 oder 3 eingeben.")
+
+
+def cmd_uninstall(args):
+    try:
+        targets = uninstall.discover_targets()
+        interactive = not args.json and sys.stdin.isatty()
+        delete_data = _uninstall_choice(
+            args, targets, interactive=interactive,
+        )
+        if delete_data is None:
+            if args.json:
+                _dump({"status": "cancelled"})
+            else:
+                print("Deinstallation abgebrochen.")
+            return
+        result = uninstall.perform_uninstall(
+            targets,
+            delete_data=delete_data,
+            dry_run=args.dry_run,
+            interactive=interactive,
+        )
+    except (OSError, ValueError, uninstall.UninstallError) as error:
+        sys.exit(f"Deinstallation fehlgeschlagen: {error}")
+
+    if args.json:
+        _dump(result)
+        return
+    if args.dry_run:
+        print("Geplante Deinstallation (es wurde nichts verändert):")
+    else:
+        print("Gusto wird nach dem Ende dieses Befehls entfernt.")
+    print(f"  App:   {result['application_path']}")
+    if result["delete_data"]:
+        print(f"  Daten: löschen ({result['data_path']})")
+    else:
+        print(f"  Daten: behalten ({result['data_path']})")
+    if result.get("log_path"):
+        print(f"  Log:   {result['log_path']}")
+
+
 def _autostart_log_path() -> Path:
     """Return the log owned by the active Gusto data store.
 
@@ -883,13 +972,37 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--reload", action="store_true", help="Auto-Reload (Entwicklung).")
     sp.set_defaults(func=cmd_serve)
 
+    sp = sub.add_parser(
+        "uninstall", parents=[base],
+        help="Installierte App entfernen; Daten optional behalten oder löschen.",
+    )
+    removal = sp.add_mutually_exclusive_group()
+    removal.add_argument(
+        "--keep-data", action="store_true",
+        help="Nur die App entfernen; Rezepte und Daten behalten.",
+    )
+    removal.add_argument(
+        "--delete-data", action="store_true",
+        help="App sowie den aktiven Rezept-/Datenordner entfernen.",
+    )
+    sp.add_argument(
+        "--yes", action="store_true",
+        help="Bestätigung für --delete-data in nicht-interaktiven Aufrufen.",
+    )
+    sp.add_argument(
+        "--dry-run", action="store_true",
+        help="Ziele anzeigen, ohne Autostart, App oder Daten zu verändern.",
+    )
+    sp.set_defaults(func=cmd_uninstall)
+
     return p
 
 
 def main(argv=None) -> None:
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")  # robust umlauts/JSON on Windows
-    except Exception:
-        pass
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")  # robust umlauts/JSON on Windows
+        except Exception:
+            pass
     args = build_parser().parse_args(argv)
     args.func(args)

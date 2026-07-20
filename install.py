@@ -268,6 +268,8 @@ def main(argv: list[str] | None = None) -> int:
               "bleiben unverändert.")
     print("Start:")
     print("  gusto serve")
+    print("Entfernen:")
+    print("  gusto uninstall")
     return 0
 
 

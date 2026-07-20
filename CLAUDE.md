@@ -88,6 +88,7 @@ gusto delete <slug>                           Delete a recipe
 gusto suggest [--days N] [--limit N]          Candidates for the next meal
 gusto check                                   Consistency index <-> .md (+ unsorted tags)
 gusto serve  [--host H] [--port N]            Start the web UI (LAN)
+gusto uninstall [--keep-data|--delete-data --yes] [--dry-run]  Remove installed app
 
 gusto image list <slug>                       Show cover and gallery images
 gusto image add <slug> <path> [--role R] [--caption TEXT] [--cover]
@@ -188,7 +189,7 @@ clear` if it should also remove bought items). Full round-trip in the skill
   `python-multipart` (forms) + Pillow (photo normalization). Tests: Playwright.
 - Starlette ≥1.3: the signature is `TemplateResponse(request, "name.html", {...})`
   — `request` MUST be the first argument.
-- Windows console (cp1252): stdout in CLI/tests is switched to UTF-8, otherwise
+- Windows console (cp1252): stdout/stderr in CLI/tests are switched to UTF-8, otherwise
   characters like "✓" break.
 - Every source or installed runtime owns instance settings for its data path.
   Relative names resolve beside the platform data default. The checkout uses

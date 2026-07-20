@@ -17,7 +17,10 @@ general installation and supported-platform contracts owned here.
 
 ## Interfaces
 
-The installed application command is `gusto`, backed by `gusto.cli:main`; `python -m gusto` reaches the same entry point. Every command accepts `--json`, and the CLI converts expected core `ValueError` failures into non-zero command exits.
+The installed application command is `gusto`, backed by `gusto.cli:main`;
+`python -m gusto` reaches the same entry point. Every command accepts `--json`,
+the CLI configures both stdout and stderr as UTF-8 on Windows, and it converts
+expected core `ValueError` failures into non-zero command exits.
 
 `gusto home` reports the active store root, its resolution source, and the
 normal platform default. It also reports the instance `gusto.settings.json`
@@ -27,6 +30,12 @@ of inferring data paths from the checkout.
 `gusto set` can remove optional duration or serving metadata with
 `--clear-duration` and `--clear-servings`; these are mutually exclusive with
 setting the corresponding value.
+
+`gusto uninstall` owns installed-runtime removal, not catalog deletion. A bare
+TTY call shows the verified application/data paths and offers app-only,
+app-plus-data, or cancel. Agents use `--keep-data --json` or the deliberately
+stronger `--delete-data --yes --json`; `--dry-run` is non-mutating. The command
+refuses source checkouts, system Python, broad roots, and unrecognized stores.
 
 The web application object is `gusto.web:app`. It serves catalog, log, suggestion, shopping, preferred-product management, and form pages; recipe and product media; shopping/favorite JSON; static assets; the root-scoped service worker; and a custom HTML 404. Entity URLs continue to use `/recipe/{slug}` because they address a recipe, not the application package.
 
@@ -82,6 +91,13 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
   If migration fails after the old task was stopped, the adapter makes a
   best-effort restart. These adapters do not define application capabilities or
   platform support.
+- `gusto/uninstall.py` validates the executing virtual environment and active
+  store as separate deletion targets, disables the fixed Windows Task Scheduler
+  entry or Linux systemd unit, and removes only the exact installed Windows PATH
+  entry. Because a Windows executable cannot delete its own active runtime, it
+  launches a one-shot detached helper with the base interpreter; the helper
+  waits for the CLI process, removes the app first and optional data second,
+  cleans its temporary script, and leaves an external completion/error log.
 
 ## Conventions
 
@@ -115,3 +131,6 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
   task contract. On Windows, the packaging test installs a real wheel under a
   path containing spaces and verifies PE subsystem 3 (Console) for `gusto.exe`
   and subsystem 2 (GUI) for `gusto-autostart.exe`.
+- Run `tests/test_uninstall.py` after changing install ownership, autostart/PATH
+  cleanup, confirmation rules, or deletion guards. It executes real recursive
+  removal only inside throwaway directories, never against active Gusto data.

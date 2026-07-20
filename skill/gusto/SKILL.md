@@ -1,6 +1,6 @@
 ---
 name: gusto
-description: Operate the Gusto recipe system through its `gusto` CLI. Use to answer "what should I cook?" and "what can I make with these ingredients?", find, show, add, edit or delete recipes, manage recipe images, filter recipes by tag categories, manage the shopping list and shared preferred products, and record or read the cooking log. Drive the `gusto` CLI and pass `--json` whenever you parse output.
+description: Operate the Gusto recipe system through its `gusto` CLI. Use to answer "what should I cook?" and "what can I make with these ingredients?", find, show, add, edit or delete recipes, manage recipe images, filter recipes by tag categories, manage the shopping list and shared preferred products, record or read the cooking log, or safely uninstall an installed runtime when explicitly requested. Drive the `gusto` CLI and pass `--json` whenever you parse output.
 ---
 
 # Gusto — operating the recipe system via the CLI
@@ -19,7 +19,8 @@ English.)
 - Side-effect-free: `home`, `list`, `search`, `show`, `tags`, `log`, `suggest`, `check`,
   `favorites list|show|match`.
 - Change state: `new`, `set`, `delete`, `cooked`, `image …`, `shopping …`,
-  and the remaining `favorites …` commands.
+  the remaining `favorites …` commands, and `uninstall` (only when the user
+  explicitly asks to remove the installed application).
 
 ## Workflows
 
@@ -152,6 +153,10 @@ manual edit run `gusto check`.
   to Gusto; the **Fertig** button (`run:done`) is the single point that syncs the
   state to Gusto. Always include a Fertig button, or no tap ever reaches Gusto.
 - Never propose or build MCP — forbidden in this project.
+- Never run `gusto uninstall` speculatively. For an explicit uninstall request,
+  preserve recipes with `--keep-data --json` unless the user also explicitly
+  chose permanent data deletion; that path requires
+  `--delete-data --yes --json`. Use `--dry-run` to inspect exact targets.
 
 ## Full reference
 

@@ -39,6 +39,9 @@ Windows (PowerShell):
   unter %LOCALAPPDATA%\\Gusto\\gusto-autostart.log. Derselbe Befehl aktualisiert
   auch eine bereits vorhandene Gusto-Aufgabe.
 
+  Deinstallation (interaktive Auswahl App / App + Daten):
+  gusto uninstall
+
 Linux / Raspberry Pi (als normaler Benutzer, nicht mit sudo):
   python3 install.py
 
@@ -47,6 +50,9 @@ Linux / Raspberry Pi (als normaler Benutzer, nicht mit sudo):
 
   Optionaler systemd-Autostart:
   ./deploy/install-systemd.sh
+
+  Deinstallation (interaktive Auswahl App / App + Daten):
+  "$HOME/.local/opt/gusto/bin/gusto" uninstall
 
 Nutzdaten liegen getrennt von der Anwendung unter %LOCALAPPDATA%\\Gusto auf
 Windows beziehungsweise ~/.local/share/gusto auf Linux. GUSTO_HOME kann den

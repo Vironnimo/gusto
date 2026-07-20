@@ -127,6 +127,7 @@ gusto favorites match "200 g Spaghetti"  # show the ranked household choice
 gusto favorites add "Spaghetti" --alias "200 g Spaghetti"
 gusto favorites product-add Spaghetti "De Cecco n. 12" --brand "De Cecco" --image photo.png
 gusto favorites product-move Spaghetti <id> 1
+gusto uninstall                     # interactive: app only or app + data
 ```
 
 Every command takes `--json` for machine-readable output.
@@ -142,6 +143,7 @@ data/favorites.json shared shopping needs, exact aliases, ranked products
 data/log.json       cooking log
 gusto/core.py      all the logic
 gusto/cli.py       the CLI
+gusto/uninstall.py safe installed-runtime removal lifecycle
 gusto/web.py       the FastAPI web app
 gusto/templates/   Jinja2 templates
 gusto/static/      CSS + JS
@@ -186,6 +188,33 @@ application directory, and then add only the platform-specific background-start
 mechanism. `--install-dir` on Linux and `-InstallDir` on Windows override the
 application location.
 
+## Uninstall
+
+Run the installed command without options for a human-readable choice:
+
+```bash
+gusto uninstall
+```
+
+The safe default removes the application, autostart integration, and Gusto's
+exact Windows `PATH` entry while preserving recipes, images, shopping data, and
+the cooking log. Deleting the store is a separate destructive choice and shows
+its exact path before requiring `DATEN LÖSCHEN`.
+
+Agents and scripts use an explicit, non-interactive scope:
+
+```bash
+gusto uninstall --keep-data --json
+gusto uninstall --delete-data --yes --json
+gusto uninstall --delete-data --dry-run --json
+```
+
+The command only accepts a managed installed virtual environment; it refuses a
+source checkout, system Python, user home, filesystem root, temporary root, or
+an unrecognized data directory. On Windows a one-shot windowless helper removes
+the active runtime after `gusto.exe` exits. Its completion or failure is written
+to the temporary log path returned by the command.
+
 ## Tests
 
 ```bash
@@ -198,6 +227,7 @@ python tests/test_merge.py         # full-state sync merge rule
 python tests/test_recipes.py       # recipe/search/log/suggestion core logic
 python tests/test_cli.py           # agent-facing JSON CLI
 python tests/test_autostart.py     # windowless Windows launcher and exit codes
+python tests/test_uninstall.py     # safe app/data removal lifecycle
 python tests/test_packaging.py     # fresh-install dependency declaration
 python tests/test_paths.py         # Windows/Linux data-directory contract
 ```

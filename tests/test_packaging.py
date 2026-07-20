@@ -14,6 +14,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import venv
 import zipfile
 from pathlib import Path
@@ -179,6 +180,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-wheel-test-") as wheel_dir:
         packaged = set(archive.namelist())
 
     required_assets = {
+        "gusto/uninstall.py",
         "gusto/templates/base.html",
         "gusto/templates/list.html",
         "gusto/static/style.css",
@@ -225,6 +227,47 @@ with tempfile.TemporaryDirectory(prefix="gusto-wheel-test-") as wheel_dir:
         assert launched.stdout == b"" and launched.stderr == b""
         autostart_log = isolated_data / "gusto-autostart.log"
         assert "usage: gusto serve" in autostart_log.read_text(encoding="utf-8")
+
+        uninstall_preview = subprocess.run(
+            [os.fspath(console_launcher), "uninstall", "--keep-data",
+             "--dry-run", "--json"],
+            cwd=runtime, capture_output=True, text=True, encoding="utf-8",
+        )
+        assert uninstall_preview.returncode == 0, (
+            uninstall_preview.stdout + uninstall_preview.stderr
+        )
+        preview = json.loads(uninstall_preview.stdout)
+        assert preview["status"] == "dry_run" and not preview["delete_data"]
+        assert Path(preview["application_path"]) == runtime.resolve()
+        assert Path(preview["data_path"]) == isolated_data.resolve()
+        assert console_launcher.is_file() and autostart_log.is_file()
+
+        # Exercise self-removal from an actually active installed venv without
+        # touching platform autostart/PATH. The detached helper must wait for
+        # this interpreter and its Windows launchers before deleting the app.
+        self_remove_code = (
+            "import sys; from pathlib import Path; "
+            "from gusto.uninstall import UninstallTargets, schedule_removal; "
+            "root=Path(sys.prefix); "
+            "targets=UninstallTargets(root, Path(sys.argv[1]), root/'Scripts', "
+            "root/'gusto.settings.json', sys.platform); "
+            "print(schedule_removal(targets, separate_data_target=None))"
+        )
+        self_remove = subprocess.run(
+            [os.fspath(runtime_python), "-c", self_remove_code,
+             os.fspath(isolated_data)],
+            cwd=wheel_dir, capture_output=True, text=True, encoding="utf-8",
+        )
+        assert self_remove.returncode == 0, self_remove.stdout + self_remove.stderr
+        self_remove_log = Path(self_remove.stdout.strip())
+        deadline = time.monotonic() + 15
+        while ((runtime.exists() or not self_remove_log.is_file())
+               and time.monotonic() < deadline):
+            time.sleep(0.1)
+        assert not runtime.exists(), "the active installed runtime was not self-removed"
+        assert isolated_data.is_dir(), "app-only self-removal deleted the data store"
+        assert "completed" in self_remove_log.read_text(encoding="utf-8")
+        self_remove_log.unlink()
 
 with tempfile.TemporaryDirectory(prefix="gusto-task-path-test-") as task_dir:
     task_root = Path(task_dir)

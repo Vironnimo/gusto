@@ -107,6 +107,20 @@ for machine-readable output.
 - `serve [--host H] [--port N] [--reload]` — start the web UI
   (default `0.0.0.0:8000`, reachable across the LAN).
 
+### Installed application lifecycle
+
+- `uninstall [--keep-data | --delete-data [--yes]] [--dry-run] [--json]` —
+  remove a managed installed Gusto runtime. A bare interactive call offers
+  **app only**, **app + all data**, or **cancel** and shows the exact runtime and
+  active data paths. Data deletion requires the exact interactive confirmation
+  `DATEN LÖSCHEN`; non-interactive callers must use `--delete-data --yes`.
+  `--keep-data` removes platform autostart and the exact Windows PATH entry but
+  preserves recipes, images, shopping data, and cooking history. `--dry-run`
+  changes nothing. JSON reports `status`, `application_path`, `data_path`,
+  `delete_data`, cleanup booleans, and (when scheduled) `log_path`. The command
+  refuses source checkouts, system Python, and unsafe/unrecognized deletion
+  roots; do not invoke it without an explicit user request.
+
 ## JSON shapes
 
 Recipe (returned by `list`, `search`, `new`, `set` — array or single object):

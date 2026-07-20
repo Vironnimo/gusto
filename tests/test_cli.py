@@ -161,6 +161,10 @@ def main():
     check(deleted == {"slug": slug, "deleted": True},
           "delete --json must confirm deletion")
 
+    refused_uninstall = run("uninstall", "--keep-data", "--json", expect=1)
+    check("Projekt-Checkout" in refused_uninstall.stderr,
+          "uninstall must refuse to delete a development checkout")
+
     print(f"OK - {checks} CLI checks passed (GUSTO_HOME={HOME})")
 
 
