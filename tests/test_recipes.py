@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import tempfile
+from datetime import date, timedelta
 from pathlib import Path
 import base64
 
@@ -124,11 +125,13 @@ def main():
     fake_source.write_bytes(b"not an image")
     expect_valueerror(core.add_recipe_image, pasta.slug, fake_source)
 
-    core.log_cooked(pasta.slug, "2026-07-12")
-    core.log_cooked(pasta.slug, "2026-07-10")
-    check(core.get(pasta.slug).last_cooked == "2026-07-12",
+    recent_cook = (date.today() - timedelta(days=1)).isoformat()
+    older_cook = (date.today() - timedelta(days=3)).isoformat()
+    core.log_cooked(pasta.slug, recent_cook)
+    core.log_cooked(pasta.slug, older_cook)
+    check(core.get(pasta.slug).last_cooked == recent_cook,
           "an older log entry must not regress last_cooked")
-    check([entry["date"] for entry in core.load_log()] == ["2026-07-10", "2026-07-12"],
+    check([entry["date"] for entry in core.load_log()] == [older_cook, recent_cook],
           "the log must stay chronologically sorted")
     expect_valueerror(core.log_cooked, "missing")
 
