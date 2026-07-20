@@ -35,6 +35,10 @@ Windows (PowerShell):
   Optionaler Autostart:
   powershell -ExecutionPolicy Bypass -File .\\deploy\\install-windows-task.ps1
 
+  Der Autostart verwendet einen fensterlosen Launcher. Diagnoseausgaben stehen
+  unter %LOCALAPPDATA%\\Gusto\\gusto-autostart.log. Derselbe Befehl aktualisiert
+  auch eine bereits vorhandene Gusto-Aufgabe.
+
 Linux / Raspberry Pi (als normaler Benutzer, nicht mit sudo):
   python3 install.py
 

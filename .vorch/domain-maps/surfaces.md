@@ -41,7 +41,14 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
 
 ## Packaging & Runtime
 
-- `pyproject.toml` declares project and package `gusto`, a `gusto` console script, no default dependencies, optional web dependencies under `.[web]`, and packages the templates, CSS/JavaScript, manifest, and PWA icons required by an installed web app.
+- `pyproject.toml` declares project and package `gusto`, the normal `gusto`
+  Console script, and the Windows-only deployment surface
+  `gusto-autostart` as a GUI script. The latter prepends `serve`, delegates to
+  the same CLI parser/handler, redirects stdout and stderr (which may be `None`
+  under `pythonw.exe`) to `<data-root>/gusto-autostart.log`, and preserves the
+  process exit code. The package has no default dependencies, optional web
+  dependencies under `.[web]`, and includes the templates, CSS/JavaScript,
+  manifest, and PWA icons required by an installed web app.
 - `scripts/build_release.py` builds a transferable ZIP containing the regular
   wheel, standalone installer, and both deployment adapters. A target installs
   without the private repository or GitHub credentials.
@@ -61,11 +68,20 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
   Both platform deployment helpers run the installed module from the normal
   per-user application directory.
 - `install.py` installs from either the wheel beside it in a release bundle or
-  a complete source checkout. It copies existing checkout data only when the
-  platform store is empty and never removes the original.
+  a complete source checkout. It creates a virtual environment only when the
+  selected runtime has no Python executable, so upgrades reuse rather than
+  rewrite an existing Windows environment. It copies existing checkout data
+  only when the platform store is empty and never removes the original.
   `deploy/install-systemd.sh` optionally adds Linux autostart;
   `deploy/install-windows-task.ps1` optionally adds Windows logon autostart.
-  These adapters do not define application capabilities or platform support.
+  The Windows adapter schedules the GUI launcher by its exact path in the
+  selected installed runtime, never through `PATH` or an intermediate
+  PowerShell action. Re-running it stops an active task before updating the
+  runtime (so Windows does not lock an in-use launcher), migrates the task,
+  removes the obsolete generated `start-gusto.ps1`, and starts the new action.
+  If migration fails after the old task was stopped, the adapter makes a
+  best-effort restart. These adapters do not define application capabilities or
+  platform support.
 
 ## Conventions
 
@@ -95,3 +111,7 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
   keep its case/whitespace normalization aligned with core and never add fuzzy
   matching only in JavaScript.
 - Run `tests/test_packaging.py` after package, dependency, command, or import changes and `tests/test_cli.py` after CLI changes. Any web-visible change also requires `scripts/browser_check.py`; shopping PWA behavior additionally requires `scripts/pwa_check.py`.
+- Run `tests/test_autostart.py` after changing the GUI launcher or Windows
+  task contract. On Windows, the packaging test installs a real wheel under a
+  path containing spaces and verifies PE subsystem 3 (Console) for `gusto.exe`
+  and subsystem 2 (GUI) for `gusto-autostart.exe`.

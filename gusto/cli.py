@@ -11,7 +11,11 @@ import json
 import os
 import subprocess
 import sys
-from datetime import date
+import traceback
+from collections.abc import Callable, Sequence
+from contextlib import redirect_stderr, redirect_stdout
+from datetime import date, datetime
+from pathlib import Path
 
 from . import core
 
@@ -566,6 +570,68 @@ def cmd_serve(args):
         sys.exit("Web-Abhaengigkeiten fehlen. Installiere sie mit:  pip install -e .[web]")
     print(f"Gusto laeuft auf http://{args.host}:{args.port}  (Strg+C zum Beenden)")
     uvicorn.run("gusto.web:app", host=args.host, port=args.port, reload=args.reload)
+
+
+def _autostart_log_path() -> Path:
+    """Return the log owned by the active Gusto data store.
+
+    Resolving instance settings can itself fail.  Keep the GUI launcher
+    windowless in that case and give it a platform-default place to record the
+    later startup error.
+    """
+    try:
+        root = core.project_root()
+    except (OSError, ValueError):
+        root = core.default_data_root()
+    return root / "gusto-autostart.log"
+
+
+def _system_exit_code(code: object) -> int:
+    """Convert SystemExit's permissive payload to a process exit code."""
+    if code is None:
+        return 0
+    if isinstance(code, int):
+        return code
+    print(code, file=sys.stderr)
+    return 1
+
+
+def autostart_main(
+    argv: Sequence[str] | None = None,
+    *,
+    run_cli: Callable[[Sequence[str]], object] | None = None,
+    log_path: str | os.PathLike[str] | None = None,
+) -> int:
+    """Run ``gusto serve`` through the windowless Windows GUI entry point.
+
+    A ``gui-scripts`` launcher has no console, so stdout and stderr may be
+    ``None`` under pythonw.exe.  Redirect both before entering the normal CLI
+    path; this preserves its behavior and exit code while keeping diagnostics
+    in a durable file instead of opening a login console.
+    """
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    destination = Path(log_path) if log_path is not None else _autostart_log_path()
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        output = destination.open("a", encoding="utf-8", buffering=1)
+    except OSError:
+        output = open(os.devnull, "w", encoding="utf-8")
+
+    with output, redirect_stdout(output), redirect_stderr(output):
+        print(
+            f"\n[{datetime.now().isoformat(timespec='seconds')}] "
+            f"Gusto-Autostart (PID {os.getpid()})"
+        )
+        try:
+            result = (run_cli or main)(["serve", *arguments])
+        except SystemExit as error:
+            return _system_exit_code(error.code)
+        except KeyboardInterrupt:
+            return 130
+        except Exception:
+            traceback.print_exc()
+            return 1
+        return 0 if result is None else int(result)
 
 
 # --- Parser -----------------------------------------------------------------

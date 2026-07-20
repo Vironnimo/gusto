@@ -12,6 +12,9 @@ web = ["fastapi", "uvicorn[standard]", "jinja2", "markdown", "python-multipart",
 [project.scripts]
 gusto = "gusto.cli:main"
 
+[project.gui-scripts]
+gusto-autostart = "gusto.cli:autostart_main"
+
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"

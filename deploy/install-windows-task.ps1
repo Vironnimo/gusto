@@ -20,7 +20,7 @@ if (-not $InstallDir) {
 $InstallDir = [IO.Path]::GetFullPath(
     [Environment]::ExpandEnvironmentVariables($InstallDir)
 )
-$VenvPython = Join-Path $InstallDir "Scripts\python.exe"
+$AutostartLauncher = Join-Path $InstallDir "Scripts\gusto-autostart.exe"
 
 if (-not $DataDir) {
     $localData = $env:LOCALAPPDATA
@@ -51,48 +51,77 @@ if ($DryRun) {
     Write-Output "Geplant:"
     Write-Output "  $($bootstrap.Source) $($bootstrapArguments -join ' ')"
     Write-Output "  Autostart-Aufgabe 'Gusto' bei der Windows-Anmeldung"
-    Write-Output "  $VenvPython -m gusto serve --host 0.0.0.0 --port $Port"
+    Write-Output "  `"$AutostartLauncher`" --host 0.0.0.0 --port $Port"
     exit 0
 }
 
-$previousHome = $env:GUSTO_HOME
-$env:GUSTO_HOME = $DataDir
-try {
-    & $bootstrap.Source @bootstrapArguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Die allgemeine Gusto-Installation ist fehlgeschlagen."
+$existingTask = Get-ScheduledTask -TaskName "Gusto" -ErrorAction SilentlyContinue
+$existingTaskWasRunning = $null -ne $existingTask -and $existingTask.State -eq "Running"
+if ($existingTaskWasRunning) {
+    Stop-ScheduledTask -TaskName "Gusto"
+    $deadline = [DateTime]::UtcNow.AddSeconds(15)
+    do {
+        Start-Sleep -Milliseconds 200
+        $existingTask = Get-ScheduledTask -TaskName "Gusto" -ErrorAction Stop
+    } while ($existingTask.State -eq "Running" -and [DateTime]::UtcNow -lt $deadline)
+    if ($existingTask.State -eq "Running") {
+        throw "Die bisherige Gusto-Autostart-Instanz konnte nicht beendet werden."
     }
-} finally {
-    $env:GUSTO_HOME = $previousHome
 }
 
-foreach ($name in @("recipes", "images", "data")) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $DataDir $name) | Out-Null
+try {
+    $previousHome = $env:GUSTO_HOME
+    $env:GUSTO_HOME = $DataDir
+    try {
+        & $bootstrap.Source @bootstrapArguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "Die allgemeine Gusto-Installation ist fehlgeschlagen."
+        }
+    } finally {
+        $env:GUSTO_HOME = $previousHome
+    }
+
+    foreach ($name in @("recipes", "images", "data")) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $DataDir $name) | Out-Null
+    }
+
+    $AutostartLauncher = [IO.Path]::GetFullPath($AutostartLauncher)
+    if (-not (Test-Path -LiteralPath $AutostartLauncher -PathType Leaf)) {
+        throw "Der fensterlose Gusto-Autostart-Launcher fehlt: $AutostartLauncher"
+    }
+
+    $actionArguments = "--host 0.0.0.0 --port $Port"
+    $action = New-ScheduledTaskAction `
+        -Execute $AutostartLauncher `
+        -Argument $actionArguments `
+        -WorkingDirectory $DataDir
+    $user = "$env:USERDOMAIN\$env:USERNAME"
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+    Register-ScheduledTask `
+        -TaskName "Gusto" `
+        -Action $action `
+        -Trigger $trigger `
+        -Description "Gusto Rezept-Webserver beim Anmelden starten" `
+        -Force | Out-Null
+
+    $legacyLauncher = Join-Path $DataDir "start-gusto.ps1"
+    if (Test-Path -LiteralPath $legacyLauncher -PathType Leaf) {
+        Remove-Item -LiteralPath $legacyLauncher -Force
+    }
+    Start-ScheduledTask -TaskName "Gusto"
+} catch {
+    if ($existingTaskWasRunning) {
+        try {
+            Start-ScheduledTask -TaskName "Gusto" -ErrorAction Stop
+        } catch {
+            Write-Warning "Die bisherige Gusto-Aufgabe konnte nach dem Fehler nicht neu gestartet werden: $_"
+        }
+    }
+    throw
 }
-
-$launcher = Join-Path $DataDir "start-gusto.ps1"
-$escapedPython = $VenvPython.Replace("'", "''")
-@(
-    '$ErrorActionPreference = "Stop"'
-    "& '$escapedPython' -m gusto serve --host 0.0.0.0 --port $Port"
-) | Set-Content -LiteralPath $launcher -Encoding utf8
-
-$powershell = (Get-Command powershell.exe -ErrorAction Stop).Source
-$actionArguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcher`""
-$action = New-ScheduledTaskAction `
-    -Execute $powershell `
-    -Argument $actionArguments `
-    -WorkingDirectory $DataDir
-$user = "$env:USERDOMAIN\$env:USERNAME"
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
-Register-ScheduledTask `
-    -TaskName "Gusto" `
-    -Action $action `
-    -Trigger $trigger `
-    -Description "Gusto Rezept-Webserver beim Anmelden starten" `
-    -Force | Out-Null
-Start-ScheduledTask -TaskName "Gusto"
 
 Write-Output ""
 Write-Output "Der optionale Windows-Autostart ist aktiv. Öffne:"
 Write-Output "  http://localhost:$Port"
+Write-Output "Log:"
+Write-Output "  $(Join-Path $DataDir 'gusto-autostart.log')"

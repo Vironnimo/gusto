@@ -59,6 +59,7 @@ Quality gates:
 - `python tests/test_merge.py`
 - `python tests/test_recipes.py`
 - `python tests/test_cli.py`
+- `python tests/test_autostart.py`
 - `python tests/test_paths.py`
 - `python scripts/browser_check.py`
 - `python scripts/pwa_check.py`
@@ -103,6 +104,11 @@ Quality gates:
   highest-precedence override for isolated tests.
 - 2026-07-19: Windows installation persists Gusto's command directory in the
   user `PATH`, making `gusto` directly available to newly opened consoles.
+- 2026-07-20: Windows logon autostart directly invokes the installed
+  `gusto-autostart` GUI launcher instead of PowerShell or the Console CLI. It
+  delegates to the normal `serve` path, preserves exit codes, records output in
+  the active data store, and the adapter stops then migrates/restarts existing
+  scheduled tasks before updating in-use Windows launchers.
 
 ## Domain Maps
 

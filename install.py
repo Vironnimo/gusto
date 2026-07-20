@@ -51,6 +51,15 @@ def gusto_command(venv_dir: Path, platform_name: str | None = None) -> Path:
     return venv_dir / "bin" / "gusto"
 
 
+def ensure_virtual_environment(venv_dir: Path,
+                               platform_name: str | None = None) -> bool:
+    """Create a missing runtime without rewriting an active installation."""
+    if venv_python(venv_dir, platform_name).is_file():
+        return False
+    venv.EnvBuilder(with_pip=True).create(venv_dir)
+    return True
+
+
 def display_command(arguments: list[str]) -> str:
     if sys.platform.startswith("win"):
         return subprocess.list2cmdline(arguments)
@@ -207,12 +216,13 @@ def main(argv: list[str] | None = None) -> int:
     print("Variante: " + ("CLI" if args.cli_only else "CLI + Web"))
     if args.dry_run:
         print("Geplant:")
-        print(f"  {display_command([sys.executable, '-m', 'venv', os.fspath(venv_dir)])}")
+        if not python.is_file():
+            print(f"  {display_command([sys.executable, '-m', 'venv', os.fspath(venv_dir)])}")
         print(f"  {display_command(install)}")
         return 0
 
     try:
-        venv.EnvBuilder(with_pip=True).create(venv_dir)
+        ensure_virtual_environment(venv_dir)
     except Exception as error:
         print(f"Fehler: Virtuelle Umgebung konnte nicht erstellt werden: {error}",
               file=sys.stderr)

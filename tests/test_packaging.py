@@ -10,9 +10,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import struct
 import subprocess
 import sys
 import tempfile
+import venv
 import zipfile
 from pathlib import Path
 
@@ -26,6 +28,11 @@ import install as gusto_installer  # noqa: E402
 manifest = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 assert re.search(r'^name\s*=\s*"gusto"$', manifest, re.MULTILINE)
 assert re.search(r'^gusto\s*=\s*"gusto\.cli:main"$', manifest, re.MULTILINE)
+assert re.search(
+    r'^gusto-autostart\s*=\s*"gusto\.cli:autostart_main"$',
+    manifest,
+    re.MULTILINE,
+)
 assert not (ROOT / "recipe").exists()
 
 installer = ROOT / "install.py"
@@ -48,6 +55,25 @@ assert 'Join-Path $ProjectDir ".venv"' not in windows_autostart_text
 assert "$escapedData" not in windows_autostart_text
 assert "--install-dir" in linux_autostart_text
 assert "$InstallDir" in windows_autostart_text
+assert 'Join-Path $InstallDir "Scripts\\gusto-autostart.exe"' in windows_autostart_text
+assert "-Execute $AutostartLauncher" in windows_autostart_text
+assert "-WindowStyle Hidden" not in windows_autostart_text
+assert '"Scripts\\python.exe"' not in windows_autostart_text
+assert (
+    windows_autostart_text.index("Stop-ScheduledTask")
+    < windows_autostart_text.index("& $bootstrap.Source")
+    < windows_autostart_text.index("Register-ScheduledTask")
+), "an active task must stop before its installed launcher is updated/replaced"
+
+
+def pe_subsystem(executable: Path) -> int:
+    """Read IMAGE_OPTIONAL_HEADER.Subsystem from a Windows PE launcher."""
+    data = executable.read_bytes()
+    assert data[:2] == b"MZ", f"Not a PE executable: {executable}"
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    assert data[pe_offset:pe_offset + 4] == b"PE\0\0"
+    optional_header = pe_offset + 4 + 20
+    return struct.unpack_from("<H", data, optional_header + 68)[0]
 
 with tempfile.TemporaryDirectory(prefix="gusto-app-path-test-") as path_dir:
     path_root = Path(path_dir)
@@ -68,6 +94,13 @@ with tempfile.TemporaryDirectory(prefix="gusto-app-path-test-") as path_dir:
         updated_path, command_dir,
     )
     assert not changed and duplicate_path == updated_path
+
+    existing_runtime = path_root / "existing-runtime"
+    existing_python = gusto_installer.venv_python(existing_runtime)
+    existing_python.parent.mkdir(parents=True)
+    existing_python.write_bytes(b"already installed")
+    assert not gusto_installer.ensure_virtual_environment(existing_runtime)
+    assert existing_python.read_bytes() == b"already installed"
 
 with tempfile.TemporaryDirectory(prefix="gusto-installer-test-") as install_dir:
     dry_run = subprocess.run(
@@ -159,6 +192,55 @@ with tempfile.TemporaryDirectory(prefix="gusto-wheel-test-") as wheel_dir:
     assert not missing_assets, (
         "The wheel is missing web runtime assets: " + ", ".join(sorted(missing_assets))
     )
+
+    if sys.platform.startswith("win"):
+        # Install the real wheel under a path containing spaces.  setuptools
+        # must create two distinct PE launchers: regular Console for the CLI,
+        # GUI for Task Scheduler autostart.
+        runtime = Path(wheel_dir) / "runtime with spaces"
+        venv.EnvBuilder(with_pip=True).create(runtime)
+        runtime_python = runtime / "Scripts" / "python.exe"
+        installed = subprocess.run(
+            [os.fspath(runtime_python), "-m", "pip", "install", "--no-deps",
+             os.fspath(wheels[0])],
+            capture_output=True, text=True,
+        )
+        assert installed.returncode == 0, installed.stdout + installed.stderr
+        console_launcher = runtime / "Scripts" / "gusto.exe"
+        autostart_launcher = runtime / "Scripts" / "gusto-autostart.exe"
+        assert pe_subsystem(console_launcher) == 3, (
+            "the normal gusto launcher must remain a Console application"
+        )
+        assert pe_subsystem(autostart_launcher) == 2, (
+            "the autostart launcher must be a windowless GUI application"
+        )
+
+        isolated_data = Path(wheel_dir) / "data with spaces"
+        gusto_installer.write_instance_settings(runtime, isolated_data)
+        launched = subprocess.run(
+            [os.fspath(autostart_launcher), "--help"],
+            cwd=runtime, capture_output=True,
+        )
+        assert launched.returncode == 0
+        assert launched.stdout == b"" and launched.stderr == b""
+        autostart_log = isolated_data / "gusto-autostart.log"
+        assert "usage: gusto serve" in autostart_log.read_text(encoding="utf-8")
+
+with tempfile.TemporaryDirectory(prefix="gusto-task-path-test-") as task_dir:
+    task_root = Path(task_dir)
+    install_with_spaces = task_root / "Application With Spaces"
+    data_with_spaces = task_root / "Data With Spaces"
+    if sys.platform.startswith("win"):
+        dry_task = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+             "-File", os.fspath(windows_autostart), "-DryRun",
+             "-InstallDir", os.fspath(install_with_spaces),
+             "-DataDir", os.fspath(data_with_spaces), "-Port", "8123"],
+            cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+        )
+        assert dry_task.returncode == 0, dry_task.stdout + dry_task.stderr
+        expected_launcher = install_with_spaces / "Scripts" / "gusto-autostart.exe"
+        assert f'"{expected_launcher}" --host 0.0.0.0 --port 8123' in dry_task.stdout
 
 # A release bundle must install without a checkout or GitHub access. It contains
 # one regular wheel, the standalone installer, and both optional autostart adapters.

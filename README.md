@@ -171,6 +171,16 @@ Windows can start Gusto when the current user signs in:
 powershell -ExecutionPolicy Bypass -File .\deploy\install-windows-task.ps1
 ```
 
+The Windows task calls the installed `gusto-autostart.exe` GUI launcher
+directly, so sign-in does not open a console window. The normal `gusto serve`
+command remains a Console application with its usual output. Autostart stdout,
+stderr, and startup failures are written to
+`%LOCALAPPDATA%\Gusto\gusto-autostart.log`; Task Scheduler also retains the
+process result. Rerunning the adapter stops the active task before updating its
+runtime, replaces an existing PowerShell-based task action, removes its obsolete
+`start-gusto.ps1`, and restarts the task, so an existing installation does not
+need to be recreated and no in-use Windows launcher blocks the update.
+
 Both helpers call the same bundled installer first, use the normal per-user
 application directory, and then add only the platform-specific background-start
 mechanism. `--install-dir` on Linux and `-InstallDir` on Windows override the
@@ -187,6 +197,7 @@ python tests/test_favorites.py     # aliases, rankings, product cards/images
 python tests/test_merge.py         # full-state sync merge rule
 python tests/test_recipes.py       # recipe/search/log/suggestion core logic
 python tests/test_cli.py           # agent-facing JSON CLI
+python tests/test_autostart.py     # windowless Windows launcher and exit codes
 python tests/test_packaging.py     # fresh-install dependency declaration
 python tests/test_paths.py         # Windows/Linux data-directory contract
 ```
