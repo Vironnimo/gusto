@@ -20,13 +20,18 @@ search, log, suggestion, shopping-list, and sync behavior; CLI and web are thin
 shells. The shopping PWA uses localStorage plus full-state last-writer-wins sync
 and tombstones. Shared preferred products are a separate server-owned shopping
 catalog mirrored read-only into browser localStorage for offline display.
+Cross-process transaction locks serialize mutations per catalog, favorites, or
+shopping source of truth while allowing independent domains and reads to run in
+parallel.
 
 ## Conventions
 
 Recipes contain no frontmatter. Metadata is linked to Markdown by the filename
 slug. Product copy and data fields are German; code identifiers are English.
 Writes to JSON are atomic. Features are implemented in core and CLI before web,
-and every CLI command accepts `--json`. MCP is explicitly out of scope.
+and every CLI command accepts `--json`. Complete Core mutations, not only their
+final JSON replacement, hold the matching resource lock. MCP is explicitly out
+of scope.
 
 ## Development
 
@@ -59,6 +64,7 @@ Quality gates:
 - `python tests/test_shopping.py`
 - `python tests/test_favorites.py`
 - `python tests/test_merge.py`
+- `python tests/test_concurrency.py`
 - `python tests/test_recipes.py`
 - `python tests/test_cli.py`
 - `python tests/test_autostart.py`
@@ -121,6 +127,11 @@ Quality gates:
   `skill/gusto/` agent skill alongside the application artifacts. `install.py`
   remains application-only because skill discovery and installation are owned
   by the selected agent host.
+- 2026-07-21: Agent-visible mutations use cross-process catalog, favorites, and
+  shopping transaction locks on Windows and POSIX, preventing lost updates
+  from parallel tool calls without globally serializing independent domains.
+  `gusto shopping add-many` adds a free-text group in one transaction; unique
+  temporary files preserve atomic JSON replacement under contention.
 
 ## Domain Maps
 

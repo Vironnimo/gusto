@@ -23,9 +23,14 @@ import os
 import re
 import shutil
 import sys
+import tempfile
+import threading
+import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field, asdict, fields
 from datetime import date, datetime, timedelta, timezone
+from functools import wraps
 from pathlib import Path
 
 
@@ -33,6 +38,9 @@ from pathlib import Path
 
 SETTINGS_FILENAME = "gusto.settings.json"
 _AUTO_SETTINGS = object()
+_LOCK_TIMEOUT_SECONDS = 30.0
+_THREAD_LOCKS: dict[str, threading.Lock] = {}
+_THREAD_LOCKS_GUARD = threading.Lock()
 
 
 def default_data_root(platform_name: str | None = None,
@@ -191,6 +199,106 @@ def favorite_images_dir() -> Path:
     return images_dir() / "_favorites"
 
 
+# --- Cross-process mutation locks ------------------------------------------
+
+def _resource_lock_path(resource: str) -> Path:
+    """Stable advisory-lock file for one mutable source-of-truth area."""
+    return data_dir() / f".gusto-{resource}.lock"
+
+
+def _thread_lock(path: Path) -> threading.Lock:
+    """Return the process-local companion of an OS-level resource lock."""
+    key = os.fspath(path.resolve())
+    with _THREAD_LOCKS_GUARD:
+        return _THREAD_LOCKS.setdefault(key, threading.Lock())
+
+
+def _acquire_file_lock(path: Path):
+    """Acquire one byte as an advisory lock on Windows or POSIX."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch(exist_ok=True)
+    handle = path.open("r+b", buffering=0)
+    handle.seek(0, os.SEEK_END)
+    if handle.tell() == 0:
+        handle.write(b"\0")
+    deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
+
+    while True:
+        try:
+            handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return handle
+        except OSError as error:
+            if time.monotonic() >= deadline:
+                handle.close()
+                raise ValueError(
+                    "Gusto-Daten sind seit 30 Sekunden durch einen anderen "
+                    "Schreibvorgang gesperrt."
+                ) from error
+            time.sleep(0.02)
+
+
+def _release_file_lock(handle) -> None:
+    try:
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        # Closing the descriptor releases either native advisory lock anyway;
+        # do not strand the process-local lock or mask a completed mutation.
+        pass
+    finally:
+        handle.close()
+
+
+@contextmanager
+def _mutation_locks(*resources: str):
+    """Serialize mutations that share a source of truth.
+
+    A stable sorted order makes multi-resource operations such as
+    shopping_add_recipe deadlock-safe. Reads stay lock-free because persisted
+    files are replaced atomically and therefore expose either the old or new
+    complete state.
+    """
+    paths = sorted({_resource_lock_path(name) for name in resources},
+                   key=lambda path: os.fspath(path))
+    local_locks: list[threading.Lock] = []
+    file_handles = []
+    try:
+        for path in paths:
+            lock = _thread_lock(path)
+            lock.acquire()
+            local_locks.append(lock)
+        for path in paths:
+            file_handles.append(_acquire_file_lock(path))
+        yield
+    finally:
+        for handle in reversed(file_handles):
+            _release_file_lock(handle)
+        for lock in reversed(local_locks):
+            lock.release()
+
+
+def _locked_mutation(*resources: str):
+    """Decorate one complete read-modify-write Core transaction."""
+    def decorate(function):
+        @wraps(function)
+        def locked(*args, **kwargs):
+            with _mutation_locks(*resources):
+                return function(*args, **kwargs)
+        return locked
+    return decorate
+
+
 # --- Data model -------------------------------------------------------------
 
 @dataclass
@@ -302,8 +410,14 @@ def load_recipes() -> list[Recipe]:
     return [Recipe.from_dict(d) for d in json.loads(p.read_text(encoding="utf-8"))]
 
 
-def save_recipes(recipes: list[Recipe]) -> None:
+def _save_recipes_unlocked(recipes: list[Recipe]) -> None:
     _write_json(index_path(), [r.to_dict() for r in recipes])
+
+
+@_locked_mutation("catalog")
+def save_recipes(recipes: list[Recipe]) -> None:
+    """Replace the full catalog through the public locked save primitive."""
+    _save_recipes_unlocked(recipes)
 
 
 def get(slug: str) -> Recipe | None:
@@ -311,11 +425,19 @@ def get(slug: str) -> Recipe | None:
 
 
 def _write_json(path: Path, data) -> None:
-    """Write atomically -- on abort no half-written file is left behind."""
+    """Write atomically through a unique temporary file beside the target."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 # --- Create -----------------------------------------------------------------
@@ -327,6 +449,7 @@ def slugify(title: str) -> str:
     return s or "recipe"
 
 
+@_locked_mutation("catalog")
 def add_recipe(title: str, tags=None, duration_min=None, servings=None,
                content: str | None = None, slug: str | None = None) -> Recipe:
     title = _recipe_title(title)
@@ -343,7 +466,7 @@ def add_recipe(title: str, tags=None, duration_min=None, servings=None,
     r = Recipe(slug=slug, title=title, tags=tags or [],
                duration_min=duration_min, servings=servings)
     recipes.append(r)
-    save_recipes(recipes)
+    _save_recipes_unlocked(recipes)
     return r
 
 
@@ -479,6 +602,7 @@ def load_log(days: int | None = None) -> list[dict]:
     return sorted(entries, key=lambda e: e["date"])
 
 
+@_locked_mutation("catalog")
 def log_cooked(slug: str, when: str | None = None) -> None:
     recipes = load_recipes()
     if not any(r.slug == slug for r in recipes):
@@ -490,7 +614,7 @@ def log_cooked(slug: str, when: str | None = None) -> None:
     for r in recipes:
         if r.slug == slug and (r.last_cooked is None or when > r.last_cooked):
             r.last_cooked = when
-    save_recipes(recipes)
+    _save_recipes_unlocked(recipes)
 
 
 # --- Suggestions ------------------------------------------------------------
@@ -510,6 +634,7 @@ def suggest(days: int = 7, limit: int | None = None) -> list[Recipe]:
 
 # --- Update / delete --------------------------------------------------------
 
+@_locked_mutation("catalog")
 def update_recipe(slug: str, title: str | None = None, tags=None,
                   duration_min=None, servings=None,
                   content: str | None = None, *,
@@ -542,10 +667,11 @@ def update_recipe(slug: str, title: str | None = None, tags=None,
         target.servings = servings
     if content is not None:
         recipe_file(slug).write_text(content, encoding="utf-8")
-    save_recipes(recipes)
+    _save_recipes_unlocked(recipes)
     return target
 
 
+@_locked_mutation("catalog")
 def delete_recipe(slug: str) -> None:
     """Remove the index entry and the .md file. Log entries are kept as
     history."""
@@ -553,7 +679,7 @@ def delete_recipe(slug: str) -> None:
     remaining = [r for r in recipes if r.slug != slug]
     if len(remaining) == len(recipes):
         raise ValueError(f"Kein Rezept mit Slug '{slug}'.")
-    save_recipes(remaining)
+    _save_recipes_unlocked(remaining)
     p = recipe_file(slug)
     if p.exists():
         p.unlink()
@@ -657,6 +783,7 @@ def get_recipe_image(slug: str, image_id: str) -> RecipeImage | None:
     return next((image for image in recipe.images if image.id == image_id), None)
 
 
+@_locked_mutation("catalog")
 def add_recipe_image(slug: str, source: str | Path, role: str = "gallery",
                      caption: str = "", cover: bool = False) -> RecipeImage:
     recipes = load_recipes()
@@ -681,22 +808,24 @@ def add_recipe_image(slug: str, source: str | Path, role: str = "gallery",
         filename="", role=role.strip() or "gallery",
         caption=caption.strip(), created_at=_now_iso(),
     )
+    make_cover = cover or recipe.cover_image is None
     image.filename = f"{image.id}{suffix}"
     destination = recipe_image_path(slug, image)
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_path, destination)
 
     recipe.images.append(image)
-    if cover or recipe.cover_image is None:
+    if make_cover:
         recipe.cover_image_id = image.id
     try:
-        save_recipes(recipes)
+        _save_recipes_unlocked(recipes)
     except Exception:
         destination.unlink(missing_ok=True)
         raise
     return image
 
 
+@_locked_mutation("catalog")
 def update_recipe_image(slug: str, image_id: str, role: str | None = None,
                         caption: str | None = None) -> RecipeImage:
     recipes = load_recipes()
@@ -710,10 +839,11 @@ def update_recipe_image(slug: str, image_id: str, role: str | None = None,
         image.role = role.strip() or "gallery"
     if caption is not None:
         image.caption = caption.strip()
-    save_recipes(recipes)
+    _save_recipes_unlocked(recipes)
     return image
 
 
+@_locked_mutation("catalog")
 def set_recipe_cover(slug: str, image_id: str) -> RecipeImage:
     recipes = load_recipes()
     recipe = next((item for item in recipes if item.slug == slug), None)
@@ -723,10 +853,11 @@ def set_recipe_cover(slug: str, image_id: str) -> RecipeImage:
     if image is None:
         raise ValueError(f"Kein Bild mit id '{image_id}' bei Rezept '{slug}'.")
     recipe.cover_image_id = image.id
-    save_recipes(recipes)
+    _save_recipes_unlocked(recipes)
     return image
 
 
+@_locked_mutation("catalog")
 def remove_recipe_image(slug: str, image_id: str) -> str | None:
     recipes = load_recipes()
     recipe = next((item for item in recipes if item.slug == slug), None)
@@ -740,7 +871,7 @@ def remove_recipe_image(slug: str, image_id: str) -> str | None:
     remaining_ids = {item.id for item in recipe.images}
     if recipe.cover_image_id == image_id or recipe.cover_image_id not in remaining_ids:
         recipe.cover_image_id = recipe.images[0].id if recipe.images else None
-    save_recipes(recipes)
+    _save_recipes_unlocked(recipes)
     recipe_image_path(slug, image).unlink(missing_ok=True)
     folder = recipe_images_dir(slug)
     if folder.exists() and not any(folder.iterdir()):
@@ -913,8 +1044,14 @@ def favorites_load() -> list[ShoppingNeed]:
     return [ShoppingNeed.from_dict(raw) for raw in data.get("needs", [])]
 
 
-def favorites_save(needs: list[ShoppingNeed]) -> None:
+def _favorites_save_unlocked(needs: list[ShoppingNeed]) -> None:
     _write_json(favorites_path(), {"needs": [need.to_dict() for need in needs]})
+
+
+@_locked_mutation("favorites")
+def favorites_save(needs: list[ShoppingNeed]) -> None:
+    """Replace the full preference catalog through its public locked save."""
+    _favorites_save_unlocked(needs)
 
 
 def favorite_get_need(identifier: str) -> ShoppingNeed | None:
@@ -970,6 +1107,7 @@ def _favorite_label_owner(label: str, needs: list[ShoppingNeed],
     return None
 
 
+@_locked_mutation("favorites")
 def favorite_add_need(name: str, aliases: list[str] | None = None) -> ShoppingNeed:
     name = (name or "").strip()
     if not name:
@@ -997,10 +1135,11 @@ def favorite_add_need(name: str, aliases: list[str] | None = None) -> ShoppingNe
         created_at=_now_iso(),
     )
     needs.append(need)
-    favorites_save(needs)
+    _favorites_save_unlocked(needs)
     return need
 
 
+@_locked_mutation("favorites")
 def favorite_update_need(identifier: str, name: str) -> ShoppingNeed:
     needs = favorites_load()
     need = _favorite_need(needs, identifier)
@@ -1019,10 +1158,11 @@ def favorite_update_need(identifier: str, name: str) -> ShoppingNeed:
     need.name = name
     need.aliases = [alias for alias in need.aliases
                     if normalize_shopping_text(alias) != normalize_shopping_text(name)]
-    favorites_save(needs)
+    _favorites_save_unlocked(needs)
     return need
 
 
+@_locked_mutation("favorites")
 def favorite_add_alias(identifier: str, alias: str) -> ShoppingNeed:
     needs = favorites_load()
     need = _favorite_need(needs, identifier)
@@ -1038,10 +1178,11 @@ def favorite_add_alias(identifier: str, alias: str) -> ShoppingNeed:
     if owner is not None:
         raise ValueError(f"'{alias}' gehört bereits zu '{owner.name}'.")
     need.aliases.append(alias)
-    favorites_save(needs)
+    _favorites_save_unlocked(needs)
     return need
 
 
+@_locked_mutation("favorites")
 def favorite_remove_alias(identifier: str, alias: str) -> ShoppingNeed:
     needs = favorites_load()
     need = _favorite_need(needs, identifier)
@@ -1051,7 +1192,7 @@ def favorite_remove_alias(identifier: str, alias: str) -> ShoppingNeed:
                     if normalize_shopping_text(value) != normalized]
     if len(need.aliases) == original_count:
         raise ValueError(f"Kein Alias '{alias}' bei '{need.name}'.")
-    favorites_save(needs)
+    _favorites_save_unlocked(needs)
     return need
 
 
@@ -1083,6 +1224,7 @@ def favorite_image_is_referenced(filename: str) -> bool:
                for need in favorites_load() for product in need.products)
 
 
+@_locked_mutation("favorites")
 def favorite_add_product(identifier: str, name: str, *, brand: str = "",
                          store: str = "", note: str = "",
                          image: str | Path | None = None) -> FavoriteProduct:
@@ -1103,7 +1245,7 @@ def favorite_add_product(identifier: str, name: str, *, brand: str = "",
         product.image_filename, copied = _copy_favorite_image(image)
     need.products.append(product)
     try:
-        favorites_save(needs)
+        _favorites_save_unlocked(needs)
     except Exception:
         if copied is not None:
             copied.unlink(missing_ok=True)
@@ -1111,6 +1253,7 @@ def favorite_add_product(identifier: str, name: str, *, brand: str = "",
     return product
 
 
+@_locked_mutation("favorites")
 def favorite_update_product(identifier: str, product_id: str, *,
                             name: str | None = None, brand: str | None = None,
                             store: str | None = None, note: str | None = None,
@@ -1143,7 +1286,7 @@ def favorite_update_product(identifier: str, product_id: str, *,
     elif remove_image:
         product.image_filename = ""
     try:
-        favorites_save(needs)
+        _favorites_save_unlocked(needs)
     except Exception:
         if copied is not None:
             copied.unlink(missing_ok=True)
@@ -1153,6 +1296,7 @@ def favorite_update_product(identifier: str, product_id: str, *,
     return product
 
 
+@_locked_mutation("favorites")
 def favorite_move_product(identifier: str, product_id: str,
                           position: int) -> ShoppingNeed:
     needs = favorites_load()
@@ -1162,16 +1306,17 @@ def favorite_move_product(identifier: str, product_id: str,
         raise ValueError(f"Position muss zwischen 1 und {len(need.products)} liegen.")
     need.products.remove(product)
     need.products.insert(position - 1, product)
-    favorites_save(needs)
+    _favorites_save_unlocked(needs)
     return need
 
 
+@_locked_mutation("favorites")
 def favorite_remove_product(identifier: str, product_id: str) -> ShoppingNeed:
     needs = favorites_load()
     need = _favorite_need(needs, identifier)
     product = _favorite_product(need, product_id)
     need.products = [item for item in need.products if item.id != product.id]
-    favorites_save(needs)
+    _favorites_save_unlocked(needs)
     if product.image_filename:
         favorite_image_path(product.image_filename).unlink(missing_ok=True)
     folder = favorite_images_dir()
@@ -1180,10 +1325,11 @@ def favorite_remove_product(identifier: str, product_id: str) -> ShoppingNeed:
     return need
 
 
+@_locked_mutation("favorites")
 def favorite_remove_need(identifier: str) -> ShoppingNeed:
     needs = favorites_load()
     need = _favorite_need(needs, identifier)
-    favorites_save([item for item in needs if item.id != need.id])
+    _favorites_save_unlocked([item for item in needs if item.id != need.id])
     for product in need.products:
         if product.image_filename:
             favorite_image_path(product.image_filename).unlink(missing_ok=True)
@@ -1233,27 +1379,59 @@ def shopping_load() -> list[ShoppingItem]:
     return [ShoppingItem.from_dict(d) for d in data.get("items", [])]
 
 
-def shopping_save(items: list[ShoppingItem]) -> None:
+def _shopping_save_unlocked(items: list[ShoppingItem]) -> None:
     """Write items atomically to data/shopping_list.json (uses _write_json).
     File shape: {"items": [ <item-dict>, ... ]}. Tombstones are kept."""
     _write_json(shopping_path(), {"items": [i.to_dict() for i in items]})
 
 
+@_locked_mutation("shopping")
+def shopping_save(items: list[ShoppingItem]) -> None:
+    """Replace the full shopping state through its public locked save."""
+    _shopping_save_unlocked(items)
+
+
 # --- Modify -----------------------------------------------------------------
 
+def _shopping_append(entries: list[tuple[str, str]],
+                     source: str | None = None) -> list[ShoppingItem]:
+    """Append already validated entries while the shopping lock is held."""
+    items = shopping_load()
+    new_items: list[ShoppingItem] = []
+    for text, quantity in entries:
+        now = _now_iso()
+        new_items.append(ShoppingItem(
+            id=new_id(), text=text, quantity=quantity, checked=False,
+            source=source, created_at=now, updated_at=now, deleted=False,
+        ))
+    items.extend(new_items)
+    _shopping_save_unlocked(items)
+    return new_items
+
+
+def _shopping_text(value: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Ein Einkaufslisten-Eintrag braucht einen Text.")
+    return value.strip()
+
+
+@_locked_mutation("shopping")
 def shopping_add(text: str, quantity: str = "", source: str | None = None) -> ShoppingItem:
     """Create, save and return a new item. Sets id (new_id()), created_at and
     updated_at (= _now_iso()), checked=False, deleted=False."""
-    now = _now_iso()
-    item = ShoppingItem(id=new_id(), text=text, quantity=quantity, checked=False,
-                        source=source, created_at=now, updated_at=now,
-                        deleted=False)
-    items = shopping_load()
-    items.append(item)
-    shopping_save(items)
-    return item
+    return _shopping_append([(_shopping_text(text), quantity)], source=source)[0]
 
 
+@_locked_mutation("shopping")
+def shopping_add_many(texts: list[str]) -> list[ShoppingItem]:
+    """Add a non-empty group of free-text entries in one transaction."""
+    if not isinstance(texts, list) or not texts:
+        raise ValueError("Mindestens ein Einkaufslisten-Eintrag ist erforderlich.")
+    entries = [(_shopping_text(text), "") for text in texts]
+    return _shopping_append(entries)
+
+
+@_locked_mutation("catalog", "shopping")
 def shopping_add_recipe(slug: str) -> list[ShoppingItem]:
     """Put all ingredients of a recipe (parse_ingredients on its .md) onto the
     list, source=slug. Returns the NEWLY added items. ValueError if there is no
@@ -1261,16 +1439,8 @@ def shopping_add_recipe(slug: str) -> list[ShoppingItem]:
     r = get(slug)
     if r is None:
         raise ValueError(f"Kein Rezept mit Slug '{slug}'.")
-    items = shopping_load()
-    new_items: list[ShoppingItem] = []
-    for ingredient in parse_ingredients(r.content()):
-        now = _now_iso()
-        new_items.append(ShoppingItem(id=new_id(), text=ingredient, quantity="",
-                                      checked=False, source=slug, created_at=now,
-                                      updated_at=now, deleted=False))
-    items.extend(new_items)
-    shopping_save(items)
-    return new_items
+    entries = [(ingredient, "") for ingredient in parse_ingredients(r.content())]
+    return _shopping_append(entries, source=slug)
 
 
 def shopping_list(include_done: bool = True,
@@ -1285,6 +1455,7 @@ def shopping_list(include_done: bool = True,
     return items
 
 
+@_locked_mutation("shopping")
 def shopping_toggle(item_id: str, checked: bool | None = None) -> ShoppingItem:
     """Set the done checkmark. checked=None toggles; otherwise the value is set.
     Updates updated_at and returns the item. ValueError if the id is unknown or
@@ -1295,10 +1466,11 @@ def shopping_toggle(item_id: str, checked: bool | None = None) -> ShoppingItem:
         raise ValueError(f"Kein Einkauf-Item mit id '{item_id}'.")
     target.checked = (not target.checked) if checked is None else checked
     target.updated_at = _now_iso(target.updated_at)
-    shopping_save(items)
+    _shopping_save_unlocked(items)
     return target
 
 
+@_locked_mutation("shopping")
 def shopping_remove(item_id: str) -> None:
     """Mark item as a tombstone: deleted=True + update updated_at (do NOT hard-
     delete from the file, so the deletion syncs). ValueError if the id is
@@ -1309,9 +1481,10 @@ def shopping_remove(item_id: str) -> None:
         raise ValueError(f"Kein Einkauf-Item mit id '{item_id}'.")
     target.deleted = True
     target.updated_at = _now_iso(target.updated_at)
-    shopping_save(items)
+    _shopping_save_unlocked(items)
 
 
+@_locked_mutation("shopping")
 def shopping_clear_done() -> int:
     """Mark all done (checked, not yet tombstone) items as a tombstone
     (deleted=True + updated_at). Returns the number of items removed this way."""
@@ -1323,12 +1496,13 @@ def shopping_clear_done() -> int:
             i.updated_at = _now_iso(i.updated_at)
             count += 1
     if count:
-        shopping_save(items)
+        _shopping_save_unlocked(items)
     return count
 
 
 # --- Sync -------------------------------------------------------------------
 
+@_locked_mutation("shopping")
 def shopping_merge(remote_items: list[dict]) -> list[ShoppingItem]:
     """Full-state sync: merge remote_items (raw item dicts from the client) into
     the local list, save the result and return it (incl. tombstones).
@@ -1372,5 +1546,5 @@ def shopping_merge(remote_items: list[dict]) -> list[ShoppingItem]:
     # ids that exist only locally stay unchanged.
 
     result = list(merged.values())
-    shopping_save(result)
+    _shopping_save_unlocked(result)
     return result

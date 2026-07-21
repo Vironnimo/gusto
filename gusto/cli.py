@@ -511,6 +511,17 @@ def cmd_shopping_add(args):
         _print_shopping_item(item, False, prefix="Hinzugefuegt: ")
 
 
+def cmd_shopping_add_many(args):
+    try:
+        items = core.shopping_add_many(args.texts)
+    except ValueError as e:
+        sys.exit(str(e))
+    if args.json:
+        _dump([item.to_dict() for item in items])
+    else:
+        print(f"{len(items)} Einkaufsposten hinzugefuegt.")
+
+
 def cmd_shopping_add_recipe(args):
     try:
         items = core.shopping_add_recipe(args.slug)
@@ -944,6 +955,16 @@ def build_parser() -> argparse.ArgumentParser:
     ep.add_argument("text", help='Was gekauft werden soll, z.B. "200 g Spaghetti".')
     ep.add_argument("--quantity", help="Optionale Mengenangabe.")
     ep.set_defaults(func=cmd_shopping_add)
+
+    ep = esub.add_parser(
+        "add-many", parents=[base],
+        help="Mehrere Eintraege gemeinsam hinzufuegen.",
+    )
+    ep.add_argument(
+        "texts", nargs="+",
+        help='Was gekauft werden soll, jeweils als eigenes Argument.',
+    )
+    ep.set_defaults(func=cmd_shopping_add_many)
 
     ep = esub.add_parser("add-recipe", parents=[base],
                          help="Alle Zutaten eines Rezepts auf die Liste setzen.")

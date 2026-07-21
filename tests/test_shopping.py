@@ -156,6 +156,16 @@ def main():
     check([i.text for i in visible] == ["100 g Speck"],
           "After clear_done only the open Speck item may be visible.")
 
+    # --- shopping_add_many --------------------------------------------------
+    batch = core.shopping_add_many(["Brot", "6 Eier", "200 g Spaghetti"])
+    check([item.text for item in batch] == ["Brot", "6 Eier", "200 g Spaghetti"],
+          "shopping_add_many must preserve all requested entries and their order.")
+    check([item.text for item in core.shopping_list()][-3:]
+          == ["Brot", "6 Eier", "200 g Spaghetti"],
+          "shopping_add_many must persist the complete group.")
+    expect_valueerror(core.shopping_add_many, [])
+    expect_valueerror(core.shopping_add_many, ["Brot", "  "])
+
     print(f"OK - {checks} checks passed (GUSTO_HOME={core.project_root()})")
 
 

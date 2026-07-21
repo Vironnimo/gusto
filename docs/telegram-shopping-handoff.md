@@ -28,6 +28,7 @@ Datenordner setzen; `gusto home --json` zeigt die aktive Auflösung.
 | `shopping check <id>` | das aktualisierte Item (`checked:true`), `updated_at` gebumpt |
 | `shopping uncheck <id>` | das aktualisierte Item (`checked:false`) |
 | `shopping add "<text>" [--quantity M]` | das erzeugte Item (Einzelobjekt) |
+| `shopping add-many "<text>" ...` | alle Einträge atomar hinzufügen (Array in Argumentreihenfolge) |
 | `shopping add-recipe <slug>` | Array der erzeugten Items (`source=slug`) |
 | `shopping remove <id>` | Tombstone (sync-sicher, kein Hard-Delete) |
 | `shopping clear` | `{ "removed": N }` — entfernt (tombstoned) alle gehakten |
@@ -85,8 +86,9 @@ Item-Form:
 2. Nachricht senden, `message_id` merken.
 3. Tap kommt als `callback_query` → `id` aus `data` → in Gusto umschalten →
    `answerCallbackQuery` → Nachricht neu rendern & editieren.
-4. Optional: „Erledigte entfernen"-Button → `gusto shopping clear`; neue
-   Einträge per Chat („+ Milch") → `gusto shopping add`; danach neu rendern.
+4. Optional: „Erledigte entfernen"-Button → `gusto shopping clear`; einen
+   neuen Eintrag per Chat („+ Milch") → `gusto shopping add`, mehrere bekannte
+   Einträge gemeinsam → `gusto shopping add-many`; danach neu rendern.
 
 ## Zuerst untersuchen (bitte vor dem Bauen berichten)
 

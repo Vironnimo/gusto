@@ -111,10 +111,20 @@ def main():
     item = as_json("shopping", "add", "Milch", "--quantity", "1 L")
     check(item["text"] == "Milch" and item["quantity"] == "1 L",
           "shopping add --json must return the new item")
+    batch = as_json(
+        "shopping", "add-many", "Brot", "6 Eier", "200 g Spaghetti",
+    )
+    check([entry["text"] for entry in batch]
+          == ["Brot", "6 Eier", "200 g Spaghetti"],
+          "shopping add-many --json must return the complete created group")
+    check(all(entry["quantity"] == "" for entry in batch),
+          "shopping add-many must keep each free-text entry self-contained")
     checked = as_json("shopping", "check", item["id"])
     check(checked["checked"] is True, "shopping check --json must set checked")
-    check(as_json("shopping", "list", "--pending") == [],
-          "shopping list --pending --json must hide checked items")
+    pending = as_json("shopping", "list", "--pending")
+    check([entry["text"] for entry in pending]
+          == ["Brot", "6 Eier", "200 g Spaghetti"],
+          "shopping list --pending --json must hide only checked items")
 
     need = as_json(
         "favorites", "add", "Pizzateig", "--alias", "1 Rolle Pizzateig",

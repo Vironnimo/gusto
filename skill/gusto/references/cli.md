@@ -96,12 +96,20 @@ for machine-readable output.
 - `shopping list [--pending] [--json]` — a **flat array** of items (checked ones
   included, marked `checked:true`); `--pending` = only unchecked.
 - `shopping add "<text>" [--quantity M] [--json]` — returns the created item.
+- `shopping add-many "<text>" ... [--json]` — add a non-empty free-text group
+  in one transaction; returns the array of created items in argument order.
 - `shopping add-recipe <slug> [--json]` — add all ingredients of a recipe
   (`source = slug`); returns the array of created items.
 - `shopping check <id> [--json]` / `shopping uncheck <id> [--json]` — return the
   updated item; an unknown `id` prints to stderr and exits `1`.
 - `shopping remove <id> [--json]` — tombstone (sync-safe; never hard-deleted).
 - `shopping clear [--json]` — tombstone all checked items; returns `{ "removed": N }`.
+
+Mutations sharing the catalog, favorites, or shopping store are serialized
+across Gusto processes. Independent adds, image imports, and item-specific
+checks may run in parallel without lost updates. Calls with dependencies or
+ordering semantics must stay sequential. Direct recipe/category file edits and
+interactive `edit` bypass these locks.
 
 ### Server
 

@@ -49,6 +49,9 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
 ## Conventions
 
 - JSON writes use the shared atomic writer. New catalog behavior belongs in core before either surface.
+- Every catalog mutation holds the cross-process catalog lock across its full
+  read-modify-write transaction. This includes the cooking log and owned recipe
+  images because both also update catalog state.
 - Web create and edit always reconstruct the first Markdown line from the separate title field.
 - Images are copied into Gusto storage after extension and header/dimension validation. The first image becomes the cover unless another is explicitly selected.
 - Before core receives a browser photo, the web shell applies EXIF orientation,
@@ -62,6 +65,10 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
 ## Constraints & Gotchas
 
 - Search reads both indexed metadata and the Markdown body, so ingredient text participates in full-text results.
+- Separate Gusto processes may safely create recipes, record cooking, or import
+  images concurrently without losing index/log/image metadata. Their final
+  order can follow lock acquisition order. Direct Markdown/category edits and
+  the interactive editor bypass the Core lock and remain caller-coordinated.
 - A duration limit excludes recipes whose duration is unknown, not only recipes over the limit.
 - Suggestions intentionally only exclude recently cooked recipes and order the rest by oldest `last_cooked`; meal intelligence belongs to the calling agent.
 - Removing the selected cover promotes the first remaining image. Deleting a recipe removes its Markdown and image folder but preserves cooking history.

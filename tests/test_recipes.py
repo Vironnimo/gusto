@@ -101,6 +101,8 @@ def main():
     finished = core.add_recipe_image(
         pasta.slug, first_source, role="result", caption="Fertig angerichtet",
     )
+    check(core.get(pasta.slug).cover_image_id == finished.id,
+          "the first image must persist its id as the selected cover")
     step = core.add_recipe_image(
         pasta.slug, second_source, role="step", caption="Sauce einrühren",
     )

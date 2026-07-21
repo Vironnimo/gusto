@@ -19,11 +19,27 @@ English.)
 - Read-only: `home`, `list`, `search`, `show`, `tags`, `log`, `suggest`,
   `check`, `image list`, `shopping list`, and `favorites list|show|match`.
 - Change state: `new`, `set`, `delete`, `cooked`, `image add|set|cover|remove`,
-  `shopping add|add-recipe|check|uncheck|remove|clear`, the remaining
+  `shopping add|add-many|add-recipe|check|uncheck|remove|clear`, the remaining
   `favorites …` commands, and `uninstall` (only when the user explicitly asks
   to remove the installed application).
 - Interactive/runtime: `edit` opens the configured editor and may change the
   recipe body; `serve` starts the long-running web server.
+
+## Parallel calls
+
+- Read-only commands may always run in parallel.
+- Gusto serializes mutations that share its catalog, favorites, or shopping
+  source of truth. Independent shopping adds/checks, recipe image imports, and
+  catalog/favorite additions therefore retain every change even when tools are
+  called in parallel.
+- Prefer one `gusto shopping add-many "Milch" "Brot" "6 Eier" --json` for a
+  known group: it adds the whole group in one transaction and returns an array.
+- Keep dependent calls sequential: create a recipe/need before using its id or
+  slug. Also serialize operations whose intended result depends on order, such
+  as `product-move` with `product-add`, `image cover` with `image remove`, or
+  `shopping clear` with `check`.
+- Direct Markdown/category writes and interactive `edit` run outside the Core
+  locks. Never perform them concurrently with another write to the same files.
 
 ## Workflows
 
@@ -71,6 +87,7 @@ English.)
   `<path>/recipes/<slug>.md`; do not infer the store from the working directory.
 - `gusto cooked <slug>` — record a cook (updates the log + `last_cooked`).
 - `gusto shopping add-recipe <slug>` (all ingredients), `shopping add "<text>"`,
+  `shopping add-many "<text>" ...` (one atomic group),
   `shopping list [--pending]`, `shopping check|uncheck|remove <id>`,
   `shopping clear`.
 
@@ -121,8 +138,9 @@ stays the source of truth. The keyboard has **two kinds of buttons**:
 - **"Fertig" saves the current checked-state to Gusto; it does not remove bought
   items.** To make "Fertig" also clear the bought ones, additionally run
   `gusto shopping clear` (tombstones all checked) after the sync.
-- **Manage** (then re-render by posting a fresh list): add `gusto shopping add
-  "<text>"`; clear done `gusto shopping clear` → `{ "removed": N }`; open-only
+- **Manage** (then re-render by posting a fresh list): add one with `gusto
+  shopping add "<text>"`, or a known group with `gusto shopping add-many
+  "<text>" ...`; clear done `gusto shopping clear` → `{ "removed": N }`; open-only
   `gusto shopping list --pending --json`. A rebuild (`add-recipe`) mints new ids
   → send a fresh list, don't reuse the old buttons. Background:
   `docs/telegram-shopping-handoff.md`.

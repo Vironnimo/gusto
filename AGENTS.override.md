@@ -118,11 +118,22 @@ gusto favorites product-remove <need> <id>
 
 gusto shopping list [--pending]                  Show the shopping list
 gusto shopping add "<text>" [--quantity M]        Add an entry
+gusto shopping add-many "<text>" ...              Add several entries atomically
 gusto shopping add-recipe <slug>                   All ingredients of a recipe -> list
 gusto shopping check|uncheck <id>              Check / uncheck an entry
 gusto shopping remove <id>                     Remove an entry (tombstone)
 gusto shopping clear                           Remove done (checked) entries
 ```
+
+**Parallel agent calls:** Read-only commands may always run in parallel. Gusto
+serializes mutations that share the catalog, favorites, or shopping source of
+truth, so independent adds, image imports, and checkbox updates do not lose
+data. Prefer one `shopping add-many` call for a known group. Keep dependent or
+order-sensitive calls sequential (`new` before `image add`, `favorites add`
+before `product-add`, and `product-move` / `image cover` / `shopping clear`
+relative to mutations they order or remove). Direct Markdown/category edits
+and the interactive `edit` command are outside these Core locks and must not
+race another write to the same files.
 
 ## Typical tasks (agent)
 

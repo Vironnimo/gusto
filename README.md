@@ -134,6 +134,7 @@ gusto favorites match "200 g Spaghetti"  # show the ranked household choice
 gusto favorites add "Spaghetti" --alias "200 g Spaghetti"
 gusto favorites product-add Spaghetti "De Cecco n. 12" --brand "De Cecco" --image photo.png
 gusto favorites product-move Spaghetti <id> 1
+gusto shopping add-many "Milch" "Brot" "6 Eier"  # one atomic group
 gusto uninstall                     # interactive: app only or app + data
 ```
 

@@ -31,6 +31,11 @@ of inferring data paths from the checkout.
 `--clear-duration` and `--clear-servings`; these are mutually exclusive with
 setting the corresponding value.
 
+`gusto shopping add-many "<text>" ...` forwards a non-empty group to one Core
+transaction. JSON output is the created-item array in argument order; the
+existing singular `shopping add` continues returning one object and retains
+its optional structured `--quantity` field.
+
 `gusto uninstall` owns installed-runtime removal, not catalog deletion. A bare
 TTY call shows the verified application/data paths and offers app-only,
 app-plus-data, or cancel. Agents use `--keep-data --json` or the deliberately
@@ -129,6 +134,10 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
 - The same client performs deterministic name/alias lookup for presentation;
   keep its case/whitespace normalization aligned with core and never add fuzzy
   matching only in JavaScript.
+- Agent-facing mutations are concurrency-safe only when they pass through Core.
+  Resource locks protect catalog, favorites, and shopping independently; calls
+  whose meaning depends on order must still be sequenced. `gusto edit` and
+  direct store-file writes remain outside that boundary.
 - Run `tests/test_packaging.py` after package, dependency, command, or import changes and `tests/test_cli.py` after CLI changes. Any web-visible change also requires `scripts/browser_check.py`; shopping PWA behavior additionally requires `scripts/pwa_check.py`.
 - Run `tests/test_autostart.py` after changing the GUI launcher or Windows
   task contract. On Windows, the packaging test installs a real wheel under a
