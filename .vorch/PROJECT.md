@@ -141,7 +141,7 @@ Quality gates:
   durations. Sourced single shopping adds validate their recipe and participate
   in the import guard, whose rejection now reports the blocking count; CLI docs
   flag that cleared tombstones have no restore command. Release version is
-  0.1.1.
+  0.1.2.
 
 ## Domain Maps
 
