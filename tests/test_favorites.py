@@ -52,7 +52,11 @@ def main():
     expect_valueerror(core.favorite_add_need, "1 Rolle Pizzateig")
 
     core.favorite_add_alias(need.id, "Frischer Pizzateig")
+    unchanged = core.favorite_add_alias(need.id, "  FRISCHER   PIZZATEIG ")
+    check(unchanged.aliases == ["1 Rolle Pizzateig", "Frischer Pizzateig"],
+          "repeating an alias on the same need must be an idempotent retry")
     expect_valueerror(core.favorite_add_need, "Anderer Teig", ["Frischer Pizzateig"])
+    expect_valueerror(core.favorite_add_need, "Pizzateig")
     renamed = core.favorite_update_need(need.id, "Pizza-Fertigteig")
     check("Pizzateig" in renamed.aliases and core.favorite_match("Pizzateig").id == need.id,
           "renaming must retain the old canonical name as an alias")
@@ -107,6 +111,7 @@ def main():
     remaining = core.favorite_remove_product(need.id, second.id)
     check([product.id for product in remaining.products] == [first.id],
           "removing a product must preserve the remaining ranking")
+    expect_valueerror(core.favorite_remove_product, need.id, second.id)
     removed = core.favorite_remove_need(need.id)
     check(removed.id == need.id and core.favorites_load() == [],
           "removing a need must remove its whole catalog entry")

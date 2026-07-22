@@ -25,14 +25,14 @@ Datenordner setzen; `gusto home --json` zeigt die aktive Auflösung.
 |---|---|
 | `shopping list` | **flaches Array** aller nicht-`deleted` Items (gehakte inklusive, mit `checked:true`) |
 | `shopping list --pending` | dasselbe Array, aber nur `checked:false` |
-| `shopping check <id>` | das aktualisierte Item (`checked:true`), `updated_at` gebumpt |
-| `shopping uncheck <id>` | das aktualisierte Item (`checked:false`) |
+| `shopping check <id>` | das Item (`checked:true`); `updated_at` nur bei Zustandswechsel |
+| `shopping uncheck <id>` | das Item (`checked:false`); `updated_at` nur bei Zustandswechsel |
 | `shopping add "<text>" [--quantity M]` | das erzeugte Item (Einzelobjekt) |
 | `shopping add-many "<text>" ...` | alle Einträge atomar hinzufügen (Array in Argumentreihenfolge) |
-| `shopping add-recipe <slug>` | Array der erzeugten Items (`source=slug`) |
-| `shopping remove <id>` | Tombstone (sync-sicher, kein Hard-Delete) |
+| `shopping add-recipe <slug>` | Array der erzeugten Items (`source=slug`); leerer oder bereits sichtbarer Rezeptimport ist ein Fehler |
+| `shopping remove <id>` | Tombstone; Wiederholung ist ein No-op ohne neuen Zeitstempel |
 | `shopping clear` | `{ "removed": N }` — entfernt (tombstoned) alle gehakten |
-| unbekannte `id` | Fehlermeldung auf stderr + **exit code 1** |
+| erwarteter Fehler mit `--json` | `{ "ok": false, "error": "…" }` auf stdout + **exit code 1** |
 
 Item-Form:
 
@@ -108,14 +108,14 @@ Item-Form:
 - Immer `answerCallbackQuery` aufrufen, auch wenn nichts sichtbar passiert.
 - **Toggle-Semantik:** Tap auf ✅ soll wieder abhaken (Korrektur) → je nach
   aktuellem Status `check`/`uncheck`.
-- Unbekannte `id` → exit 1: den Exit-Code prüfen, nicht nur stdout.
+- Unbekannte `id` → JSON-Fehler auf stdout + exit 1: beides prüfen.
 - **Gruppen-Chat** = geteilte Haushaltsliste (alle sehen/tippen dieselbe
   Nachricht) — gewünscht. In Gruppen ggf. Bot-„Privacy Mode" beachten
   (Button-Callbacks funktionieren unabhängig davon; nur Text-Kommandos bräuchten
   evtl. `/cmd@bot`).
-- Wird die Liste neu aufgebaut (z. B. via `add-recipe`), entstehen **neue
-  `id`s** → Listen-Nachricht neu senden/editieren statt alte Buttons weiter zu
-  nutzen.
+- Wird nach Entfernen der alten, quellbezogenen Items erneut via `add-recipe`
+  importiert, entstehen **neue `id`s** → Listen-Nachricht neu senden/editieren
+  statt alte Buttons weiter zu nutzen.
 - Ein Edit pro Tap ist ok; Telegram-Rate-Limits nur im Hinterkopf behalten.
 
 ## In einem Satz

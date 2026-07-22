@@ -165,12 +165,18 @@ def cmd_log(args):
 
 
 def cmd_suggest(args):
-    candidates = core.suggest(days=args.days, limit=args.limit)
+    try:
+        candidates = core.suggest(days=args.days, limit=args.limit)
+    except ValueError as error:
+        sys.exit(str(error))
     if args.json:
         _dump([r.to_dict() for r in candidates])
         return
     if not candidates:
-        print(f"Keine Vorschlaege – in den letzten {args.days} Tagen war schon alles dran.")
+        if args.limit == 0:
+            print("Keine Vorschlaege angefordert (--limit 0).")
+        else:
+            print(f"Keine Vorschlaege – in den letzten {args.days} Tagen war schon alles dran.")
         return
     print(f"Vorschlaege (nicht in den letzten {args.days} Tagen gekocht):")
     for r in candidates:
@@ -217,6 +223,15 @@ def cmd_check(args):
 
 
 def cmd_set(args):
+    if not any([
+        args.title is not None,
+        args.tags is not None,
+        args.duration is not None,
+        args.servings is not None,
+        args.clear_duration,
+        args.clear_servings,
+    ]):
+        sys.exit("Gib mindestens eine Änderung an.")
     tags = None
     if args.tags is not None:
         tags = [t.strip() for t in args.tags.split(",") if t.strip()]
@@ -335,7 +350,9 @@ def cmd_favorites_list(args):
         print("Noch keine Lieblingsprodukte hinterlegt.")
         return
     for need in needs:
-        print(f"  {need.id}  {need.name}  ({len(need.products)} Produkt(e))")
+        count = len(need.products)
+        noun = "Produkt" if count == 1 else "Produkte"
+        print(f"  {need.id}  {need.name}  ({count} {noun})")
 
 
 def cmd_favorites_show(args):
@@ -794,7 +811,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("cooked", parents=[base], help="Rezept als gekocht eintragen.")
     sp.add_argument("slug")
-    sp.add_argument("--date", help="ISO-Datum YYYY-MM-DD (Standard: heute).")
+    sp.add_argument(
+        "--date", help="Gültiges ISO-Datum YYYY-MM-DD, nicht in der Zukunft "
+                       "(Standard: heute).",
+    )
     sp.set_defaults(func=cmd_cooked)
 
     sp = sub.add_parser("log", parents=[base], help="Koch-Logbuch anzeigen.")
@@ -804,7 +824,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("suggest", parents=[base], help="Kandidaten fuers naechste Essen.")
     sp.add_argument("--days", type=int, default=7,
                     help="In den letzten N Tagen Gekochtes wird ausgeschlossen.")
-    sp.add_argument("--limit", type=int, help="Hoechstens N Vorschlaege.")
+    sp.add_argument(
+        "--limit", type=int,
+        help="Hoechstens N Vorschlaege (nichtnegative ganze Zahl).",
+    )
     sp.set_defaults(func=cmd_suggest)
 
     sp = sub.add_parser("check", parents=[base], help="Konsistenz Index <-> .md pruefen.")
@@ -967,7 +990,7 @@ def build_parser() -> argparse.ArgumentParser:
     ep.set_defaults(func=cmd_shopping_add_many)
 
     ep = esub.add_parser("add-recipe", parents=[base],
-                         help="Alle Zutaten eines Rezepts auf die Liste setzen.")
+                         help="Zutaten einmalig aus einem Rezept importieren.")
     ep.add_argument("slug")
     ep.set_defaults(func=cmd_shopping_add_recipe)
 
@@ -1026,4 +1049,10 @@ def main(argv=None) -> None:
         except Exception:
             pass
     args = build_parser().parse_args(argv)
-    args.func(args)
+    try:
+        args.func(args)
+    except SystemExit as error:
+        if args.json and isinstance(error.code, str):
+            _dump({"ok": False, "error": error.code})
+            raise SystemExit(1) from None
+        raise

@@ -20,7 +20,9 @@ general installation and supported-platform contracts owned here.
 The installed application command is `gusto`, backed by `gusto.cli:main`;
 `python -m gusto` reaches the same entry point. Every command accepts `--json`,
 the CLI configures both stdout and stderr as UTF-8 on Windows, and it converts
-expected core `ValueError` failures into non-zero command exits.
+expected command failures into `{ "ok": false, "error": "..." }` on stdout
+with exit 1. Parser/usage errors happen before command dispatch and remain plain
+stderr with exit 2.
 
 `gusto home` reports the active store root, its resolution source, and the
 normal platform default. It also reports the instance `gusto.settings.json`
@@ -29,7 +31,8 @@ of inferring data paths from the checkout.
 
 `gusto set` can remove optional duration or serving metadata with
 `--clear-duration` and `--clear-servings`; these are mutually exclusive with
-setting the corresponding value.
+setting the corresponding value, and a call with no requested change is an
+explicit command error.
 
 `gusto shopping add-many "<text>" ...` forwards a non-empty group to one Core
 transaction. JSON output is the created-item array in argument order; the

@@ -138,7 +138,15 @@ gusto shopping add-many "Milch" "Brot" "6 Eier"  # one atomic group
 gusto uninstall                     # interactive: app only or app + data
 ```
 
-Every command takes `--json` for machine-readable output.
+Every command takes `--json` for machine-readable output. Expected command
+failures then return `{ "ok": false, "error": "..." }` on stdout with exit
+code 1; parser/usage errors remain on stderr with exit code 2.
+
+`cooked --date` accepts only a valid `YYYY-MM-DD` no later than today;
+`suggest --limit` is nonnegative and `0` returns no candidates. `set` requires
+at least one change. `shopping add-recipe` rejects recipes without importable
+ingredients and prevents a second import while visible items from that recipe
+remain on the list.
 
 ## Layout
 

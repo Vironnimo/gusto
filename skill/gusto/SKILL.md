@@ -11,6 +11,10 @@ for machine-readable output. `suggest` is intentionally dumb — the judgment fo
 `list`. (Recipe content and tag values are German; commands and JSON keys are
 English.)
 
+With `--json`, expected command failures are also JSON on stdout:
+`{"ok": false, "error": "..."}` with exit code 1. Argument/usage errors remain
+plain stderr with exit code 2.
+
 ## Invocation
 
 - Development checkout: `python -m gusto <command> --json`.
@@ -83,10 +87,15 @@ English.)
 **Edit · log · shopping**
 - `gusto set <slug> --tags a,b --duration N` (`--tags` replaces the list);
   `--clear-duration` / `--clear-servings` remove optional numeric metadata.
+  At least one change flag is required.
   For a headless body edit, resolve `gusto home --json` and rewrite
   `<path>/recipes/<slug>.md`; do not infer the store from the working directory.
-- `gusto cooked <slug>` — record a cook (updates the log + `last_cooked`).
-- `gusto shopping add-recipe <slug>` (all ingredients), `shopping add "<text>"`,
+- `gusto cooked <slug>` — record today; an explicit `--date` must be a valid
+  `YYYY-MM-DD` no later than today (updates the log + `last_cooked`).
+- `gusto shopping add-recipe <slug>` imports non-empty ingredients only when no
+  visible items sourced from that recipe remain. It does not merge text or
+  quantities; use explicit free-text adds for an intentional second need.
+  Other operations: `shopping add "<text>"`,
   `shopping add-many "<text>" ...` (one atomic group),
   `shopping list [--pending]`, `shopping check|uncheck|remove <id>`,
   `shopping clear`.
@@ -141,8 +150,9 @@ stays the source of truth. The keyboard has **two kinds of buttons**:
 - **Manage** (then re-render by posting a fresh list): add one with `gusto
   shopping add "<text>"`, or a known group with `gusto shopping add-many
   "<text>" ...`; clear done `gusto shopping clear` → `{ "removed": N }`; open-only
-  `gusto shopping list --pending --json`. A rebuild (`add-recipe`) mints new ids
-  → send a fresh list, don't reuse the old buttons. Background:
+  `gusto shopping list --pending --json`. After old sourced items are removed,
+  a fresh `add-recipe` import mints new ids → send a fresh list, don't reuse the
+  old buttons. Background:
   `docs/telegram-shopping-handoff.md`.
 
 ## Data model

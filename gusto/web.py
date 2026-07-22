@@ -185,13 +185,13 @@ def index(request: Request, q: str = "", tag: list[str] = Query(default=[])):
 
 
 @app.get("/recipe/{slug}", response_class=HTMLResponse)
-def recipe_detail(request: Request, slug: str):
+def recipe_detail(request: Request, slug: str, error: str = ""):
     r = core.get(slug)
     if r is None:
         raise StarletteHTTPException(status_code=404)
     return templates.TemplateResponse(request, "recipe.html", {
         "nav": "recipes", "title": r.title,
-        "r": r, "content_html": _render(r.content()),
+        "r": r, "content_html": _render(r.content()), "error": error,
     })
 
 
@@ -568,8 +568,10 @@ def shopping_clear_route():
 def recipe_to_shopping(slug: str):
     try:
         core.shopping_add_recipe(slug)
-    except ValueError:
-        raise StarletteHTTPException(status_code=404)
+    except ValueError as error:
+        if core.get(slug) is None:
+            raise StarletteHTTPException(status_code=404)
+        return _error_redirect(f"/recipe/{slug}", str(error))
     return RedirectResponse("/shopping", status_code=303)
 
 

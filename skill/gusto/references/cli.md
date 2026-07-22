@@ -5,6 +5,10 @@ releases use `gusto <command>` in a newly opened Windows console or
 `~/.local/opt/gusto/bin/gusto <command>` on Linux. Every command accepts `--json`
 for machine-readable output.
 
+Expected command failures with `--json` return
+`{ "ok": false, "error": "<German message>" }` on stdout and exit `1`.
+Argument and usage errors from the parser remain plain stderr and exit `2`.
+
 ## Commands
 
 ### Reading
@@ -29,7 +33,8 @@ for machine-readable output.
 - `log [--days N] [--json]`
   Cooking log. Human output is newest-first.
 - `suggest [--days N] [--limit N] [--json]`
-  Recipes not cooked in the last N days (default 7), longest-ago first.
+  Recipes not cooked in the last N days (default 7), longest-ago first. `limit`
+  must be nonnegative; `0` returns an empty array.
 - `check [--json]`
   Consistency of index ↔ `.md` files, recipe image metadata ↔ stored files,
   preferred-product aliases/images, plus tags not assigned to a category.
@@ -42,13 +47,14 @@ for machine-readable output.
 - `set <slug> [--title ...] [--tags a,b]
   [--duration N|--clear-duration] [--servings N|--clear-servings] [--json]`
   Update metadata. `--tags` **replaces** the whole list; the clear flags remove
-  optional duration or serving values.
+  optional duration or serving values. At least one change is required.
 - `edit <slug>`
   Open the `.md` in `$EDITOR`. Interactive; for a headless agent, first read
   `gusto home --json`, then rewrite `<path>/recipes/<slug>.md` directly. Never
   assume the checkout's `recipes/` directory is the active store.
 - `cooked <slug> [--date YYYY-MM-DD] [--json]`
-  Add a log entry (default: today) and bump `last_cooked`.
+  Add a log entry (default: today) and bump `last_cooked`. An explicit date
+  must be a valid calendar date in that exact format and cannot be in the future.
 - `delete <slug> [--json]`
   Remove the `.md`, index entry, and all stored images. Log history is kept.
 
@@ -79,7 +85,8 @@ for machine-readable output.
   their owned images.
 - `favorites alias-add <need> "<text>" [--json]` / `favorites alias-remove
   <need> "<text>" [--json]` — maintain deterministic aliases. A name or alias
-  cannot belong to two needs.
+  cannot belong to two needs. Re-adding the same alias to its current need is
+  an idempotent retry; creating an already existing need remains an error.
 - `favorites product-add <need> "<name>" --brand B [--store S] [--note N]
   [--image PATH] [--json]` — append a product at the end of the ranking; images
   are validated and copied into Gusto.
@@ -98,11 +105,15 @@ for machine-readable output.
 - `shopping add "<text>" [--quantity M] [--json]` — returns the created item.
 - `shopping add-many "<text>" ... [--json]` — add a non-empty free-text group
   in one transaction; returns the array of created items in argument order.
-- `shopping add-recipe <slug> [--json]` — add all ingredients of a recipe
-  (`source = slug`); returns the array of created items.
+- `shopping add-recipe <slug> [--json]` — add all non-empty parsed ingredients
+  of a recipe (`source = slug`); returns the array of created items. It fails
+  clearly when none can be parsed or while any visible items from that recipe
+  remain, avoiding accidental repeated imports without merging quantities.
 - `shopping check <id> [--json]` / `shopping uncheck <id> [--json]` — return the
-  updated item; an unknown `id` prints to stderr and exits `1`.
+  item. Repeating the requested state does not advance `updated_at`; an unknown
+  `id` follows the JSON error contract above.
 - `shopping remove <id> [--json]` — tombstone (sync-safe; never hard-deleted).
+  Repeating the same removal is a no-op that preserves `updated_at`.
 - `shopping clear [--json]` — tombstone all checked items; returns `{ "removed": N }`.
 
 Mutations sharing the catalog, favorites, or shopping store are serialized

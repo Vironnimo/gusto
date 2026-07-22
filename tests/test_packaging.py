@@ -24,9 +24,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.fspath(ROOT))
 
 import install as gusto_installer  # noqa: E402
+import gusto  # noqa: E402
 
 
 manifest = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+project_version = re.search(r'^version\s*=\s*"([^"]+)"$', manifest, re.MULTILINE)
+assert project_version and project_version.group(1) == gusto.__version__
 assert re.search(r'^name\s*=\s*"gusto"$', manifest, re.MULTILINE)
 assert re.search(r'^gusto\s*=\s*"gusto\.cli:main"$', manifest, re.MULTILINE)
 assert re.search(

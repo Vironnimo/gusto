@@ -136,10 +136,22 @@ def main():
     check([entry["date"] for entry in core.load_log()] == [older_cook, recent_cook],
           "the log must stay chronologically sorted")
     expect_valueerror(core.log_cooked, "missing")
+    for invalid_date in ["2026-13-45", "15.07.2026", "20260713"]:
+        expect_valueerror(core.log_cooked, pasta.slug, invalid_date)
+    expect_valueerror(
+        core.log_cooked, pasta.slug, (date.today() + timedelta(days=1)).isoformat(),
+    )
+    check([entry["date"] for entry in core.load_log()] == [older_cook, recent_cook],
+          "invalid or future cooking dates must not mutate the log")
 
     candidates = {r.slug for r in core.suggest(days=7)}
     check(pasta.slug not in candidates and curry.slug in candidates,
           "suggestions must exclude recently cooked recipes")
+    check(core.suggest(days=7, limit=0) == [],
+          "a zero suggestion limit must return no recipes")
+    check(len(core.suggest(days=7, limit=1)) == 1,
+          "a positive suggestion limit must cap the result")
+    expect_valueerror(core.suggest, 7, -1)
 
     initial = core.check()
     check(not initial["orphaned_files"] and not initial["missing_files"],

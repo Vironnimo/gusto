@@ -44,6 +44,10 @@ the outward-facing camera or image library, edit role/caption, select the cover,
 and remove an image. Both browser choices use the same core image operations as
 the CLI.
 
+Cooking-log writes accept only exact `YYYY-MM-DD` calendar dates no later than
+today, so the log's lexical ordering remains valid. Suggestion limits must be
+nonnegative; zero deliberately returns no candidates.
+
 The shopping domain calls the catalog lookup and recipe-content reader when adding every bullet under `## Zutaten` to the shopping list; it does not own recipe parsing beyond that section rule.
 
 ## Conventions

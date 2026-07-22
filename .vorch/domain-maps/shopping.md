@@ -47,7 +47,15 @@ Under `gusto shopping`, the CLI exposes `list`, `add`, `add-many`, `add-recipe`,
 `check`, `uncheck`, `remove`, and `clear`. `add-many` accepts one or more
 positional free-text entries, commits them together, and returns their array in
 argument order. Explicit check and uncheck are idempotent and suited to agents
-synchronizing an external checklist.
+synchronizing an external checklist; a repeated target state does not write or
+advance its sync version. Re-removing an existing tombstone has the same no-op
+behavior.
+
+Ingredient import requires at least one parsed ingredient and refuses a new
+import while any visible item with the same recipe source remains. This blocks
+accidental repeated clicks without deduplicating same-looking text across
+recipes or guessing how quantities should combine. Once the old sourced items
+are tombstoned, a fresh import creates new ids.
 
 The web provides server-rendered `/shopping` forms when JavaScript is unavailable. With JavaScript, the client hides that fallback, mutates local state first, and synchronizes in the background. `GET /api/shopping` returns all server items including tombstones; `POST /api/shopping/sync` accepts `{ "items": [...] }` and returns the merged full state.
 
@@ -77,6 +85,11 @@ with a 1920 px maximum edge before invoking the existing core product mutation.
 ## Constraints & Gotchas
 
 - Ingredient import recognizes only non-empty `-` or `*` bullets under the exact `## Zutaten` heading and stops at the next H2.
+- Idempotency follows each owner's contract rather than command spelling.
+  Shopping tombstones and explicit check states support safe sync retries;
+  repeating an alias on the same Einkaufsbedarf is also safe. Creating an
+  already existing Einkaufsbedarf or removing an unknown hard-deleted product
+  remains an error because silently accepting it could hide a wrong identity.
 - Independent item adds/checks may arrive concurrently; order-sensitive pairs
   such as `clear` with `check` still have a result determined by lock acquisition
   order and should be sequenced by the caller when order expresses intent.

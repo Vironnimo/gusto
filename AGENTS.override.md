@@ -76,7 +76,9 @@ python install.py --cli-only   # the pure CLI needs no dependencies
 python -m gusto <command>      # CLI during development
 ```
 
-All commands understand `--json` (machine-readable, for agents). Each runtime
+All commands understand `--json` (machine-readable, for agents). Expected
+command failures then write `{ "ok": false, "error": "..." }` to stdout and
+exit 1; argparse usage errors remain plain stderr with exit 2. Each runtime
 uses its adjacent `gusto.settings.json`: the checkout selects the platform data
 sibling `gusto-dev`, while the installer writes the production data path beside
 the installed app. `GUSTO_HOME` overrides settings for isolated tests or an
@@ -91,11 +93,11 @@ gusto home                                    Show active data directory
 gusto show   <slug>                          Print a recipe (--json: incl. content)
 gusto new    "<Title>" [--tags a,b] [--duration N] [--servings N]
 gusto edit   <slug>                          Open the .md in the editor
-gusto cooked <slug> [--date YYYY-MM-DD]      Record in the cooking log
+gusto cooked <slug> [--date YYYY-MM-DD]      Record a valid, non-future date
 gusto log    [--days N]                       Show the cooking log
-gusto set    <slug> [--title ...] [--tags a,b] [--duration N|--clear-duration] [--servings N|--clear-servings]
+gusto set    <slug> [--title ...] [--tags a,b] [--duration N|--clear-duration] [--servings N|--clear-servings]  Requires a change
 gusto delete <slug>                           Delete a recipe
-gusto suggest [--days N] [--limit N]          Candidates for the next meal
+gusto suggest [--days N] [--limit N]          Candidates; limit is nonnegative
 gusto check                                   Consistency index <-> .md (+ unsorted tags)
 gusto serve  [--host H] [--port N]            Start the web UI (LAN)
 gusto uninstall [--keep-data|--delete-data --yes] [--dry-run]  Remove installed app
@@ -119,7 +121,7 @@ gusto favorites product-remove <need> <id>
 gusto shopping list [--pending]                  Show the shopping list
 gusto shopping add "<text>" [--quantity M]        Add an entry
 gusto shopping add-many "<text>" ...              Add several entries atomically
-gusto shopping add-recipe <slug>                   All ingredients of a recipe -> list
+gusto shopping add-recipe <slug>                   Import once while no sourced items remain
 gusto shopping check|uncheck <id>              Check / uncheck an entry
 gusto shopping remove <id>                     Remove an entry (tombstone)
 gusto shopping clear                           Remove done (checked) entries
@@ -134,6 +136,11 @@ before `product-add`, and `product-move` / `image cover` / `shopping clear`
 relative to mutations they order or remove). Direct Markdown/category edits
 and the interactive `edit` command are outside these Core locks and must not
 race another write to the same files.
+
+Explicit `shopping check`/`uncheck` and repeated removal of the same tombstone
+are idempotent without advancing `updated_at`. `shopping add-recipe` rejects an
+empty ingredient section and refuses a repeat while any visible item from that
+recipe remains; it never merges same-looking ingredients or guesses quantities.
 
 ## Typical tasks (agent)
 

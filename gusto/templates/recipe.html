@@ -2,6 +2,7 @@
 {% block content %}
 <article class="recipe">
   <a class="back" href="/">← Alle Rezepte</a>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
   {% if r.cover_image %}
   <figure class="recipe-hero">
     <img src="/media/recipe/{{ r.slug }}/{{ r.cover_image.id }}"

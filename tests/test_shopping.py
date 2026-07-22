@@ -99,7 +99,12 @@ def main():
     check(all(i.source == "t" for i in new),
           "shopping_add_recipe must set source=slug.")
     check(len(core.shopping_load()) == 3, "Expected 3 items total (1 + 2).")
+    expect_valueerror(core.shopping_add_recipe, "t")
+    check(len(core.shopping_load()) == 3,
+          "re-importing a recipe with visible items must not add duplicates")
     expect_valueerror(core.shopping_add_recipe, "does-not-exist")
+    core.add_recipe("Leer", content="# Leer\n\n## Zubereitung\n\n1. Test\n", slug="leer")
+    expect_valueerror(core.shopping_add_recipe, "leer")
 
     # --- shopping_list: order by created_at ---------------------------------
     texts = [i.text for i in core.shopping_list()]
@@ -113,6 +118,10 @@ def main():
     check(t2.checked is False, "toggle(None) again must go back to False.")
     t3 = core.shopping_toggle(a.id, checked=True)  # set explicitly
     check(t3.checked is True, "toggle(checked=True) must set True.")
+    unchanged_timestamp = t3.updated_at
+    t4 = core.shopping_toggle(a.id, checked=True)
+    check(t4.updated_at == unchanged_timestamp,
+          "idempotent check must not advance updated_at")
     expect_valueerror(core.shopping_toggle, "unknown-id")
 
     # --- shopping_list filter: done -----------------------------------------
@@ -136,6 +145,11 @@ def main():
     check(any(i.id == spaghetti.id
               for i in core.shopping_list(include_deleted=True)),
           "include_deleted=True must show tombstones.")
+    removed_timestamp = removed.updated_at
+    core.shopping_remove(spaghetti.id)
+    removed_again = next(i for i in core.shopping_load() if i.id == spaghetti.id)
+    check(removed_again.updated_at == removed_timestamp,
+          "idempotent remove must not advance a tombstone timestamp")
     # Tombstones can no longer be toggled.
     expect_valueerror(core.shopping_toggle, spaghetti.id)
     expect_valueerror(core.shopping_remove, "unknown-id")

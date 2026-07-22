@@ -132,6 +132,11 @@ Quality gates:
   from parallel tool calls without globally serializing independent domains.
   `gusto shopping add-many` adds a free-text group in one transaction; unique
   temporary files preserve atomic JSON replacement under contention.
+- 2026-07-22: CLI command failures under `--json` now return structured JSON on
+  stdout with exit 1, while argparse usage failures remain stderr/exit 2.
+  Cooking dates and suggestion limits are boundary-validated; shopping state
+  retries preserve sync timestamps, and recipe ingredient imports reject empty
+  or already-visible same-recipe imports. Release version is 0.1.1.
 
 ## Domain Maps
 

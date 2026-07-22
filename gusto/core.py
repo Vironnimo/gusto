@@ -604,10 +604,19 @@ def load_log(days: int | None = None) -> list[dict]:
 
 @_locked_mutation("catalog")
 def log_cooked(slug: str, when: str | None = None) -> None:
+    """Record a valid ISO calendar date no later than today."""
     recipes = load_recipes()
     if not any(r.slug == slug for r in recipes):
         raise ValueError(f"Kein Rezept mit Slug '{slug}'.")
     when = when or date.today().isoformat()
+    if not isinstance(when, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", when):
+        raise ValueError("Das Kochdatum muss im Format YYYY-MM-DD angegeben werden.")
+    try:
+        cooked_on = date.fromisoformat(when)
+    except ValueError as error:
+        raise ValueError("Das Kochdatum ist kein gültiges Kalenderdatum.") from error
+    if cooked_on > date.today():
+        raise ValueError("Das Kochdatum darf nicht in der Zukunft liegen.")
     entries = load_log()
     entries.append({"date": when, "slug": slug})
     _write_json(log_path(), sorted(entries, key=lambda e: e["date"]))
@@ -626,10 +635,13 @@ def suggest(days: int = 7, limit: int | None = None) -> list[Recipe]:
     Deliberately simple and rule-based: the actual decision is made by a human
     or an agent that additionally uses `log`, `search` & `list`.
     """
+    if limit is not None and (
+            isinstance(limit, bool) or not isinstance(limit, int) or limit < 0):
+        raise ValueError("Das Vorschlagslimit muss eine nichtnegative ganze Zahl sein.")
     recent = {e["slug"] for e in load_log(days=days)}
     remaining = [r for r in load_recipes() if r.slug not in recent]
     remaining.sort(key=lambda r: r.last_cooked or "")  # None/"" = longest ago
-    return remaining[:limit] if limit else remaining
+    return remaining[:limit] if limit is not None else remaining
 
 
 # --- Update / delete --------------------------------------------------------
@@ -1434,12 +1446,20 @@ def shopping_add_many(texts: list[str]) -> list[ShoppingItem]:
 @_locked_mutation("catalog", "shopping")
 def shopping_add_recipe(slug: str) -> list[ShoppingItem]:
     """Put all ingredients of a recipe (parse_ingredients on its .md) onto the
-    list, source=slug. Returns the NEWLY added items. ValueError if there is no
-    recipe with this slug."""
+    list, source=slug. Returns the newly added items. ValueError if the recipe
+    is unknown, has no importable ingredients, or already has visible items on
+    the list."""
     r = get(slug)
     if r is None:
         raise ValueError(f"Kein Rezept mit Slug '{slug}'.")
-    entries = [(ingredient, "") for ingredient in parse_ingredients(r.content())]
+    ingredients = parse_ingredients(r.content())
+    if not ingredients:
+        raise ValueError(f"Rezept '{slug}' enthält keine importierbaren Zutaten.")
+    if any(item.source == slug and not item.deleted for item in shopping_load()):
+        raise ValueError(
+            f"Zutaten aus '{slug}' stehen bereits auf der Einkaufsliste."
+        )
+    entries = [(ingredient, "") for ingredient in ingredients]
     return _shopping_append(entries, source=slug)
 
 
@@ -1458,13 +1478,16 @@ def shopping_list(include_done: bool = True,
 @_locked_mutation("shopping")
 def shopping_toggle(item_id: str, checked: bool | None = None) -> ShoppingItem:
     """Set the done checkmark. checked=None toggles; otherwise the value is set.
-    Updates updated_at and returns the item. ValueError if the id is unknown or
-    the item is a tombstone."""
+    Updates updated_at only for a state transition and returns the item.
+    ValueError if the id is unknown or the item is a tombstone."""
     items = shopping_load()
     target = next((i for i in items if i.id == item_id and not i.deleted), None)
     if target is None:
         raise ValueError(f"Kein Einkauf-Item mit id '{item_id}'.")
-    target.checked = (not target.checked) if checked is None else checked
+    next_checked = (not target.checked) if checked is None else checked
+    if target.checked == next_checked:
+        return target
+    target.checked = next_checked
     target.updated_at = _now_iso(target.updated_at)
     _shopping_save_unlocked(items)
     return target
@@ -1473,12 +1496,14 @@ def shopping_toggle(item_id: str, checked: bool | None = None) -> ShoppingItem:
 @_locked_mutation("shopping")
 def shopping_remove(item_id: str) -> None:
     """Mark item as a tombstone: deleted=True + update updated_at (do NOT hard-
-    delete from the file, so the deletion syncs). ValueError if the id is
-    unknown."""
+    delete from the file, so the deletion syncs). Repeating the removal is a
+    no-op. ValueError if the id is unknown."""
     items = shopping_load()
     target = next((i for i in items if i.id == item_id), None)
     if target is None:
         raise ValueError(f"Kein Einkauf-Item mit id '{item_id}'.")
+    if target.deleted:
+        return
     target.deleted = True
     target.updated_at = _now_iso(target.updated_at)
     _shopping_save_unlocked(items)

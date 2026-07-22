@@ -1,12 +1,13 @@
 """Hermetic smoke checks for the agent-facing JSON CLI."""
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
 import sys
 import tempfile
-import base64
+from datetime import date, timedelta
 from pathlib import Path
 
 
@@ -36,6 +37,15 @@ def as_json(*arguments):
     return json.loads(run(*arguments, "--json").stdout)
 
 
+def as_json_error(*arguments):
+    result = run(*arguments, "--json", expect=1)
+    check(result.stderr == "", "JSON command errors must not emit plain stderr text")
+    payload = json.loads(result.stdout)
+    check(payload.get("ok") is False and isinstance(payload.get("error"), str),
+          "JSON command errors must use the documented error object")
+    return payload
+
+
 def main():
     home = as_json("home")
     check(Path(home["path"]) == HOME and home["source"] == "environment",
@@ -62,6 +72,9 @@ def main():
     cleared = as_json("set", slug, "--clear-duration", "--clear-servings")
     check(cleared["duration_min"] is None and cleared["servings"] is None,
           "set must be able to remove optional duration and servings")
+    no_change = as_json_error("set", slug)
+    check("mindestens eine Änderung" in no_change["error"],
+          "set without mutation flags must fail explicitly")
     invalid = run("new", "Unmögliche Suppe", "--duration", "0", expect=1)
     check("positive ganze Zahl" in invalid.stderr,
           "invalid recipe numbers must fail through the CLI")
@@ -107,6 +120,35 @@ def main():
           "cooked --json must confirm the log entry")
     check(as_json("log") == [{"date": "2026-07-13", "slug": slug}],
           "log --json must return the written entry")
+    bad_date = as_json_error("cooked", slug, "--date", "2026-13-45")
+    check("Kalenderdatum" in bad_date["error"],
+          "cooked must reject impossible calendar dates as JSON")
+    future_date = (date.today() + timedelta(days=1)).isoformat()
+    future = as_json_error("cooked", slug, "--date", future_date)
+    check("Zukunft" in future["error"],
+          "cooked must reject future dates as JSON")
+    check(as_json("suggest", "--limit", "0") == [],
+          "suggest --limit 0 must return an empty array")
+    zero_suggest = run("suggest", "--limit", "0")
+    check("--limit 0" in zero_suggest.stdout,
+          "human suggest output must explain an explicitly empty limit")
+    limit_error = as_json_error("suggest", "--limit", "-1")
+    check("nichtnegative" in limit_error["error"],
+          "suggest must reject negative limits")
+
+    (HOME / "recipes" / f"{slug}.md").write_text(
+        "# Neue Suppe\n\n## Zutaten\n\n- Wasser\n- Salz\n", encoding="utf-8",
+    )
+    imported = as_json("shopping", "add-recipe", slug)
+    check([entry["text"] for entry in imported] == ["Wasser", "Salz"],
+          "shopping add-recipe must return imported ingredients")
+    duplicate_import = as_json_error("shopping", "add-recipe", slug)
+    check("bereits auf der Einkaufsliste" in duplicate_import["error"],
+          "a repeated recipe import must explain why nothing was added")
+    empty_recipe = as_json("new", "Leeres Rezept")
+    empty_import = as_json_error("shopping", "add-recipe", empty_recipe["slug"])
+    check("keine importierbaren Zutaten" in empty_import["error"],
+          "an empty recipe import must explain the parsing result")
 
     item = as_json("shopping", "add", "Milch", "--quantity", "1 L")
     check(item["text"] == "Milch" and item["quantity"] == "1 L",
@@ -121,9 +163,12 @@ def main():
           "shopping add-many must keep each free-text entry self-contained")
     checked = as_json("shopping", "check", item["id"])
     check(checked["checked"] is True, "shopping check --json must set checked")
+    checked_again = as_json("shopping", "check", item["id"])
+    check(checked_again["updated_at"] == checked["updated_at"],
+          "repeated shopping check must preserve the sync timestamp")
     pending = as_json("shopping", "list", "--pending")
     check([entry["text"] for entry in pending]
-          == ["Brot", "6 Eier", "200 g Spaghetti"],
+          == ["Wasser", "Salz", "Brot", "6 Eier", "200 g Spaghetti"],
           "shopping list --pending --json must hide only checked items")
 
     need = as_json(
@@ -138,10 +183,16 @@ def main():
         "favorites", "product-add", need["id"], "Frischer Pizzateig",
         "--brand", "Tante Fanny", "--store", "REWE", "--image", os.fspath(first_photo),
     )
+    singular = run("favorites", "list")
+    check("(1 Produkt)" in singular.stdout,
+          "favorites list must use the German singular")
     fallback = as_json(
         "favorites", "product-add", need["id"], "Pizza-Kit",
         "--brand", "Knack & Back",
     )
+    plural = run("favorites", "list")
+    check("(2 Produkte)" in plural.stdout,
+          "favorites list must use the German plural")
     moved = as_json(
         "favorites", "product-move", need["id"], fallback["id"], "1",
     )
@@ -159,20 +210,24 @@ def main():
           "favorites show --json must include ranked products")
 
     consistency = as_json("check")
-    check(consistency["recipe_count"] == 1
+    check(consistency["recipe_count"] == 2
           and consistency["favorite_need_count"] == 1
           and not consistency["missing_files"],
           "check --json must expose consistency state")
 
-    missing = run("show", "does-not-exist", "--json", expect=1)
-    check("Kein Rezept" in missing.stderr, "CLI errors must be written to stderr")
+    missing = as_json_error("show", "does-not-exist")
+    check("Kein Rezept" in missing["error"],
+          "domain errors under --json must be machine-readable")
+    usage_error = run("show", "--json", expect=2)
+    check(not usage_error.stdout and "usage:" in usage_error.stderr,
+          "argparse usage errors must stay distinguishable on stderr with exit 2")
 
     deleted = as_json("delete", slug)
     check(deleted == {"slug": slug, "deleted": True},
           "delete --json must confirm deletion")
 
-    refused_uninstall = run("uninstall", "--keep-data", "--json", expect=1)
-    check("Projekt-Checkout" in refused_uninstall.stderr,
+    refused_uninstall = as_json_error("uninstall", "--keep-data")
+    check("Projekt-Checkout" in refused_uninstall["error"],
           "uninstall must refuse to delete a development checkout")
 
     print(f"OK - {checks} CLI checks passed (GUSTO_HOME={HOME})")

@@ -273,6 +273,20 @@ try:
               "recipe sources use the readable recipe title")
         page.screenshot(path=str(SHOTS / "09_shopping.png"), full_page=True)
 
+        # A repeated recipe import must explain the no-op and keep the list stable.
+        page.goto(BASE + "/recipe/spaghetti-carbonara", wait_until="networkidle")
+        page.locator("form[action$='/shopping'] button").click()
+        page.wait_for_load_state("networkidle")
+        check(page.url.startswith(BASE + "/recipe/spaghetti-carbonara?error="),
+              "duplicate recipe import returns to the recipe with context")
+        check(page.locator(".error", has_text="bereits auf der Einkaufsliste").count() == 1,
+              "duplicate recipe import is visibly explained")
+        page.screenshot(path=str(SHOTS / "09a_shopping_duplicate.png"), full_page=True)
+        page.goto(BASE + "/shopping", wait_until="networkidle")
+        page.wait_for_function("() => document.querySelectorAll('#shop-client .shop-item').length === 6")
+        check(page.locator("#shop-client .shop-item").count() == 6,
+              "duplicate recipe import does not add shopping items")
+
         # Create a reusable shopping need and two ranked preferred products.
         page.locator(".shop-favorites-link").click()
         page.wait_for_load_state("networkidle")
