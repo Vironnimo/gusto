@@ -517,6 +517,14 @@ def tag_category(tag: str, categories: dict | None = None) -> str | None:
     return _tag_to_category(categories).get(tag.lower())
 
 
+def uncategorized_tags(tags: list[str]) -> list[str]:
+    """Return distinct tags that have no named facet assignment."""
+    mapping = _tag_to_category()
+    return sorted(
+        {tag for tag in tags if tag.lower() not in mapping}, key=str.lower,
+    )
+
+
 def tag_groups(only_used: bool = True) -> list[dict]:
     """Categories with their tags in display order -- for the tag bar and
     `gusto tags`. Returns [{"key", "label", "tags": [...]}, ...].
@@ -899,8 +907,9 @@ def check() -> dict:
     recipes = load_recipes()
     indexed = {r.slug for r in recipes}
     present = {p.stem for p in recipes_dir().glob("*.md")} if recipes_dir().exists() else set()
-    mapping = _tag_to_category()
-    uncategorized = sorted({t for r in recipes for t in r.tags if t.lower() not in mapping})
+    uncategorized = uncategorized_tags([
+        tag for recipe in recipes for tag in recipe.tags
+    ])
     image_root = images_dir()
     image_folders = ({path.name for path in image_root.iterdir()
                       if path.is_dir() and path.name != "_favorites"}
@@ -1427,11 +1436,16 @@ def _shopping_text(value: str) -> str:
     return value.strip()
 
 
-@_locked_mutation("shopping")
 def shopping_add(text: str, quantity: str = "", source: str | None = None) -> ShoppingItem:
     """Create, save and return a new item. Sets id (new_id()), created_at and
-    updated_at (= _now_iso()), checked=False, deleted=False."""
-    return _shopping_append([(_shopping_text(text), quantity)], source=source)[0]
+    updated_at (= _now_iso()), checked=False, deleted=False. A source must name
+    an existing recipe and makes the item participate in that recipe's active
+    import guard."""
+    resources = ("shopping",) if source is None else ("catalog", "shopping")
+    with _mutation_locks(*resources):
+        if source is not None and get(source) is None:
+            raise ValueError(f"Kein Rezept mit Slug '{source}'.")
+        return _shopping_append([(_shopping_text(text), quantity)], source=source)[0]
 
 
 @_locked_mutation("shopping")
@@ -1455,9 +1469,15 @@ def shopping_add_recipe(slug: str) -> list[ShoppingItem]:
     ingredients = parse_ingredients(r.content())
     if not ingredients:
         raise ValueError(f"Rezept '{slug}' enthält keine importierbaren Zutaten.")
-    if any(item.source == slug and not item.deleted for item in shopping_load()):
+    existing = [
+        item for item in shopping_load()
+        if item.source == slug and not item.deleted
+    ]
+    if existing:
+        verb = "steht" if len(existing) == 1 else "stehen"
         raise ValueError(
-            f"Zutaten aus '{slug}' stehen bereits auf der Einkaufsliste."
+            f"{len(existing)} Einkaufsposten aus '{slug}' {verb} bereits "
+            "auf der Einkaufsliste."
         )
     entries = [(ingredient, "") for ingredient in ingredients]
     return _shopping_append(entries, source=slug)

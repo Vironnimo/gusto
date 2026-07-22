@@ -27,11 +27,11 @@ Datenordner setzen; `gusto home --json` zeigt die aktive Auflösung.
 | `shopping list --pending` | dasselbe Array, aber nur `checked:false` |
 | `shopping check <id>` | das Item (`checked:true`); `updated_at` nur bei Zustandswechsel |
 | `shopping uncheck <id>` | das Item (`checked:false`); `updated_at` nur bei Zustandswechsel |
-| `shopping add "<text>" [--quantity M]` | das erzeugte Item (Einzelobjekt) |
+| `shopping add "<text>" [--quantity M] [--source SLUG]` | das erzeugte Item; `source` muss ein vorhandenes Rezept sein und zählt für dessen Import-Sperre |
 | `shopping add-many "<text>" ...` | alle Einträge atomar hinzufügen (Array in Argumentreihenfolge) |
-| `shopping add-recipe <slug>` | Array der erzeugten Items (`source=slug`); leerer oder bereits sichtbarer Rezeptimport ist ein Fehler |
+| `shopping add-recipe <slug>` | Array der erzeugten Items (`source=slug`); leerer oder bereits sichtbarer Rezeptimport ist ein Fehler, der die vorhandene Anzahl nennt |
 | `shopping remove <id>` | Tombstone; Wiederholung ist ein No-op ohne neuen Zeitstempel |
-| `shopping clear` | `{ "removed": N }` — entfernt (tombstoned) alle gehakten |
+| `shopping clear` | `{ "removed": N }` — tombstoned alle gehakten; sie sind danach nicht per CLI wiederherstellbar |
 | erwarteter Fehler mit `--json` | `{ "ok": false, "error": "…" }` auf stdout + **exit code 1** |
 
 Item-Form:
@@ -86,7 +86,8 @@ Item-Form:
 2. Nachricht senden, `message_id` merken.
 3. Tap kommt als `callback_query` → `id` aus `data` → in Gusto umschalten →
    `answerCallbackQuery` → Nachricht neu rendern & editieren.
-4. Optional: „Erledigte entfernen"-Button → `gusto shopping clear`; einen
+4. Nur auf ausdrücklichen Entfernungswunsch: „Erledigte entfernen"-Button →
+   `gusto shopping clear` (kein CLI-Restore); einen
    neuen Eintrag per Chat („+ Milch") → `gusto shopping add`, mehrere bekannte
    Einträge gemeinsam → `gusto shopping add-many`; danach neu rendern.
 

@@ -180,6 +180,24 @@ def main():
     expect_valueerror(core.shopping_add_many, [])
     expect_valueerror(core.shopping_add_many, ["Brot", "  "])
 
+    # --- sourced single add -------------------------------------------------
+    sourced_recipe = core.add_recipe(
+        "Einzelzutat", content="# Einzelzutat\n\n## Zutaten\n\n- Pfeffer\n",
+        slug="einzelzutat",
+    )
+    sourced = core.shopping_add("Pfeffer", source=sourced_recipe.slug)
+    check(sourced.source == sourced_recipe.slug,
+          "a sourced single item must retain its recipe slug")
+    count_before_invalid_source = len(core.shopping_load())
+    expect_valueerror(core.shopping_add, "Salz", source="does-not-exist")
+    check(len(core.shopping_load()) == count_before_invalid_source,
+          "an unknown source recipe must not mutate the shopping list")
+    expect_valueerror(core.shopping_add_recipe, sourced_recipe.slug)
+    core.shopping_remove(sourced.id)
+    imported_after_remove = core.shopping_add_recipe(sourced_recipe.slug)
+    check([item.text for item in imported_after_remove] == ["Pfeffer"],
+          "removing the sourced item must allow a fresh recipe import")
+
     print(f"OK - {checks} checks passed (GUSTO_HOME={core.project_root()})")
 
 

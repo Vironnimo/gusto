@@ -20,7 +20,8 @@ Argument and usage errors from the parser remain plain stderr and exit `2`.
   present, `settings_path`.
 - `list [--tag T ...] [--max-time N] [--json]`
   List/filter recipes. `--tag` is repeatable **and** comma-separated
-  (`--tag a --tag b` ≡ `--tag a,b`). `--max-time` caps `duration_min`.
+  (`--tag a --tag b` ≡ `--tag a,b`). `--max-time` caps `duration_min` and
+  excludes recipes whose duration is unknown.
 - `search "<query>" [--match any|all] [--tag T ...] [--max-time N] [--json]`
   Full-text over title, tags, **and the markdown body** (so ingredients match).
   `any` (default) = any term present; `all` = every term present.
@@ -44,10 +45,13 @@ Argument and usage errors from the parser remain plain stderr and exit `2`.
 - `new "<title>" [--tags a,b] [--duration N] [--servings N] [--edit] [--json]`
   Create the `.md` (a template) **and** the index entry. `--edit` opens
   `$EDITOR` (interactive — skip it when headless; write the file directly).
+  Tags without a named category add a structured `warnings` entry to JSON and
+  a warning line to human output; they are still stored in the `Sonstige` facet.
 - `set <slug> [--title ...] [--tags a,b]
   [--duration N|--clear-duration] [--servings N|--clear-servings] [--json]`
   Update metadata. `--tags` **replaces** the whole list; the clear flags remove
-  optional duration or serving values. At least one change is required.
+  optional duration or serving values. At least one change is required. A
+  `--tags` change uses the same uncategorized-tag warning contract as `new`.
 - `edit <slug>`
   Open the `.md` in `$EDITOR`. Interactive; for a headless agent, first read
   `gusto home --json`, then rewrite `<path>/recipes/<slug>.md` directly. Never
@@ -102,19 +106,24 @@ Argument and usage errors from the parser remain plain stderr and exit `2`.
 
 - `shopping list [--pending] [--json]` — a **flat array** of items (checked ones
   included, marked `checked:true`); `--pending` = only unchecked.
-- `shopping add "<text>" [--quantity M] [--json]` — returns the created item.
+- `shopping add "<text>" [--quantity M] [--source SLUG] [--json]` — returns the
+  created item. `--source` must name an existing recipe, records its slug on the
+  item, and makes that visible item participate in the recipe import guard.
 - `shopping add-many "<text>" ... [--json]` — add a non-empty free-text group
   in one transaction; returns the array of created items in argument order.
 - `shopping add-recipe <slug> [--json]` — add all non-empty parsed ingredients
   of a recipe (`source = slug`); returns the array of created items. It fails
   clearly when none can be parsed or while any visible items from that recipe
-  remain, avoiding accidental repeated imports without merging quantities.
+  remain, reporting their count and avoiding accidental repeated imports
+  without merging quantities.
 - `shopping check <id> [--json]` / `shopping uncheck <id> [--json]` — return the
   item. Repeating the requested state does not advance `updated_at`; an unknown
   `id` follows the JSON error contract above.
 - `shopping remove <id> [--json]` — tombstone (sync-safe; never hard-deleted).
   Repeating the same removal is a no-op that preserves `updated_at`.
 - `shopping clear [--json]` — tombstone all checked items; returns `{ "removed": N }`.
+  They disappear from normal lists and there is no CLI restore operation, so
+  use this only when completed entries should actually be removed.
 
 Mutations sharing the catalog, favorites, or shopping store are serialized
 across Gusto processes. Independent adds, image imports, and item-specific
@@ -157,6 +166,19 @@ Recipe (returned by `list`, `search`, `new`, `set` — array or single object):
     {"id": "a04381611b2740d5944abc58993c2643", "filename": "a04381611b2740d5944abc58993c2643.png", "role": "result", "caption": "Serviert", "created_at": "2026-07-13T18:00:00Z"}
   ],
   "cover_image_id": "a04381611b2740d5944abc58993c2643"
+}
+```
+
+When `new` or `set --tags` stores tags without a named category, its otherwise
+unchanged recipe object additionally contains:
+
+```json
+{
+  "warnings": [{
+    "code": "uncategorized_tags",
+    "message": "Tags ohne Kategorie (Facet „Sonstige“): schnell",
+    "tags": ["schnell"]
+  }]
 }
 ```
 
@@ -251,7 +273,9 @@ prints one such object or `null`; it does not create an alias automatically.
   - `--tag italienisch --tag pasta --tag vegetarisch` → Italian, pasta, **and**
     vegetarian.
 - A new tag still stores fine but shows up in `check` as `uncategorized_tags`; add
-  it under the right key in `categories.json` to make it filterable as a facet.
+  it under the right key in `categories.json` to assign it to a named facet.
+  Until then it remains filterable in the shared `Sonstige` facet. `new` and
+  `set --tags` surface the condition immediately through `warnings`.
 
 ## Data files
 
@@ -286,4 +310,5 @@ $ python -m gusto suggest --json
 
 Reasoning: pasta (carbonara) was just on, so steer away from it — e.g.
 *Ofengemüse mit Feta* (vegetarian, never cooked). If the user said "schnell",
-narrow with `list --max-time 25 --json` first.
+narrow with `list --max-time 25 --json` first; recipes without a duration are
+excluded from that result.

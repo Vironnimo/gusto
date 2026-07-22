@@ -58,6 +58,22 @@ def _print_list(recipes, as_json: bool) -> None:
         print(f"  {r.slug:<22} {r.title}" + (f"   [{extra}]" if extra else ""))
 
 
+def _tag_warnings(recipe_tags: list[str]) -> list[dict]:
+    tags = core.uncategorized_tags(recipe_tags)
+    if not tags:
+        return []
+    return [{
+        "code": "uncategorized_tags",
+        "message": "Tags ohne Kategorie (Facet „Sonstige“): " + ", ".join(tags),
+        "tags": tags,
+    }]
+
+
+def _print_tag_warnings(warnings: list[dict]) -> None:
+    for warning in warnings:
+        print(f"Warnung: {warning['message']}")
+
+
 # --- Commands ---------------------------------------------------------------
 
 def cmd_list(args):
@@ -119,15 +135,20 @@ def cmd_show(args):
 
 def cmd_new(args):
     tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
+    warnings = _tag_warnings(tags)
     try:
         r = core.add_recipe(args.title, tags=tags,
                             duration_min=args.duration, servings=args.servings)
     except ValueError as e:
         sys.exit(str(e))
     if args.json:
-        _dump(r.to_dict())
+        result = r.to_dict()
+        if warnings:
+            result["warnings"] = warnings
+        _dump(result)
     else:
         print(f"Angelegt: {r.slug}  ->  {r.path}")
+        _print_tag_warnings(warnings)
     if args.edit:
         _open_editor(r.path)
 
@@ -235,6 +256,7 @@ def cmd_set(args):
     tags = None
     if args.tags is not None:
         tags = [t.strip() for t in args.tags.split(",") if t.strip()]
+    warnings = _tag_warnings(tags) if tags is not None else []
     try:
         r = core.update_recipe(args.slug, title=args.title, tags=tags,
                                duration_min=args.duration, servings=args.servings,
@@ -243,9 +265,13 @@ def cmd_set(args):
     except ValueError as e:
         sys.exit(str(e))
     if args.json:
-        _dump(r.to_dict())
+        result = r.to_dict()
+        if warnings:
+            result["warnings"] = warnings
+        _dump(result)
     else:
         print(f"Aktualisiert: {r.slug}")
+        _print_tag_warnings(warnings)
 
 
 def cmd_delete(args):
@@ -519,7 +545,9 @@ def cmd_shopping_list(args):
 
 def cmd_shopping_add(args):
     try:
-        item = core.shopping_add(args.text, quantity=args.quantity or "")
+        item = core.shopping_add(
+            args.text, quantity=args.quantity or "", source=args.source,
+        )
     except ValueError as e:
         sys.exit(str(e))
     if args.json:
@@ -769,9 +797,13 @@ def build_parser() -> argparse.ArgumentParser:
                 "(--tag italienisch --tag pizza  bzw.  --tag italienisch,pizza). "
                 "ODER innerhalb einer Kategorie, UND ueber Kategorien.")
 
+    max_time_help = (
+        "Max. Dauer in Minuten; Rezepte ohne Dauerangabe werden ausgeschlossen."
+    )
+
     sp = sub.add_parser("list", parents=[base], help="Rezepte auflisten/filtern.")
     sp.add_argument("--tag", action="append", metavar="TAG", help=tag_help)
-    sp.add_argument("--max-time", type=int, dest="max_time", help="Max. Dauer (Minuten).")
+    sp.add_argument("--max-time", type=int, dest="max_time", help=max_time_help)
     sp.set_defaults(func=cmd_list)
 
     sp = sub.add_parser("search", parents=[base],
@@ -780,7 +812,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--match", choices=["any", "all"], default="any",
                     help="any: irgendein Begriff; all: alle Begriffe.")
     sp.add_argument("--tag", action="append", metavar="TAG", help=tag_help)
-    sp.add_argument("--max-time", type=int, dest="max_time")
+    sp.add_argument("--max-time", type=int, dest="max_time", help=max_time_help)
     sp.set_defaults(func=cmd_search)
 
     sp = sub.add_parser("tags", parents=[base],
@@ -977,6 +1009,10 @@ def build_parser() -> argparse.ArgumentParser:
     ep = esub.add_parser("add", parents=[base], help="Eintrag hinzufuegen.")
     ep.add_argument("text", help='Was gekauft werden soll, z.B. "200 g Spaghetti".')
     ep.add_argument("--quantity", help="Optionale Mengenangabe.")
+    ep.add_argument(
+        "--source", metavar="SLUG",
+        help="Vorhandenes Herkunftsrezept; zaehlt fuer dessen Import-Sperre.",
+    )
     ep.set_defaults(func=cmd_shopping_add)
 
     ep = esub.add_parser(
@@ -1006,8 +1042,12 @@ def build_parser() -> argparse.ArgumentParser:
     ep.add_argument("id")
     ep.set_defaults(func=cmd_shopping_remove)
 
-    ep = esub.add_parser("clear", parents=[base],
-                         help="Alle erledigten Eintraege entfernen.")
+    clear_help = (
+        "Alle erledigten Eintraege entfernen; nicht per CLI wiederherstellbar."
+    )
+    ep = esub.add_parser(
+        "clear", parents=[base], help=clear_help, description=clear_help,
+    )
     ep.set_defaults(func=cmd_shopping_clear)
 
     sp = sub.add_parser("serve", parents=[base], help="Web-Oberflaeche starten.")

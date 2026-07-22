@@ -115,6 +115,7 @@ Then open `http://<machine>:8000` in the browser.
 
 ```bash
 gusto list                          # all recipes
+gusto list --max-time 30            # only recipes with a known duration <= 30
 gusto home                          # active user-data directory
 gusto search "linsen kokos"         # full-text incl. ingredients in the body
 gusto show spaghetti-carbonara
@@ -134,7 +135,9 @@ gusto favorites match "200 g Spaghetti"  # show the ranked household choice
 gusto favorites add "Spaghetti" --alias "200 g Spaghetti"
 gusto favorites product-add Spaghetti "De Cecco n. 12" --brand "De Cecco" --image photo.png
 gusto favorites product-move Spaghetti <id> 1
+gusto shopping add "Parmesan" --source spaghetti-carbonara
 gusto shopping add-many "Milch" "Brot" "6 Eier"  # one atomic group
+gusto shopping clear               # tombstone checked items; no CLI restore
 gusto uninstall                     # interactive: app only or app + data
 ```
 
@@ -144,9 +147,12 @@ code 1; parser/usage errors remain on stderr with exit code 2.
 
 `cooked --date` accepts only a valid `YYYY-MM-DD` no later than today;
 `suggest --limit` is nonnegative and `0` returns no candidates. `set` requires
-at least one change. `shopping add-recipe` rejects recipes without importable
-ingredients and prevents a second import while visible items from that recipe
-remain on the list.
+at least one change. `new` and `set --tags` warn when tags have no named facet;
+they remain stored under `Sonstige`. `--max-time` excludes recipes whose
+duration is unknown. `shopping add --source` accepts only an existing recipe,
+and the sourced item participates in the same duplicate-import guard as
+`shopping add-recipe`. A rejected recipe import reports the number of visible
+sourced items. `shopping clear` has no CLI restore operation.
 
 ## Layout
 

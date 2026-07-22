@@ -71,6 +71,9 @@ def main():
           "tags across facets must use AND")
     check([r.slug for r in core.search(max_time=15)] == [quick.slug],
           "maximum duration must filter recipes")
+    check(core.uncategorized_tags(["VEGAN", "saisonal", "saisonal"])
+          == ["saisonal"],
+          "uncategorized tags must be distinct and category matching case-insensitive")
 
     updated = core.update_recipe(
         quick.slug, title="Gurkensalat", tags=["vegan"], duration_min=12,
@@ -84,6 +87,8 @@ def main():
     )
     check(cleared.duration_min is None and cleared.servings is None,
           "optional duration and servings must be removable")
+    check([r.slug for r in core.search(max_time=15)] == [],
+          "maximum duration must exclude recipes with unknown duration")
     expect_valueerror(
         core.update_recipe, quick.slug, duration_min=10, clear_duration=True,
     )

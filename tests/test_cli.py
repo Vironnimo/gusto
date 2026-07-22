@@ -57,6 +57,20 @@ def main():
     )
     slug = created["slug"]
     check(slug == "test-suppe", "new --json must return the generated slug")
+    check(created["warnings"] == [{
+        "code": "uncategorized_tags",
+        "message": "Tags ohne Kategorie (Facet „Sonstige“): schnell, vegan",
+        "tags": ["schnell", "vegan"],
+    }], "new --json must identify tags without a named facet")
+    check(not (HOME / "data" / "categories.json").exists(),
+          "creating a recipe must not create an ineffective empty category file")
+    human_warning = run("set", slug, "--tags", "vegan,schnell")
+    check("Warnung: Tags ohne Kategorie" in human_warning.stdout,
+          "human set output must warn about tags without a named facet")
+    list_help = run("list", "--help")
+    check("ohne Dauerangabe werden ausgeschlossen"
+          in " ".join(list_help.stdout.split()),
+          "list help must explain how unknown durations are filtered")
 
     listed = as_json("list")
     check(len(listed) == 1 and listed[0]["title"] == "Test Suppe",
@@ -66,12 +80,19 @@ def main():
     check(shown["content"].startswith("# Test Suppe"),
           "show --json must include Markdown content")
 
-    changed = as_json("set", slug, "--title", "Neue Suppe", "--duration", "30")
+    changed = as_json(
+        "set", slug, "--title", "Neue Suppe", "--tags", "vegan,schnell",
+        "--duration", "30",
+    )
     check(changed["title"] == "Neue Suppe" and changed["duration_min"] == 30,
           "set --json must return updated metadata")
+    check(changed["warnings"][0]["code"] == "uncategorized_tags",
+          "set --tags --json must identify tags without a named facet")
     cleared = as_json("set", slug, "--clear-duration", "--clear-servings")
     check(cleared["duration_min"] is None and cleared["servings"] is None,
           "set must be able to remove optional duration and servings")
+    check(as_json("list", "--max-time", "60") == [],
+          "list --max-time must exclude a recipe with unknown duration")
     no_change = as_json_error("set", slug)
     check("mindestens eine Änderung" in no_change["error"],
           "set without mutation flags must fail explicitly")
@@ -139,12 +160,36 @@ def main():
     (HOME / "recipes" / f"{slug}.md").write_text(
         "# Neue Suppe\n\n## Zutaten\n\n- Wasser\n- Salz\n", encoding="utf-8",
     )
+    sourced = as_json(
+        "shopping", "add", "Eine Prise Salz", "--source", slug,
+    )
+    check(sourced["source"] == slug,
+          "shopping add --source must retain a known recipe slug")
+    partial_import = as_json_error("shopping", "add-recipe", slug)
+    check("1 Einkaufsposten" in partial_import["error"],
+          "a sourced single item must participate in the recipe import guard")
+    unknown_source = as_json_error(
+        "shopping", "add", "Pfeffer", "--source", "does-not-exist",
+    )
+    check("Kein Rezept" in unknown_source["error"],
+          "shopping add --source must reject an unknown recipe slug")
+    as_json("shopping", "remove", sourced["id"])
+    add_help = run("shopping", "add", "--help")
+    normalized_add_help = " ".join(add_help.stdout.split())
+    check("--source SLUG" in normalized_add_help
+          and "Herkunftsrezept" in normalized_add_help,
+          "shopping add help must document sourced single items")
+    clear_help = run("shopping", "clear", "--help")
+    check("nicht per CLI wiederherstellbar"
+          in " ".join(clear_help.stdout.split()),
+          "shopping clear help must state that there is no CLI restore")
     imported = as_json("shopping", "add-recipe", slug)
     check([entry["text"] for entry in imported] == ["Wasser", "Salz"],
           "shopping add-recipe must return imported ingredients")
     duplicate_import = as_json_error("shopping", "add-recipe", slug)
-    check("bereits auf der Einkaufsliste" in duplicate_import["error"],
-          "a repeated recipe import must explain why nothing was added")
+    check("2 Einkaufsposten" in duplicate_import["error"]
+          and "bereits auf der Einkaufsliste" in duplicate_import["error"],
+          "a repeated recipe import must report how many items block it")
     empty_recipe = as_json("new", "Leeres Rezept")
     empty_import = as_json_error("shopping", "add-recipe", empty_recipe["slug"])
     check("keine importierbaren Zutaten" in empty_import["error"],

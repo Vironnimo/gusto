@@ -53,7 +53,8 @@ Per recipe, tags stay a **flat list**; their category lives centrally in
 `data/categories.json` (so recipe tags stay clean). Tag filters are **facets**:
 `--tag`/`?tag=` can be repeated, **OR within** a category and **AND across**
 categories. Tags without a category are reported by `gusto check` as
-"unsorted"; then sort the tag into `categories.json`.
+"unsorted" and share the `Sonstige` facet; `new` and `set --tags` also warn
+immediately. Then sort the tag into `categories.json`.
 
 ## Usage
 
@@ -76,12 +77,12 @@ explicit portable store. `gusto home --json` reports the active path, source,
 platform default, and settings file.
 
 ```
-gusto list   [--tag T ...] [--max-time N]    Filter; --tag repeatable/comma-separated
+gusto list   [--tag T ...] [--max-time N]    Filter; unknown durations fail the time cap
 gusto search "<terms>" [--match any|all] [--tag T ...] [--max-time N]  Full-text
 gusto tags   [--all]                          Show tag categories (facets)
 gusto home                                    Show active data directory
 gusto show   <slug>                          Print a recipe (--json: incl. content)
-gusto new    "<Title>" [--tags a,b] [--duration N] [--servings N]
+gusto new    "<Title>" [--tags a,b] [--duration N] [--servings N]  Warns on unsorted tags
 gusto edit   <slug>                          Open the .md in the editor
 gusto cooked <slug> [--date YYYY-MM-DD]      Record a valid, non-future date
 gusto log    [--days N]                       Show the cooking log
@@ -109,12 +110,12 @@ gusto favorites product-move <need> <id> <position>
 gusto favorites product-remove <need> <id>
 
 gusto shopping list [--pending]                  Show the shopping list
-gusto shopping add "<text>" [--quantity M]        Add an entry
+gusto shopping add "<text>" [--quantity M] [--source slug]  Add, optionally attributed
 gusto shopping add-many "<text>" ...              Add several entries atomically
 gusto shopping add-recipe <slug>                   Import once while no sourced items remain
 gusto shopping check|uncheck <id>              Check / uncheck an entry
 gusto shopping remove <id>                     Remove an entry (tombstone)
-gusto shopping clear                           Remove done (checked) entries
+gusto shopping clear                           Remove done; no CLI restore
 ```
 
 **Parallel agent calls:** Read-only commands may always run in parallel. Gusto
@@ -130,7 +131,11 @@ race another write to the same files.
 Explicit `shopping check`/`uncheck` and repeated removal of the same tombstone
 are idempotent without advancing `updated_at`. `shopping add-recipe` rejects an
 empty ingredient section and refuses a repeat while any visible item from that
-recipe remains; it never merges same-looking ingredients or guesses quantities.
+recipe remains; the error reports their count. `shopping add --source
+<slug>` accepts only an existing recipe and its item participates in the same
+guard. It never merges same-looking ingredients or guesses quantities.
+`shopping clear` tombstones all checked items for sync and has no CLI restore;
+run it only when those completed entries should actually disappear.
 
 ## Typical tasks (agent)
 
@@ -139,7 +144,8 @@ recipe remains; it never merges same-looking ingredients or guesses quantities.
 2. `gusto suggest --json` → what hasn't been cooked for a while.
 3. Decide with variety (not pasta three times in a row); honor time/diet via
    `--max-time` / `--tag`. `suggest` is deliberately simple — the "intelligence"
-   comes from the agent combining `log`, `search` and `list`.
+   comes from the agent combining `log`, `search` and `list`. A time cap excludes
+   recipes whose duration is unknown.
 
 **"What can I make with these ingredients?"**
 - `gusto search "haehnchen paprika" --match any --json` — also searches the
@@ -174,7 +180,8 @@ glyph visually (vBot's checklist extension — no Gusto write); the **Fertig** t
 wakes the agent with the current button state, which then syncs Gusto (`gusto
 shopping check|uncheck <id>` per item; no `toggle` — decide from the ⬜/✅ glyph)
 and confirms in chat. "Fertig" saves the checked-state (add `gusto shopping
-clear` if it should also remove bought items). Full round-trip in the skill
+clear` only if it should also remove bought items; there is no CLI restore).
+Full round-trip in the skill
 (`skill/gusto/SKILL.md`); client history: [docs/telegram-shopping-handoff.md](docs/telegram-shopping-handoff.md).
 
 ## Important files

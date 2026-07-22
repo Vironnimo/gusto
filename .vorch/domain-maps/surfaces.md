@@ -34,10 +34,19 @@ of inferring data paths from the checkout.
 setting the corresponding value, and a call with no requested change is an
 explicit command error.
 
+Successful `new` and tag-changing `set` JSON responses remain recipe objects.
+When tags lack a named facet, the object additively carries structured
+`warnings` with code `uncategorized_tags`, message, and affected tags; human
+output prints the same warning. The `--max-time` help states that recipes with
+unknown duration are excluded.
+
 `gusto shopping add-many "<text>" ...` forwards a non-empty group to one Core
 transaction. JSON output is the created-item array in argument order; the
 existing singular `shopping add` continues returning one object and retains
-its optional structured `--quantity` field.
+its optional structured `--quantity` field. Its optional `--source <slug>`
+attributes the item to an existing recipe and documents that the item then
+participates in `add-recipe`'s active-source guard. The `clear` help calls out
+that tombstoned completed items have no CLI restore path.
 
 `gusto uninstall` owns installed-runtime removal, not catalog deletion. A bare
 TTY call shows the verified application/data paths and offers app-only,

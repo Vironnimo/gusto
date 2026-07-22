@@ -136,7 +136,12 @@ Quality gates:
   stdout with exit 1, while argparse usage failures remain stderr/exit 2.
   Cooking dates and suggestion limits are boundary-validated; shopping state
   retries preserve sync timestamps, and recipe ingredient imports reject empty
-  or already-visible same-recipe imports. Release version is 0.1.1.
+  or already-visible same-recipe imports. Recipe mutations warn immediately
+  about tags without named facets; duration caps explicitly exclude unknown
+  durations. Sourced single shopping adds validate their recipe and participate
+  in the import guard, whose rejection now reports the blocking count; CLI docs
+  flag that cleared tombstones have no restore command. Release version is
+  0.1.1.
 
 ## Domain Maps
 

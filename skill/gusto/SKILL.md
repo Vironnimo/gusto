@@ -52,7 +52,8 @@ plain stderr with exit code 2.
 2. `gusto suggest --json` — not cooked lately, longest-ago first.
 3. Choose with variety (don't repeat the recent cuisine); honor any constraint
    given: time `--max-time 25`, diet `--tag vegetarisch`. Answer with 2–3
-   concrete picks, one reason each — not the raw list.
+   concrete picks, one reason each — not the raw list. A time cap excludes
+   recipes with no known duration; unknown is not treated as potentially fast.
 
 **"What can I make with X?"**
 - `gusto search "haehnchen paprika" --match any --json` — searches title, tags
@@ -70,8 +71,10 @@ plain stderr with exit code 2.
   write the body into `<path>/recipes/<slug>.md`: first line `# <title>`, then
   a `## Zutaten` bullet list and a `## Zubereitung` numbered list. No
   frontmatter. Never assume the checkout's `recipes/` directory is active.
-- Used a new tag? Add it under a category in
-  `<path>/data/categories.json`; `gusto check` reports uncategorized tags.
+- Used a new tag? `new` and `set --tags` return an additive `warnings` array
+  when it has no category. Add it under a category in
+  `<path>/data/categories.json`; until then it shares the `Sonstige` facet and
+  `gusto check` reports it in `uncategorized_tags`.
 
 **Add and manage recipe images**
 - Inspect the source image yourself, then add it to the matching recipe with
@@ -95,10 +98,15 @@ plain stderr with exit code 2.
 - `gusto shopping add-recipe <slug>` imports non-empty ingredients only when no
   visible items sourced from that recipe remain. It does not merge text or
   quantities; use explicit free-text adds for an intentional second need.
+  The error reports how many visible items block a repeat. To attribute one
+  manually selected ingredient, use `shopping add "<text>" --source <slug>`;
+  the slug must exist and that item participates in the same import guard.
   Other operations: `shopping add "<text>"`,
   `shopping add-many "<text>" ...` (one atomic group),
   `shopping list [--pending]`, `shopping check|uncheck|remove <id>`,
-  `shopping clear`.
+  `shopping clear`. **Do not run `clear` merely to save checkmarks:** it
+  tombstones every checked item, hides it from normal lists, and has no CLI
+  restore operation.
 
 **Find and maintain preferred products**
 - `gusto favorites match "<shopping text>" --json` returns the shared household
@@ -146,10 +154,12 @@ stays the source of truth. The keyboard has **two kinds of buttons**:
   the list, also put the item lines in the `message` text, not only in buttons.
 - **"Fertig" saves the current checked-state to Gusto; it does not remove bought
   items.** To make "Fertig" also clear the bought ones, additionally run
-  `gusto shopping clear` (tombstones all checked) after the sync.
+  `gusto shopping clear` (tombstones all checked, with no CLI restore) after the
+  sync only when removal was requested.
 - **Manage** (then re-render by posting a fresh list): add one with `gusto
-  shopping add "<text>"`, or a known group with `gusto shopping add-many
-  "<text>" ...`; clear done `gusto shopping clear` → `{ "removed": N }`; open-only
+  shopping add "<text>"` (optionally `--source <slug>`), or a known group with
+  `gusto shopping add-many "<text>" ...`; clear done `gusto shopping clear` →
+  `{ "removed": N }`; open-only
   `gusto shopping list --pending --json`. After old sourced items are removed,
   a fresh `add-recipe` import mints new ids → send a fresh list, don't reuse the
   old buttons. Background:

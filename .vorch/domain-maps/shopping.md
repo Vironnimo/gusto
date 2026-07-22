@@ -51,11 +51,21 @@ synchronizing an external checklist; a repeated target state does not write or
 advance its sync version. Re-removing an existing tombstone has the same no-op
 behavior.
 
+`shopping add --source <slug>` attributes one free-text item to an existing
+recipe. Core validates the recipe while holding both catalog and shopping locks;
+unsourced adds retain the shopping-only lock. A visible manually sourced item
+participates in the same active-recipe guard as bulk imports.
+
 Ingredient import requires at least one parsed ingredient and refuses a new
 import while any visible item with the same recipe source remains. This blocks
 accidental repeated clicks without deduplicating same-looking text across
 recipes or guessing how quantities should combine. Once the old sourced items
-are tombstoned, a fresh import creates new ids.
+are tombstoned, a fresh import creates new ids. Rejection reports the number of
+visible sourced items that caused the block.
+
+`shopping clear` tombstones every checked visible item. Tombstones remain in
+sync state but are hidden from normal lists, and no CLI operation restores them;
+the command is only appropriate when completed entries should be removed.
 
 The web provides server-rendered `/shopping` forms when JavaScript is unavailable. With JavaScript, the client hides that fallback, mutates local state first, and synchronizes in the background. `GET /api/shopping` returns all server items including tombstones; `POST /api/shopping/sync` accepts `{ "items": [...] }` and returns the merged full state.
 

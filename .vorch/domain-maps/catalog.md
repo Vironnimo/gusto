@@ -34,6 +34,11 @@ The slug joins Markdown, metadata, image storage, log entries, shopping sources,
 
 The CLI exposes these capabilities through `gusto list|search|tags|show|new|edit|cooked|log|suggest|check|set|delete` and `gusto image ...`. Web catalog pages and form actions in `gusto/web.py` call the same core operations.
 
+`new` and a tag-changing `set` preserve tags that have no named facet but warn
+immediately in both CLI presentation modes. JSON adds a `warnings` array with
+the stable `uncategorized_tags` code and affected tags; those tags continue to
+share the runtime `Sonstige` facet until `categories.json` assigns them.
+
 Recipe titles must be non-empty, and duration/servings, when present, must be
 positive integers. `update_recipe` has explicit clear flags for the optional
 numeric values; the CLI exposes them through `gusto set --clear-duration` and
