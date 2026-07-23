@@ -1,6 +1,6 @@
 ---
 name: gusto
-description: Operate the Gusto recipe system through its `gusto` CLI. Use to answer "what should I cook?" and "what can I make with these ingredients?", find, show, add, edit or delete recipes, manage recipe images, filter recipes by tag categories, manage the shopping list and shared preferred products, record or read the cooking log, or safely uninstall an installed runtime when explicitly requested. Drive the `gusto` CLI and pass `--json` whenever you parse output.
+description: Operate the Gusto recipe system through its `gusto` CLI. Use to answer "what should I cook?" and "what can I make with these ingredients?", find, show, add, edit, archive, restore, or permanently purge recipes, manage recipe images, filter recipes by tag categories, manage the shopping list and shared preferred products, record or read the cooking log, or safely uninstall an installed runtime when explicitly requested. Drive the `gusto` CLI and pass `--json` whenever you parse output.
 ---
 
 # Gusto — operating the recipe system via the CLI
@@ -13,7 +13,10 @@ English.)
 
 With `--json`, expected command failures are also JSON on stdout:
 `{"ok": false, "error": "..."}` with exit code 1. Argument/usage errors remain
-plain stderr with exit code 2.
+plain stderr with exit code 2. `check --json` is the deliberate exception: hard
+integrity errors return the full diagnostics object with `ok:false` and exit 1.
+`edit --json` waits for the editor and reports its result; `serve --json` emits
+one startup object before the long-running server takes over.
 
 ## Invocation
 
@@ -21,8 +24,10 @@ plain stderr with exit code 2.
 - Installed release: `gusto <command>` in a new Windows console, or
   `~/.local/opt/gusto/bin/gusto <command>` on Linux.
 - Read-only: `home`, `list`, `search`, `show`, `tags`, `log`, `suggest`,
-  `check`, `image list`, `shopping list`, and `favorites list|show|match`.
+  `check`, `archive list|show`, `image list`, `shopping list`, and
+  `favorites list|show|match`.
 - Change state: `new`, `set`, `delete`, `cooked`, `image add|set|cover|remove`,
+  `archive restore|purge`,
   `shopping add|add-many|add-recipe|check|uncheck|remove|remove-done|clear`,
   the remaining `favorites …` commands, and `uninstall` (only when the user
   explicitly asks to remove the installed application).
@@ -90,7 +95,8 @@ plain stderr with exit code 2.
 **Edit · log · shopping**
 - `gusto set <slug> --tags a,b --duration N` (`--tags` replaces the list);
   `--clear-duration` / `--clear-servings` remove optional numeric metadata.
-  At least one change flag is required.
+  At least one change flag is required. `set --title` always updates both the
+  metadata title and the first Markdown H1.
   For a headless body edit, resolve `gusto home --json` and rewrite
   `<path>/recipes/<slug>.md`; do not infer the store from the working directory.
 - `gusto cooked <slug>` — record today; an explicit `--date` must be a valid
@@ -108,6 +114,21 @@ plain stderr with exit code 2.
   checked items should disappear. A request to empty the shopping list maps to
   exactly one `shopping clear` call, which tombstones every visible item,
   whether open or checked. Neither operation has a CLI restore.
+
+**Archive, restore, or permanently delete a recipe**
+- A normal request to delete/remove a recipe maps to exactly one
+  `gusto delete <slug> --json` call. Despite its compatibility name, `delete`
+  is reversible: it moves the Markdown, complete metadata, and every owned
+  recipe image together into `archive/<slug>/`.
+- Inspect with `gusto archive list --json` or `gusto archive show <slug>
+  --json`; restore the complete snapshot with `gusto archive restore <slug>
+  --json`.
+- Log history and existing shopping items remain in their own stores and keep
+  resolving the archived slug. Do not remove them as part of archiving.
+- Permanent destruction is a separate, explicitly confirmed action:
+  `gusto archive purge <slug> --yes --json`. Use it only when the user clearly
+  asked for irreversible deletion. It fails while visible shopping items still
+  reference the recipe; remove those items only if that was also requested.
 
 **Find and maintain preferred products**
 - `gusto favorites match "<shopping text>" --json` returns the shared household
@@ -177,6 +198,8 @@ stays the source of truth. The keyboard has **two kinds of buttons**:
 - `recipes/<slug>.md` — recipe content, no frontmatter.
 - `data/recipes.json` — metadata including `images[]` and `cover_image_id`.
 - `images/<slug>/` — original image files copied into and owned by Gusto.
+- `archive/<slug>/` — one reversible recipe snapshot containing `recipe.md`,
+  `metadata.json`, and its owned `images/` folder.
 - `data/categories.json` — `{ key: { label, tags[] } }` (order = display order); defines the facets.
 - `data/log.json`, `data/shopping_list.json`.
 - `data/favorites.json` — shared shopping needs, exact aliases, and product
@@ -188,6 +211,9 @@ manual edit run `gusto check`.
 ## Pitfalls
 
 - Parsing output? always `--json`.
+- `--max-time`, `log --days`, and `suggest --days` require positive integers;
+  `suggest --limit 0` is intentionally allowed. `serve --port` accepts
+  1 through 65535.
 - Do not assume data lives beside the checkout; resolve it with
   `gusto home --json` before direct file access.
 - The `.md` holds content only — never put metadata/frontmatter in it.

@@ -18,7 +18,14 @@
       </a>
       <span class="shop-meta">
         {% if item.quantity %}<span class="shop-quantity">{{ item.quantity }}</span>{% endif %}
-        {% if item.source %}<a class="shop-source" href="/recipe/{{ item.source }}">aus „{{ source_titles.get(item.source, item.source) }}“</a>{% endif %}
+        {% if item.source %}
+          {% set source = source_references.get(item.source) %}
+          {% if source %}
+            <a class="shop-source" href="{{ source.url }}">aus „{{ source.title }}“{% if source.archived %} (archiviert){% endif %}</a>
+          {% else %}
+            <span class="shop-source is-unresolved">aus „{{ item.source }}“ (nicht gefunden)</span>
+          {% endif %}
+        {% endif %}
       </span>
     </div>
     <form class="shop-remove" method="post" action="/shopping/{{ item.id }}/remove">
@@ -103,6 +110,6 @@
   </section>
 </div>
 
-<script id="shop-recipe-titles" type="application/json">{{ source_titles|tojson }}</script>
+<script id="shop-recipe-references" type="application/json">{{ source_references|tojson }}</script>
 <script src="/static/shopping-client.js" defer></script>
 {% endblock %}

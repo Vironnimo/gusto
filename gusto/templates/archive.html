@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow">Aufbewahrt statt gelöscht</p>
+  <h1 class="page-title">Rezeptarchiv</h1>
+  <p class="lede">Markdown, Metadaten und Bilder bleiben zusammen und können jederzeit zurück ins Kochbuch.</p>
+</section>
+
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+{% if entries %}
+<ul class="cards archive-cards">
+  {% for entry in entries %}
+  {% set r = entry.recipe %}
+  <li class="card" style="--i: {{ loop.index0 }}">
+    <a href="/archive/{{ r.slug }}">
+      {% if r.cover_image %}
+      <div class="card-image-wrap archive-card-image">
+        <img class="card-image" src="/media/archive/{{ r.slug }}/{{ r.cover_image.id }}"
+             alt="{{ r.cover_image.caption or r.title }}" loading="lazy" decoding="async">
+      </div>
+      {% endif %}
+      <div class="card-top">
+        <span class="archive-badge">archiviert</span>
+      </div>
+      <h2 class="card-title">{{ r.title }}</h2>
+      <div class="card-meta">
+        <span>{{ entry.archived_at[:10] }}</span>
+        {% if r.images %}<span>· {{ r.images|length }} {{ 'Bild' if r.images|length == 1 else 'Bilder' }}</span>{% endif %}
+      </div>
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<div class="empty">
+  <p class="empty-emoji">🗃️</p>
+  <p>Das Archiv ist leer. Archivierte Rezepte erscheinen hier vollständig und wiederherstellbar.</p>
+  <a class="btn" href="/">Zum Kochbuch</a>
+</div>
+{% endif %}
+{% endblock %}

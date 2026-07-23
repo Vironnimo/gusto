@@ -180,6 +180,17 @@ a.tag:hover{background:var(--olive); color:#fff}
 .tl-name{font-family:var(--serif); font-weight:600; font-size:1.3rem}
 a.tl-name:hover{color:var(--accent)}
 .tl-gone{color:var(--ink-soft); text-decoration:line-through}
+.archive-badge{display:inline-flex; align-items:center; width:max-content; padding:.18rem .5rem; border-radius:999px; background:rgba(95,107,67,.14); color:var(--olive); font-family:var(--sans); font-size:.66rem; font-style:normal; font-weight:800; letter-spacing:.08em; text-transform:uppercase}
+.tl-name .archive-badge{margin-left:.35rem; vertical-align:middle}
+.archive-card-image img{filter:saturate(.72)}
+.archive-notice{display:flex; align-items:center; justify-content:space-between; gap:1rem; margin:0 0 1.5rem; padding:1rem 1.1rem; border:1px solid rgba(95,107,67,.3); border-radius:14px; background:rgba(95,107,67,.09)}
+.archive-notice>div{display:grid; gap:.35rem}
+.archive-notice p{color:var(--ink-soft); font-size:.9rem}
+.archive-purge{margin-top:3rem; border-top:1px solid rgba(191,69,40,.3); color:var(--ink-soft)}
+.archive-purge>summary{width:max-content; padding:1rem 0; cursor:pointer; color:var(--accent); font-weight:700}
+.archive-purge>div{display:grid; gap:.75rem; max-width:620px; padding:.2rem 0 1rem}
+.archive-purge .btn-text{color:var(--accent)}
+.shop-source.is-unresolved{color:var(--accent); text-decoration:none}
 
 /* ---- Empty state ---- */
 .empty{text-align:center; padding:4rem 1rem; color:var(--ink-soft)}
@@ -451,7 +462,7 @@ body.has-favorite-sheet .wrap{z-index:90}
   .brand-text{font-size:1.45rem}
   .nav{
     position:fixed; left:0; right:0; bottom:0; z-index:50;
-    display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:0;
+    display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:0;
     padding:.35rem .35rem calc(.35rem + env(safe-area-inset-bottom));
     border-top:1px solid rgba(216,198,168,.9);
     background:rgba(246,239,225,.94); box-shadow:0 -10px 30px -24px rgba(74,45,20,.8);
@@ -466,6 +477,7 @@ body.has-favorite-sheet .wrap{z-index:90}
   .nav a.is-active{color:var(--accent)}
   .nav-symbol{display:flex; align-items:center; justify-content:center; height:1.45rem; font-family:var(--serif); font-size:1.2rem; line-height:1}
   .nav .nav-cta .nav-symbol{width:1.75rem; height:1.75rem; margin-top:-.15rem; border-radius:50%; background:var(--accent); color:#fff; font-family:var(--sans); font-size:1.15rem}
+  .archive-notice{align-items:stretch; flex-direction:column}
 
   .wrap{padding:.35rem 1.1rem 2.5rem}
   .page-head{margin:.85rem 0 1.15rem}

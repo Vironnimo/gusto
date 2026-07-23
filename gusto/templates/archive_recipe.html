@@ -1,19 +1,31 @@
 {% extends "base.html" %}
 {% block content %}
-<article class="recipe">
-  <a class="back" href="/">← Alle Rezepte</a>
+<article class="recipe archived-recipe">
+  <a class="back" href="/archive">← Zum Archiv</a>
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+  <aside class="archive-notice">
+    <div>
+      <span class="archive-badge">archiviert</span>
+      <p>Seit {{ entry.archived_at[:10] }} aufbewahrt — vollständig mit Markdown, Metadaten und Bildern.</p>
+    </div>
+    <form method="post" action="/archive/{{ r.slug }}/restore">
+      <button class="btn" type="submit">Wiederherstellen</button>
+    </form>
+  </aside>
+
   {% if r.cover_image %}
   <figure class="recipe-hero">
-    <img src="/media/recipe/{{ r.slug }}/{{ r.cover_image.id }}"
+    <img src="/media/archive/{{ r.slug }}/{{ r.cover_image.id }}"
          alt="{{ r.cover_image.caption or r.title }}">
     {% if r.cover_image.caption %}<figcaption>{{ r.cover_image.caption }}</figcaption>{% endif %}
   </figure>
   {% endif %}
+
   <header class="recipe-head">
     {% if r.tags %}
     <div class="recipe-tags">
-      {% for t in r.tags %}<a class="tag" href="/?tag={{ t|urlencode }}">{{ t }}</a>{% endfor %}
+      {% for tag in r.tags %}<span class="tag">{{ tag }}</span>{% endfor %}
     </div>
     {% endif %}
     <h1 class="recipe-title">{{ r.title }}</h1>
@@ -22,30 +34,12 @@
       {% if r.servings %}<span><strong>{{ r.servings }}</strong>&nbsp;Portionen</span>{% endif %}
       <span>zuletzt&nbsp;gekocht:&nbsp;<strong>{{ r.last_cooked or 'noch nie' }}</strong></span>
     </div>
-    <div class="recipe-actions">
-      <a class="btn recipe-jump" href="#rezept">Zum Rezept ↓</a>
-      <form method="post" action="/recipe/{{ r.slug }}/cooked">
-        <button class="btn" type="submit">Heute gekocht ✓</button>
-      </form>
-      <form method="post" action="/recipe/{{ r.slug }}/shopping">
-        <button class="btn-ghost" type="submit">Zutaten einkaufen</button>
-      </form>
-      <a class="btn-ghost recipe-photo-action" href="/recipe/{{ r.slug }}/images#neues-foto">Foto hinzufügen</a>
-      <details class="recipe-more">
-        <summary class="btn-ghost">Mehr …</summary>
-        <div class="recipe-more-menu">
-          <a href="/recipe/{{ r.slug }}/edit">Bearbeiten</a>
-          <form method="post" action="/recipe/{{ r.slug }}/delete"
-                onsubmit="return confirm('Rezept „{{ r.title }}“ samt Bildern archivieren? Es kann später wiederhergestellt werden.');">
-            <button class="btn-text" type="submit">Archivieren</button>
-          </form>
-        </div>
-      </details>
-    </div>
   </header>
+
   <div class="recipe-body" id="rezept">
     {{ content_html|safe }}
   </div>
+
   {% if r.images|length > 1 %}
   {% set role_labels = {'result': 'Ergebnis', 'ingredients': 'Zutaten', 'step': 'Zubereitung'} %}
   <section class="recipe-gallery" aria-label="Weitere Bilder">
@@ -54,7 +48,7 @@
       {% for image in r.images %}
         {% if not r.cover_image or image.id != r.cover_image.id %}
         <figure class="recipe-gallery-item">
-          <img src="/media/recipe/{{ r.slug }}/{{ image.id }}"
+          <img src="/media/archive/{{ r.slug }}/{{ image.id }}"
                alt="{{ image.caption or r.title }}" loading="lazy">
           {% if image.caption or image.role != 'gallery' %}
           <figcaption>
@@ -68,5 +62,17 @@
     </div>
   </section>
   {% endif %}
+
+  <details class="archive-purge">
+    <summary>Endgültig löschen</summary>
+    <div>
+      <p>Entfernt diesen Archiveintrag unwiderruflich. Sichtbare Einkaufsposten aus dem Rezept müssen vorher entfernt werden.</p>
+      <form method="post" action="/archive/{{ r.slug }}/purge"
+            onsubmit="return confirm('„{{ r.title }}“ wirklich endgültig löschen? Das kann nicht rückgängig gemacht werden.');">
+        <input type="hidden" name="confirm" value="1">
+        <button class="btn-text" type="submit">Unwiderruflich löschen</button>
+      </form>
+    </div>
+  </details>
 </article>
 {% endblock %}

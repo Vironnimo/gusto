@@ -189,6 +189,8 @@ with tempfile.TemporaryDirectory(prefix="gusto-wheel-test-") as wheel_dir:
         "gusto/uninstall.py",
         "gusto/templates/base.html",
         "gusto/templates/list.html",
+        "gusto/templates/archive.html",
+        "gusto/templates/archive_recipe.html",
         "gusto/static/style.css",
         "gusto/static/app.js",
         "gusto/static/shopping-client.js",

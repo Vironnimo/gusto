@@ -2,18 +2,22 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
+from contextlib import redirect_stdout
 from datetime import date, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parent.parent
 HOME = Path(tempfile.mkdtemp(prefix="gusto-cli-test-"))
 ENV = {**os.environ, "GUSTO_HOME": os.fspath(HOME)}
+sys.path.insert(0, os.fspath(ROOT))
 checks = 0
 
 
@@ -46,10 +50,41 @@ def as_json_error(*arguments):
     return payload
 
 
+def check_serve_json_contract():
+    from gusto import cli
+
+    calls = []
+    fake_uvicorn = SimpleNamespace(
+        run=lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    original = sys.modules.get("uvicorn")
+    sys.modules["uvicorn"] = fake_uvicorn
+    output = io.StringIO()
+    try:
+        with redirect_stdout(output):
+            cli.cmd_serve(SimpleNamespace(
+                host="0.0.0.0", port=8765, reload=False, json=True,
+            ))
+    finally:
+        if original is None:
+            sys.modules.pop("uvicorn", None)
+        else:
+            sys.modules["uvicorn"] = original
+    payload = json.loads(output.getvalue())
+    check(payload["status"] == "starting"
+          and payload["url"] == "http://127.0.0.1:8765"
+          and calls[0][1]["port"] == 8765,
+          "serve --json must emit a parseable startup object before serving")
+
+
 def main():
     home = as_json("home")
     check(Path(home["path"]) == HOME and home["source"] == "environment",
           "home --json must explain the active GUSTO_HOME data directory")
+    check_serve_json_contract()
+    invalid_port = run("serve", "--port", "70000", expect=2)
+    check("zwischen 1 und 65535" in invalid_port.stderr,
+          "serve must reject ports outside the TCP range")
 
     created = as_json(
         "new", "Test Suppe", "--tags", "vegan,schnell",
@@ -86,6 +121,8 @@ def main():
     )
     check(changed["title"] == "Neue Suppe" and changed["duration_min"] == 30,
           "set --json must return updated metadata")
+    check(as_json("show", slug)["content"].startswith("# Neue Suppe\n"),
+          "set --title must keep the Markdown H1 synchronized")
     check(changed["warnings"][0]["code"] == "uncategorized_tags",
           "set --tags --json must identify tags without a named facet")
     cleared = as_json("set", slug, "--clear-duration", "--clear-servings")
@@ -93,6 +130,12 @@ def main():
           "set must be able to remove optional duration and servings")
     check(as_json("list", "--max-time", "60") == [],
           "list --max-time must exclude a recipe with unknown duration")
+    check("positive ganze Zahl" in as_json_error(
+        "list", "--max-time", "0",
+    )["error"], "list must reject a zero time cap")
+    check("positive ganze Zahl" in as_json_error(
+        "search", "Suppe", "--max-time", "-1",
+    )["error"], "search must reject a negative time cap")
     no_change = as_json_error("set", slug)
     check("mindestens eine Änderung" in no_change["error"],
           "set without mutation flags must fail explicitly")
@@ -156,6 +199,11 @@ def main():
     limit_error = as_json_error("suggest", "--limit", "-1")
     check("nichtnegative" in limit_error["error"],
           "suggest must reject negative limits")
+    check("positive ganze Zahl" in as_json_error("log", "--days", "0")["error"],
+          "log must reject a zero day range")
+    check("positive ganze Zahl" in as_json_error(
+        "suggest", "--days", "-1",
+    )["error"], "suggest must reject a negative day range")
 
     (HOME / "recipes" / f"{slug}.md").write_text(
         "# Neue Suppe\n\n## Zutaten\n\n- Wasser\n- Salz\n", encoding="utf-8",
@@ -189,6 +237,10 @@ def main():
     check("abgehakten Eintraege"
           in " ".join(remove_done_help.stdout.split()),
           "shopping remove-done help must describe checked-only removal")
+    add_recipe_help = run("shopping", "add-recipe", "--help")
+    check("solange keine sichtbaren Posten"
+          in " ".join(add_recipe_help.stdout.split()),
+          "shopping add-recipe help must describe its actual repeat guard")
     imported = as_json("shopping", "add-recipe", slug)
     check([entry["text"] for entry in imported] == ["Wasser", "Salz"],
           "shopping add-recipe must return imported ingredients")
@@ -272,12 +324,33 @@ def main():
     shown_need = as_json("favorites", "show", need["id"])
     check(len(shown_need["products"]) == 2,
           "favorites show --json must include ranked products")
+    renamed_need = as_json(
+        "favorites", "set", need["id"], "--name", "Frischer Pizzateig",
+    )
+    check("Pizzateig" in renamed_need["aliases"],
+          "renaming a shopping need must preserve the old name as an alias")
+    favorites_set_help = run("favorites", "set", "--help")
+    check("alten Namen als Alias"
+          in " ".join(favorites_set_help.stdout.split()),
+          "favorites set help must disclose alias preservation")
 
     consistency = as_json("check")
     check(consistency["recipe_count"] == 2
           and consistency["favorite_need_count"] == 1
+          and consistency["ok"] is True
           and not consistency["missing_files"],
           "check --json must expose consistency state")
+    (HOME / "recipes" / f"{slug}.md").write_text(
+        "# Abweichender Titel\n", encoding="utf-8",
+    )
+    broken_check = run("check", "--json", expect=1)
+    check(not broken_check.stderr
+          and json.loads(broken_check.stdout)["title_mismatches"] == [slug]
+          and json.loads(broken_check.stdout)["ok"] is False,
+          "check must return its full JSON diagnostics with status 1 on hard errors")
+    as_json("set", slug, "--title", "Neue Suppe")
+    check(as_json("check")["ok"] is True,
+          "setting the canonical title again must repair a drifting H1")
 
     missing = as_json_error("show", "does-not-exist")
     check("Kein Rezept" in missing["error"],
@@ -286,9 +359,36 @@ def main():
     check(not usage_error.stdout and "usage:" in usage_error.stderr,
           "argparse usage errors must stay distinguishable on stderr with exit 2")
 
+    ENV["EDITOR"] = sys.executable
+    edited = as_json("edit", slug)
+    check(edited["slug"] == slug and edited["exit_code"] == 0,
+          "edit --json must return one parseable result after the editor exits")
+
     deleted = as_json("delete", slug)
-    check(deleted == {"slug": slug, "deleted": True},
-          "delete --json must confirm deletion")
+    check(deleted["slug"] == slug and deleted["archived"] is True
+          and deleted["archived_at"],
+          "delete --json must confirm reversible archiving")
+    archived_list = as_json("archive", "list")
+    check([entry["slug"] for entry in archived_list] == [slug],
+          "archive list --json must expose archived recipes")
+    archived_show = as_json("archive", "show", slug)
+    check(archived_show["content"].startswith("# Neue Suppe")
+          and len(archived_show["images"]) == 1,
+          "archive show --json must include Markdown, metadata and images")
+    check("(archiviert)" in run("log").stdout,
+          "human log output must resolve archived recipe titles")
+    restored = as_json("archive", "restore", slug)
+    check(restored["restored"] is True
+          and as_json("show", slug)["title"] == "Neue Suppe",
+          "archive restore must return the recipe to active commands")
+    as_json("delete", slug)
+    purge_without_yes = as_json_error("archive", "purge", slug)
+    check("--yes" in purge_without_yes["error"],
+          "archive purge must require explicit confirmation")
+    purged = as_json("archive", "purge", slug, "--yes")
+    check(purged == {"slug": slug, "purged": True}
+          and as_json("archive", "list") == [],
+          "archive purge --yes must permanently remove the snapshot")
 
     refused_uninstall = as_json_error("uninstall", "--keep-data")
     check("Projekt-Checkout" in refused_uninstall["error"],

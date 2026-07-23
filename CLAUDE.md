@@ -38,13 +38,15 @@ recipes and to enable e.g. meal suggestions based on the last few days.
 |----------|----------|
 | `recipes/<slug>.md` | Pure recipe content (Markdown, starts with `# Title`). No frontmatter. |
 | `images/<slug>/` | Recipe images copied into and owned by Gusto. |
+| `archive/<slug>/` | Reversible snapshot with Markdown, full metadata, and owned images. |
 | `images/_favorites/` | Preferred-product images copied into and owned by Gusto. |
 | `data/recipes.json` | Recipe metadata including `images` and `cover_image_id`. |
 | `data/categories.json` | Tag categories (facets): `{ "<key>": {"label", "tags": [...]} }`. Maps the flat tags to categories (order = display order). |
 | `data/favorites.json` | Shared shopping needs, exact aliases, and manually ranked preferred products. |
 | `data/log.json` | Cooking log: `[{ "date": "YYYY-MM-DD", "slug": ... }]`. |
 
-`gusto new` writes both the .md AND the index entry. If a .md is created by
+`gusto new` writes both the .md AND the index entry. `gusto set --title` updates
+the metadata title and Markdown H1 together. If a .md is created by
 hand, add the entry in `data/recipes.json` and run `gusto check`. When saving
 from the web, the first line of the .md is always rewritten as `# {title}` (the
 title is its own form field, not in the body).
@@ -67,9 +69,12 @@ python install.py --cli-only   # the pure CLI needs no dependencies
 python -m gusto <command>      # CLI during development
 ```
 
-All commands understand `--json` (machine-readable, for agents). Expected
-command failures then write `{ "ok": false, "error": "..." }` to stdout and
-exit 1; argparse usage errors remain plain stderr with exit 2. Each runtime
+All commands understand `--json` (machine-readable, for agents). `edit --json`
+returns the editor result after the editor exits; `serve --json` emits one
+startup object before the long-running server takes over. Expected command
+failures write `{ "ok": false, "error": "..." }` to stdout and exit 1.
+`check --json` instead returns its full diagnostics with `ok: false` and exit 1
+on hard integrity errors. Argparse usage errors remain plain stderr with exit 2. Each runtime
 uses its adjacent `gusto.settings.json`: the checkout selects the platform data
 sibling `gusto-dev`, while the installer writes the production data path beside
 the installed app. `GUSTO_HOME` overrides settings for isolated tests or an
@@ -77,7 +82,7 @@ explicit portable store. `gusto home --json` reports the active path, source,
 platform default, and settings file.
 
 ```
-gusto list   [--tag T ...] [--max-time N]    Filter; unknown durations fail the time cap
+gusto list   [--tag T ...] [--max-time N]    Positive cap; unknown durations fail it
 gusto search "<terms>" [--match any|all] [--tag T ...] [--max-time N]  Full-text
 gusto tags   [--all]                          Show tag categories (facets)
 gusto home                                    Show active data directory
@@ -85,12 +90,15 @@ gusto show   <slug>                          Print a recipe (--json: incl. conte
 gusto new    "<Title>" [--tags a,b] [--duration N] [--servings N]  Warns on unsorted tags
 gusto edit   <slug>                          Open the .md in the editor
 gusto cooked <slug> [--date YYYY-MM-DD]      Record a valid, non-future date
-gusto log    [--days N]                       Show the cooking log
-gusto set    <slug> [--title ...] [--tags a,b] [--duration N|--clear-duration] [--servings N|--clear-servings]  Requires a change
-gusto delete <slug>                           Delete a recipe
-gusto suggest [--days N] [--limit N]          Candidates; limit is nonnegative
-gusto check                                   Consistency index <-> .md (+ unsorted tags)
-gusto serve  [--host H] [--port N]            Start the web UI (LAN)
+gusto log    [--days N]                       Show the log; N is positive
+gusto set    <slug> [--title ...] [--tags a,b] [--duration N|--clear-duration] [--servings N|--clear-servings]  Title also rewrites H1
+gusto delete <slug>                           Reversibly archive recipe + owned files
+gusto archive list|show <slug>
+gusto archive restore <slug>
+gusto archive purge <slug> --yes              Permanently delete one snapshot
+gusto suggest [--days N] [--limit N]          Positive days; nonnegative limit
+gusto check                                   Full integrity check; hard errors exit 1
+gusto serve  [--host H] [--port 1..65535]     Start the web UI (LAN)
 gusto uninstall [--keep-data|--delete-data --yes] [--dry-run]  Remove installed app
 
 gusto image list <slug>                       Show cover and gallery images
@@ -102,7 +110,8 @@ gusto image remove <slug> <id>                Delete one stored image
 gusto favorites list|show <need>              List shared shopping needs / one ranking
 gusto favorites match "<text>"                 Match only an exact known name or alias
 gusto favorites add "<name>" [--alias TEXT ...]
-gusto favorites set|remove <need> ...
+gusto favorites set <need> --name N            Rename; old name becomes an alias
+gusto favorites remove <need>
 gusto favorites alias-add|alias-remove <need> "<text>"
 gusto favorites product-add <need> "<name>" --brand B [--store S] [--note N] [--image PATH]
 gusto favorites product-set <need> <id> [...] [--remove-image]
@@ -112,7 +121,7 @@ gusto favorites product-remove <need> <id>
 gusto shopping list [--pending]                  Show the shopping list
 gusto shopping add "<text>" [--quantity M] [--source slug]  Add, optionally attributed
 gusto shopping add-many "<text>" ...              Add several entries atomically
-gusto shopping add-recipe <slug>                   Import once while no sourced items remain
+gusto shopping add-recipe <slug>                   Import while no visible sourced items remain
 gusto shopping check|uncheck <id>              Check / uncheck an entry
 gusto shopping remove <id>                     Remove an entry (tombstone)
 gusto shopping remove-done                    Remove all checked entries
@@ -138,6 +147,13 @@ guard. It never merges same-looking ingredients or guesses quantities.
 `shopping remove-done` tombstones all checked items; `shopping clear`
 tombstones every visible item, whether open or checked. Both operations sync
 through tombstones and have no CLI restore.
+
+`gusto delete` means **archive**, not destruction. It moves the recipe Markdown,
+full metadata, and every owned recipe image together under `archive/<slug>/`.
+Log history and visible shopping items stay in their own stores and resolve the
+slug to the archived recipe. `archive restore` reverses the operation. Only
+`archive purge <slug> --yes` destroys the snapshot; purge refuses while visible
+shopping items still reference that recipe.
 
 ## Typical tasks (agent)
 
@@ -241,7 +257,8 @@ staggered fade-in. UI and data fields are German.
 **Done:** data model, core, CLI, web UI (list/search incl. **live search** while
 typing, **tag facets**: multi-select grouped by category, OR within / AND across
 categories — `data/categories.json`, `gusto tags`), recipe view,
-create/edit/delete, "cooked today", suggestions, log, 404 page, optional Linux
+create/edit/reversible archive/restore/purge, "cooked today", suggestions, log,
+404 page, optional Linux
 systemd and Windows logon deployment, browser test, and **multiple stored recipe images** with a selected
 cover, gallery, free role/caption, full agent control through `gusto image …`,
 and direct camera/library management in the web UI. **Shopping list**

@@ -7,7 +7,9 @@ for machine-readable output.
 
 Expected command failures with `--json` return
 `{ "ok": false, "error": "<German message>" }` on stdout and exit `1`.
-Argument and usage errors from the parser remain plain stderr and exit `2`.
+`check --json` instead returns its full diagnostics with `ok:false` and exit
+`1` when it finds hard integrity errors. Argument and usage errors from the
+parser remain plain stderr and exit `2`.
 
 ## Commands
 
@@ -21,7 +23,7 @@ Argument and usage errors from the parser remain plain stderr and exit `2`.
 - `list [--tag T ...] [--max-time N] [--json]`
   List/filter recipes. `--tag` is repeatable **and** comma-separated
   (`--tag a --tag b` ≡ `--tag a,b`). `--max-time` caps `duration_min` and
-  excludes recipes whose duration is unknown.
+  excludes recipes whose duration is unknown; the cap must be positive.
 - `search "<query>" [--match any|all] [--tag T ...] [--max-time N] [--json]`
   Full-text over title, tags, **and the markdown body** (so ingredients match).
   `any` (default) = any term present; `all` = every term present.
@@ -32,13 +34,16 @@ Argument and usage errors from the parser remain plain stderr and exit `2`.
   Tag categories (facets). Default: only tags actually used; `--all`: every
   defined category/tag.
 - `log [--days N] [--json]`
-  Cooking log. Human output is newest-first.
+  Cooking log. Human output is newest-first and labels archived recipes. `N`
+  must be positive.
 - `suggest [--days N] [--limit N] [--json]`
-  Recipes not cooked in the last N days (default 7), longest-ago first. `limit`
-  must be nonnegative; `0` returns an empty array.
+  Recipes not cooked in the last positive N days (default 7), longest-ago
+  first. `limit` must be nonnegative; `0` returns an empty array.
 - `check [--json]`
-  Consistency of index ↔ `.md` files, recipe image metadata ↔ stored files,
-  preferred-product aliases/images, plus tags not assigned to a category.
+  Full active/archive H1, file, image, cover, cross-reference, and
+  preferred-product integrity plus organization warnings. Hard errors set
+  `ok:false` and exit 1; uncategorized tags and unresolved historical log slugs
+  are warnings and keep exit 0.
 
 ### Writing
 
@@ -49,18 +54,36 @@ Argument and usage errors from the parser remain plain stderr and exit `2`.
   a warning line to human output; they are still stored in the `Sonstige` facet.
 - `set <slug> [--title ...] [--tags a,b]
   [--duration N|--clear-duration] [--servings N|--clear-servings] [--json]`
-  Update metadata. `--tags` **replaces** the whole list; the clear flags remove
+  Update metadata. `--title` also rewrites the first Markdown H1. `--tags`
+  **replaces** the whole list; the clear flags remove
   optional duration or serving values. At least one change is required. A
   `--tags` change uses the same uncategorized-tag warning contract as `new`.
-- `edit <slug>`
+- `edit <slug> [--json]`
   Open the `.md` in `$EDITOR`. Interactive; for a headless agent, first read
   `gusto home --json`, then rewrite `<path>/recipes/<slug>.md` directly. Never
-  assume the checkout's `recipes/` directory is the active store.
+  assume the checkout's `recipes/` directory is the active store. JSON waits
+  until the editor exits and returns `slug`, absolute `path`, `editor`, and
+  `exit_code`.
 - `cooked <slug> [--date YYYY-MM-DD] [--json]`
   Add a log entry (default: today) and bump `last_cooked`. An explicit date
   must be a valid calendar date in that exact format and cannot be in the future.
 - `delete <slug> [--json]`
-  Remove the `.md`, index entry, and all stored images. Log history is kept.
+  **Reversibly archive**, rather than destroy, the Markdown, full metadata, and
+  all owned images. Log and shopping records stay in their own stores and
+  resolve the archived slug. JSON returns `slug`, `archived:true`, and
+  `archived_at`.
+
+### Recipe archive (`archive`)
+
+- `archive list [--json]` — list complete archived recipe metadata, newest
+  archive first.
+- `archive show <slug> [--json]` — print archived Markdown; JSON returns recipe
+  metadata plus `archived_at` and `content`.
+- `archive restore <slug> [--json]` — move the complete snapshot back to the
+  active catalog. JSON is `{ "restored": true, "recipe": { ... } }`.
+- `archive purge <slug> --yes [--json]` — permanently destroy the snapshot.
+  The explicit flag is mandatory. Purge refuses while any visible shopping
+  items still reference the slug. JSON is `{ "slug": "...", "purged": true }`.
 
 ### Recipe images (`image`)
 
@@ -135,8 +158,10 @@ interactive `edit` bypass these locks.
 
 ### Server
 
-- `serve [--host H] [--port N] [--reload]` — start the web UI
-  (default `0.0.0.0:8000`, reachable across the LAN).
+- `serve [--host H] [--port N] [--reload] [--json]` — start the web UI
+  (default `0.0.0.0:8000`, reachable across the LAN); port must be 1–65535.
+  JSON emits one `{status:"starting", host, port, url, reload}` object before
+  the server begins its long-running work.
 
 ### Installed application lifecycle
 
@@ -186,6 +211,16 @@ unchanged recipe object additionally contains:
 
 `show --json` adds `"content": "<full markdown of the .md>"`.
 
+`delete --json`:
+
+```json
+{"slug": "spaghetti-carbonara", "archived": true, "archived_at": "2026-07-23T12:00:00.000Z"}
+```
+
+`archive list --json` returns recipe objects with an additive `archived_at`;
+`archive show --json` additionally adds `content`. Restore and purge use the
+wrapper shapes documented under the archive commands above.
+
 `tags --json`:
 
 ```json
@@ -196,28 +231,53 @@ unchanged recipe object additionally contains:
 
 ```json
 {
+  "ok": true,
   "recipe_count": 3,
+  "archive_count": 1,
+  "duplicate_recipe_slugs": [],
   "orphaned_files": [],
   "missing_files": [],
+  "title_mismatches": [],
   "uncategorized_tags": [],
   "orphaned_image_folders": [],
   "orphaned_image_files": [],
   "missing_image_files": [],
   "invalid_cover_images": [],
+  "invalid_archive_entries": [],
+  "orphaned_archive_root_files": [],
+  "stale_archive_transactions": [],
+  "missing_archive_files": [],
+  "archived_title_mismatches": [],
+  "missing_archive_image_files": [],
+  "orphaned_archive_image_files": [],
+  "invalid_archive_cover_images": [],
+  "active_archive_conflicts": [],
+  "unresolved_shopping_sources": [],
+  "unresolved_log_references": [],
   "favorite_need_count": 1,
   "duplicate_favorite_aliases": [],
   "orphaned_favorite_image_files": [],
-  "missing_favorite_image_files": []
+  "missing_favorite_image_files": [],
+  "errors": [],
+  "warnings": []
 }
 ```
 
 - `orphaned_files`: a `.md` with no index entry.
 - `missing_files`: an index entry with no `.md`.
+- `title_mismatches`: active metadata title and first Markdown H1 disagree.
 - `uncategorized_tags`: used tags not in any category.
 - The image fields report folders without recipes, files without metadata,
   missing referenced files, and cover ids that do not point to an image.
 - The favorite fields report ambiguous aliases and product-image files that do
   not match the shared preference catalog.
+- Archive fields apply the same file/H1/image/cover rules to snapshots, detect
+  interrupted moves and active/archive slug collisions, and verify visible
+  shopping sources. Historical unresolved log slugs are warnings because the
+  cooking log is append-only.
+- `errors` and `warnings` contain `{code, items}` diagnostics. `ok` is false
+  exactly when `errors` is non-empty; JSON is still the complete object and the
+  process exits 1.
 
 `log --json`: `[ { "date": "2026-06-21", "slug": "spaghetti-carbonara" } ]`
 
@@ -291,6 +351,7 @@ override used by isolated runs and tests.
 |---|---|
 | `recipes/<slug>.md` | Pure markdown. First line `# Title`, then `## Zutaten` (bullets) and `## Zubereitung` (numbered). **No frontmatter.** |
 | `images/<slug>/` | Recipe images copied into and owned by Gusto. |
+| `archive/<slug>/` | Reversible snapshot: `recipe.md`, `metadata.json`, and owned `images/`. |
 | `images/_favorites/` | Preferred-product images copied into and owned by Gusto. |
 | `data/recipes.json` | Metadata array — the index, including images and selected cover. |
 | `data/categories.json` | `{ key: { label, tags[] } }`; order = display order. |

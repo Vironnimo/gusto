@@ -4,11 +4,11 @@
 //   activate  -> delete old caches + clients.claim
 //   fetch     -> navigations: network-first, offline fallback to /shopping
 //                /api/...:     network-only (do not cache)
-//                recipe media: network-only (deleted images must stay deleted)
+//                recipe/archive media: network-only (moved images must stay current)
 //                favorite media: cache-first (filenames change on replacement)
 //                other GET:    cache-first (static)
 
-const CACHE = "gusto-v8";
+const CACHE = "gusto-v9";
 
 const APP_SHELL = [
   "/shopping",
@@ -78,7 +78,8 @@ self.addEventListener("fetch", (event) => {
   // Recipe images keep a stable URL while their selection may change. Product
   // images use content-specific filenames and deliberately fall through to the
   // cache-first branch so recommendations remain recognizable offline.
-  if (url.pathname.startsWith("/media/recipe/")) {
+  if (url.pathname.startsWith("/media/recipe/")
+      || url.pathname.startsWith("/media/archive/")) {
     event.respondWith(fetch(request));
     return;
   }

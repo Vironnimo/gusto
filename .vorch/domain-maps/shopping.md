@@ -56,6 +56,12 @@ recipe. Core validates the recipe while holding both catalog and shopping locks;
 unsourced adds retain the shopping-only lock. A visible manually sourced item
 participates in the same active-recipe guard as bulk imports.
 
+Existing sourced items remain shopping-owned when their recipe is archived.
+Presentation resolves each source slug through the catalog's active-or-archived
+reference map. New manual source attribution and ingredient import still
+require an active recipe. Permanent archive purge holds both locks and refuses
+while any visible shopping item still references that slug.
+
 Ingredient import requires at least one parsed ingredient and refuses a new
 import while any visible item with the same recipe source remains. This blocks
 accidental repeated clicks without deduplicating same-looking text across
@@ -116,6 +122,8 @@ with a 1920 px maximum edge before invoking the existing core product mutation.
 - Taking or selecting a product photo is an online catalog mutation and is not
   queued by the shopping PWA. The camera control requests the outward-facing
   camera as a hint; the separate library control remains the fallback.
-- The service worker uses network-only handling for the sync API and recipe media. Navigations are network-first with the cached shopping page as fallback; other same-origin static GETs are cache-first.
+- The service worker uses network-only handling for the sync API and active or
+  archived recipe media. Navigations are network-first with the cached shopping
+  page as fallback; other same-origin static GETs are cache-first.
 - Update the cache version when changing cached assets or offline shell behavior.
 - Verify core behavior with `tests/test_shopping.py`, `tests/test_favorites.py`, and `tests/test_merge.py`; verify offline, two-device, API, manifest, product-image cache, and service-worker behavior with `scripts/pwa_check.py`.

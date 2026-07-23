@@ -292,6 +292,8 @@ try:
         check("addEventListener" in sw and "caches" in sw, "service worker is served")
         check('"/static/photo-input.js"' in sw,
               "service worker precaches the shared photo-picker enhancement")
+        check('"/media/archive/"' in sw,
+              "service worker never serves moved archive images from stale cache")
         check(sw_ready(pg, 8000) is True, "service worker registered + active")
 
         # Catalog and its image are cached locally while online, then remain

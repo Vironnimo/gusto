@@ -41,6 +41,13 @@ Ein Item ist exakt das Dict von `core.EinkaufItem.to_dict()`:
 }
 ```
 
+`source` bleibt ausschließlich der stabile Rezept-Slug; Archivieren schreibt
+Einkaufsitems und damit den Sync-Stand nicht um. Die servergerenderte Liste und
+`shopping-client.js` erhalten separat eine Präsentations-Map mit Titel, URL und
+Lifecycle-Status und verlinken dadurch aktive Rezepte nach `/recipe/<slug>` und
+archivierte nach `/archive/<slug>`. Ein unbekannter Slug wird sichtbar als
+„nicht gefunden“ markiert. Diese Präsentation ist kein Teil des Sync-Schemas.
+
 ### Zeitstempel-Format (KRITISCH)
 UTC mit **Millisekunden**, literal `Z`:
 `YYYY-MM-DDTHH:MM:SS.sssZ`. Bereits gespeicherte sekundengenaue Zeitstempel

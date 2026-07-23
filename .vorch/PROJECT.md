@@ -27,7 +27,9 @@ parallel.
 ## Conventions
 
 Recipes contain no frontmatter. Metadata is linked to Markdown by the filename
-slug. Product copy and data fields are German; code identifiers are English.
+slug; the metadata title and first Markdown H1 are one enforced contract.
+Reversible recipe snapshots live under `archive/<slug>/`. Product copy and data
+fields are German; code identifiers are English.
 Writes to JSON are atomic. Features are implemented in core and CLI before web,
 and every CLI command accepts `--json`. Complete Core mutations, not only their
 final JSON replacement, hold the matching resource lock. MCP is explicitly out
@@ -147,6 +149,17 @@ Quality gates:
   `gusto shopping remove-done` removes only checked entries. Core, CLI,
   server-rendered web, offline PWA, Telegram handoff, and the shipped Gusto
   skill share this contract.
+- 2026-07-23: Recipe `delete` now means reversible archive. Markdown, complete
+  metadata, and owned images move together under `archive/<slug>/`; CLI and web
+  expose list/show/restore and separately confirmed purge. Log and shopping
+  remain separate sources of truth whose visible references resolve active or
+  archived slugs; purge refuses visible shopping dependencies.
+- 2026-07-23: Catalog title updates rewrite the Markdown H1 in the same Core
+  transaction. `check` now distinguishes hard integrity errors (full
+  diagnostics plus exit 1) from warnings and covers active/archive titles,
+  files, images, covers, interrupted moves, collisions, shopping sources,
+  favorite data, and historical log references. Time/day ranges must be
+  positive, ports stay within 1–65535, and `edit`/`serve` now honor `--json`.
 
 ## Domain Maps
 

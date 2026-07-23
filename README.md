@@ -120,12 +120,17 @@ gusto home                          # active user-data directory
 gusto search "linsen kokos"         # full-text incl. ingredients in the body
 gusto show spaghetti-carbonara
 gusto new "Title" --tags a,b --duration 25 --servings 2
+gusto set <slug> --title "New title" # changes metadata and Markdown H1 together
 gusto set <slug> --servings 4       # change metadata
 gusto set <slug> --clear-servings   # remove optional metadata again
 gusto cooked <slug>                 # cooked today -> log
 gusto suggest --days 7              # suggestions for the next meal
-gusto delete <slug>
-gusto check                         # consistency index <-> .md
+gusto delete <slug>                 # reversibly archive Markdown + metadata + images
+gusto archive list
+gusto archive show <slug>
+gusto archive restore <slug>
+gusto archive purge <slug> --yes    # permanent; refused while shopping items refer to it
+gusto check                         # full data integrity; hard errors exit 1
 gusto image list <slug>             # cover and gallery images
 gusto image add <slug> <path> --role result --caption "Serviert" --cover
 gusto image set <slug> <id> --role step --caption "Nach dem Anbraten"
@@ -144,9 +149,13 @@ gusto uninstall                     # interactive: app only or app + data
 
 Every command takes `--json` for machine-readable output. Expected command
 failures then return `{ "ok": false, "error": "..." }` on stdout with exit
-code 1; parser/usage errors remain on stderr with exit code 2.
+code 1. `check --json` returns the full diagnostics with `ok: false` and exit 1
+instead; `edit --json` reports the completed editor process, and `serve --json`
+emits a startup object before serving. Parser/usage errors remain on stderr
+with exit code 2.
 
-`cooked --date` accepts only a valid `YYYY-MM-DD` no later than today;
+`cooked --date` accepts only a valid `YYYY-MM-DD` no later than today.
+`--max-time`, `log --days`, and `suggest --days` must be positive;
 `suggest --limit` is nonnegative and `0` returns no candidates. `set` requires
 at least one change. `new` and `set --tags` warn when tags have no named facet;
 they remain stored under `Sonstige`. `--max-time` excludes recipes whose
@@ -157,11 +166,19 @@ sourced items. `shopping remove-done` removes checked items; `shopping clear`
 empties the complete visible list. Both use sync-safe tombstones and have no
 CLI restore operation.
 
+Recipe deletion is deliberately reversible by default. `delete` moves the
+recipe's Markdown, complete metadata, and owned images together into
+`archive/<slug>/`; log entries and visible shopping items retain their slug and
+link to the archived view. `archive restore` reverses the move. Only
+`archive purge --yes` destroys the snapshot, and it refuses while visible
+shopping items still refer to that recipe.
+
 ## Layout
 
 ```
 recipes/            the recipes as .md (the heart, pure content)
 images/<slug>/      recipe images copied into and owned by Gusto
+archive/<slug>/     reversible recipe snapshots (Markdown + metadata + images)
 images/_favorites/  preferred-product images copied into and owned by Gusto
 data/recipes.json   metadata of all recipes
 data/favorites.json shared shopping needs, exact aliases, ranked products
@@ -264,4 +281,5 @@ python tests/test_paths.py         # Windows/Linux data-directory contract
 - [x] Shopping list & PWA (offline + sync)
 - [x] Shared preferred products (exact aliases, ranking, photos, offline view)
 - [x] Multiple stored images per recipe (cover + gallery, CLI + web camera/library)
+- [x] Reversible recipe archive (complete snapshots, restore, guarded purge)
 - [ ] Weekly plan

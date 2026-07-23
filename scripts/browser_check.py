@@ -83,7 +83,7 @@ try:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1280, "height": 900})
-        page.on("dialog", lambda d: d.accept())  # confirm() on delete
+        page.on("dialog", lambda d: d.accept())  # archive/purge confirmations
 
         # Home page
         page.goto(BASE, wait_until="networkidle")
@@ -248,11 +248,33 @@ try:
         check(edited["duration_min"] is None and edited["servings"] is None,
               "recipe edit can clear optional duration and servings")
 
-        # Delete (clears the test recipe again)
+        # Archive preserves the complete recipe and restore returns it intact.
         page.locator(".recipe-more summary").click()
-        page.locator("button.btn-text", has_text="Löschen").click()
+        page.locator("button.btn-text", has_text="Archivieren").click()
         page.wait_for_load_state("networkidle")
-        check("Test Pfannkuchen" not in page.content(), "recipe deleted")
+        check(page.url.endswith("/archive/test-pfannkuchen")
+              and page.locator(".archive-badge", has_text="archiviert").count() >= 1,
+              "archiving opens the read-only archived recipe")
+        check(page.locator(".recipe-hero img").count() == 1
+              and page.locator(".recipe-gallery-item").count() == 1,
+              "archiving retains the recipe cover and gallery")
+        page.screenshot(path=str(SHOTS / "06c_recipe_archive.png"), full_page=True)
+        page.locator("button.btn", has_text="Wiederherstellen").click()
+        page.wait_for_load_state("networkidle")
+        check(page.url.endswith("/recipe/test-pfannkuchen")
+              and page.locator(".recipe-gallery-item").count() == 1,
+              "restore returns the complete recipe to the active cookbook")
+
+        # Archive once more and exercise the deliberately separate purge.
+        page.locator(".recipe-more summary").click()
+        page.locator("button.btn-text", has_text="Archivieren").click()
+        page.wait_for_load_state("networkidle")
+        page.locator(".archive-purge summary").click()
+        page.locator(".archive-purge button", has_text="Unwiderruflich").click()
+        page.wait_for_load_state("networkidle")
+        check(page.url.endswith("/archive")
+              and "Test Pfannkuchen Deluxe" not in page.content(),
+              "explicit purge permanently removes the archived test recipe")
 
         # 404
         resp = page.goto(BASE + "/recipe/gibtsnicht")
@@ -286,6 +308,25 @@ try:
         page.wait_for_function("() => document.querySelectorAll('#shop-client .shop-item').length === 6")
         check(page.locator("#shop-client .shop-item").count() == 6,
               "duplicate recipe import does not add shopping items")
+
+        # Archiving keeps shopping and log references useful.
+        page.goto(BASE + "/recipe/spaghetti-carbonara", wait_until="networkidle")
+        page.locator(".recipe-more summary").click()
+        page.locator("button.btn-text", has_text="Archivieren").click()
+        page.wait_for_load_state("networkidle")
+        check(page.url.endswith("/archive/spaghetti-carbonara"),
+              "a recipe with external references can still be archived")
+        page.goto(BASE + "/shopping", wait_until="networkidle")
+        page.wait_for_function("() => document.querySelectorAll('#shop-client .shop-item').length === 6")
+        archived_sources = page.locator("#shop-client .shop-source[href='/archive/spaghetti-carbonara']")
+        check(archived_sources.count() == 6
+              and archived_sources.first.text_content().endswith("(archiviert)"),
+              "shopping sources resolve to the archived recipe")
+        page.goto(BASE + "/log", wait_until="networkidle")
+        check(page.locator(
+            ".timeline a[href='/archive/spaghetti-carbonara'] .archive-badge"
+        ).count() >= 1, "log entries resolve to the archived recipe")
+        page.goto(BASE + "/shopping", wait_until="networkidle")
 
         # Create a reusable shopping need and two ranked preferred products.
         page.locator(".shop-favorites-link").click()

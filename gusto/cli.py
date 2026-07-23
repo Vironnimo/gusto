@@ -24,9 +24,22 @@ def _dump(data) -> None:
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
 
-def _open_editor(path) -> None:
+def _open_editor(path, *, quiet: bool = False) -> dict:
     editor = os.environ.get("EDITOR") or ("notepad" if os.name == "nt" else "nano")
-    subprocess.call([editor, str(path)])
+    options = {}
+    if quiet:
+        options = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    try:
+        exit_code = subprocess.call([editor, str(path)], **options)
+    except OSError as error:
+        raise ValueError(f"Editor '{editor}' konnte nicht gestartet werden: {error}") from error
+    if exit_code:
+        raise ValueError(f"Editor '{editor}' wurde mit Status {exit_code} beendet.")
+    return {
+        "editor": editor,
+        "path": os.fspath(Path(path).resolve()),
+        "exit_code": exit_code,
+    }
 
 
 def _collect_tags(values) -> list[str]:
@@ -35,6 +48,16 @@ def _collect_tags(values) -> list[str]:
     for v in values or []:
         out.extend(t.strip() for t in v.split(",") if t.strip())
     return out
+
+
+def _port(value: str) -> int:
+    try:
+        port = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("Port muss eine ganze Zahl sein.") from error
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("Port muss zwischen 1 und 65535 liegen.")
+    return port
 
 
 def _print_list(recipes, as_json: bool) -> None:
@@ -77,15 +100,27 @@ def _print_tag_warnings(warnings: list[dict]) -> None:
 # --- Commands ---------------------------------------------------------------
 
 def cmd_list(args):
-    recipes = sorted(core.search(tags=_collect_tags(args.tag), max_time=args.max_time),
-                     key=lambda r: r.title.lower())
+    try:
+        recipes = sorted(
+            core.search(tags=_collect_tags(args.tag), max_time=args.max_time),
+            key=lambda r: r.title.lower(),
+        )
+    except ValueError as error:
+        sys.exit(str(error))
     _print_list(recipes, args.json)
 
 
 def cmd_search(args):
-    recipes = sorted(core.search(query=args.query, match=args.match,
-                                 tags=_collect_tags(args.tag), max_time=args.max_time),
-                     key=lambda r: r.title.lower())
+    try:
+        recipes = sorted(
+            core.search(
+                query=args.query, match=args.match,
+                tags=_collect_tags(args.tag), max_time=args.max_time,
+            ),
+            key=lambda r: r.title.lower(),
+        )
+    except ValueError as error:
+        sys.exit(str(error))
     _print_list(recipes, args.json)
 
 
@@ -141,23 +176,33 @@ def cmd_new(args):
                             duration_min=args.duration, servings=args.servings)
     except ValueError as e:
         sys.exit(str(e))
+    editor_result = None
+    if args.edit:
+        try:
+            editor_result = _open_editor(r.path, quiet=args.json)
+        except ValueError as error:
+            sys.exit(str(error))
     if args.json:
         result = r.to_dict()
         if warnings:
             result["warnings"] = warnings
+        if editor_result is not None:
+            result["editor"] = editor_result
         _dump(result)
     else:
         print(f"Angelegt: {r.slug}  ->  {r.path}")
         _print_tag_warnings(warnings)
-    if args.edit:
-        _open_editor(r.path)
-
-
 def cmd_edit(args):
     r = core.get(args.slug)
     if r is None:
         sys.exit(f"Kein Rezept mit Slug '{args.slug}'.")
-    _open_editor(r.path)
+    try:
+        result = _open_editor(r.path, quiet=args.json)
+    except ValueError as error:
+        sys.exit(str(error))
+    result["slug"] = r.slug
+    if args.json:
+        _dump(result)
 
 
 def cmd_cooked(args):
@@ -173,16 +218,22 @@ def cmd_cooked(args):
 
 
 def cmd_log(args):
-    entries = core.load_log(days=args.days)
+    try:
+        entries = core.load_log(days=args.days)
+    except ValueError as error:
+        sys.exit(str(error))
     if args.json:
         _dump(entries)
         return
     if not entries:
         print("Logbuch ist leer.")
         return
-    titles = {r.slug: r.title for r in core.load_recipes()}
+    references = core.recipe_references()
     for e in reversed(entries):  # newest first
-        print(f"  {e['date']}   {titles.get(e['slug'], e['slug'])}")
+        reference = references.get(e["slug"])
+        title = reference["title"] if reference else e["slug"]
+        suffix = " (archiviert)" if reference and reference["archived"] else ""
+        print(f"  {e['date']}   {title}{suffix}")
 
 
 def cmd_suggest(args):
@@ -208,39 +259,52 @@ def cmd_check(args):
     res = core.check()
     if args.json:
         _dump(res)
-        return
-    print(f"Rezepte im Index: {res['recipe_count']}")
-    if res["orphaned_files"]:
-        print("  .md ohne Index-Eintrag:", ", ".join(res["orphaned_files"]))
-    if res["missing_files"]:
-        print("  Index-Eintrag ohne .md:", ", ".join(res["missing_files"]))
-    if res.get("uncategorized_tags"):
-        print("  Tags ohne Kategorie:", ", ".join(res["uncategorized_tags"]))
-    if res.get("orphaned_image_folders"):
-        print("  Bildordner ohne Rezept:", ", ".join(res["orphaned_image_folders"]))
-    if res.get("orphaned_image_files"):
-        print("  Bilder ohne Metadaten:", ", ".join(res["orphaned_image_files"]))
-    if res.get("missing_image_files"):
-        print("  Fehlende Bilddateien:", ", ".join(res["missing_image_files"]))
-    if res.get("invalid_cover_images"):
-        print("  Ungueltige Top-Bilder:", ", ".join(res["invalid_cover_images"]))
-    if res.get("duplicate_favorite_aliases"):
-        print("  Mehrdeutige Lieblingsprodukt-Aliasse:",
-              ", ".join(res["duplicate_favorite_aliases"]))
-    if res.get("orphaned_favorite_image_files"):
-        print("  Produktbilder ohne Metadaten:",
-              ", ".join(res["orphaned_favorite_image_files"]))
-    if res.get("missing_favorite_image_files"):
-        print("  Fehlende Produktbilder:",
-              ", ".join(res["missing_favorite_image_files"]))
-    if not (res["orphaned_files"] or res["missing_files"]
-            or res.get("uncategorized_tags") or res.get("orphaned_image_folders")
-            or res.get("orphaned_image_files") or res.get("missing_image_files")
-            or res.get("invalid_cover_images")
-            or res.get("duplicate_favorite_aliases")
-            or res.get("orphaned_favorite_image_files")
-            or res.get("missing_favorite_image_files")):
-        print("  Alles konsistent.")
+    else:
+        print(
+            f"Aktiv: {res['recipe_count']} Rezept(e) · "
+            f"Archiv: {res['archive_count']} Rezept(e)"
+        )
+        labels = {
+            "duplicate_recipe_slugs": "Doppelte aktive Slugs",
+            "orphaned_files": ".md ohne Index-Eintrag",
+            "missing_files": "Index-Eintrag ohne .md",
+            "title_mismatches": "Titel stimmt nicht mit Markdown-H1 überein",
+            "orphaned_image_folders": "Bildordner ohne aktives Rezept",
+            "orphaned_image_files": "Aktive Bilder ohne Metadaten",
+            "missing_image_files": "Fehlende aktive Bilddateien",
+            "invalid_cover_images": "Ungültige aktive Top-Bilder",
+            "invalid_archive_entries": "Ungültige Archiveinträge",
+            "orphaned_archive_root_files": "Dateien außerhalb eines Archiveintrags",
+            "stale_archive_transactions": "Unvollständige Archivvorgänge",
+            "missing_archive_files": "Archiv-Metadaten ohne Markdown",
+            "archived_title_mismatches": "Archiv-Titel stimmt nicht mit H1 überein",
+            "missing_archive_image_files": "Fehlende Archivbilder",
+            "orphaned_archive_image_files": "Archivbilder ohne Metadaten",
+            "invalid_archive_cover_images": "Ungültige Top-Bilder im Archiv",
+            "active_archive_conflicts": "Slug gleichzeitig aktiv und archiviert",
+            "unresolved_shopping_sources": "Unbekannte Quellen auf der Einkaufsliste",
+            "duplicate_favorite_aliases": "Mehrdeutige Lieblingsprodukt-Aliasse",
+            "orphaned_favorite_image_files": "Produktbilder ohne Metadaten",
+            "missing_favorite_image_files": "Fehlende Produktbilder",
+            "uncategorized_tags": "Tags ohne Kategorie",
+            "unresolved_log_references": "Historische Log-Slugs ohne Rezept",
+        }
+        for diagnostic in res["errors"]:
+            print(
+                f"  Fehler · {labels.get(diagnostic['code'], diagnostic['code'])}: "
+                + ", ".join(str(item) for item in diagnostic["items"])
+            )
+        for diagnostic in res["warnings"]:
+            print(
+                f"  Warnung · {labels.get(diagnostic['code'], diagnostic['code'])}: "
+                + ", ".join(str(item) for item in diagnostic["items"])
+            )
+        if res["ok"] and not res["warnings"]:
+            print("  Alles konsistent.")
+        elif res["ok"]:
+            print("  Keine Integritätsfehler.")
+    if not res["ok"]:
+        raise SystemExit(1)
 
 
 def cmd_set(args):
@@ -276,13 +340,72 @@ def cmd_set(args):
 
 def cmd_delete(args):
     try:
-        core.delete_recipe(args.slug)
+        archived = core.archive_recipe(args.slug)
     except ValueError as e:
         sys.exit(str(e))
     if args.json:
-        _dump({"slug": args.slug, "deleted": True})
+        _dump({
+            "slug": archived.slug,
+            "archived": True,
+            "archived_at": archived.archived_at,
+        })
     else:
-        print(f"Geloescht: {args.slug}")
+        print(f"Archiviert: {archived.slug}")
+
+
+def cmd_archive_list(args):
+    try:
+        entries = core.load_archive()
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump([entry.to_dict() for entry in entries])
+        return
+    if not entries:
+        print("Das Rezeptarchiv ist leer.")
+        return
+    for entry in entries:
+        print(f"  {entry.slug:<22} {entry.title}   [{entry.archived_at}]")
+
+
+def cmd_archive_show(args):
+    try:
+        entry = core.get_archived(args.slug)
+    except ValueError as error:
+        sys.exit(str(error))
+    if entry is None:
+        sys.exit(f"Kein archiviertes Rezept mit Slug '{args.slug}'.")
+    if args.json:
+        _dump(entry.to_dict(include_content=True))
+    else:
+        print(entry.content().rstrip())
+
+
+def cmd_archive_restore(args):
+    try:
+        recipe = core.restore_archived_recipe(args.slug)
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump({"restored": True, "recipe": recipe.to_dict()})
+    else:
+        print(f"Wiederhergestellt: {recipe.slug}")
+
+
+def cmd_archive_purge(args):
+    if not args.yes:
+        sys.exit(
+            "Endgültiges Löschen braucht --yes. Der Archiveintrag kann danach "
+            "nicht wiederhergestellt werden."
+        )
+    try:
+        entry = core.purge_archived_recipe(args.slug)
+    except ValueError as error:
+        sys.exit(str(error))
+    if args.json:
+        _dump({"slug": entry.slug, "purged": True})
+    else:
+        print(f"Endgültig gelöscht: {entry.slug}")
 
 
 # --- Recipe images ----------------------------------------------------------
@@ -634,7 +757,19 @@ def cmd_serve(args):
         import uvicorn
     except ImportError:
         sys.exit("Web-Abhaengigkeiten fehlen. Installiere sie mit:  pip install -e .[web]")
-    print(f"Gusto laeuft auf http://{args.host}:{args.port}  (Strg+C zum Beenden)")
+    local_host = "127.0.0.1" if args.host in {"0.0.0.0", "::"} else args.host
+    url = f"http://{local_host}:{args.port}"
+    if args.json:
+        _dump({
+            "status": "starting",
+            "host": args.host,
+            "port": args.port,
+            "url": url,
+            "reload": args.reload,
+        })
+        sys.stdout.flush()
+    else:
+        print(f"Gusto laeuft auf {url}  (Strg+C zum Beenden)")
     uvicorn.run("gusto.web:app", host=args.host, port=args.port, reload=args.reload)
 
 
@@ -808,7 +943,7 @@ def build_parser() -> argparse.ArgumentParser:
                 "ODER innerhalb einer Kategorie, UND ueber Kategorien.")
 
     max_time_help = (
-        "Max. Dauer in Minuten; Rezepte ohne Dauerangabe werden ausgeschlossen."
+        "Positive max. Dauer in Minuten; Rezepte ohne Dauerangabe werden ausgeschlossen."
     )
 
     sp = sub.add_parser("list", parents=[base], help="Rezepte auflisten/filtern.")
@@ -860,24 +995,27 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_cooked)
 
     sp = sub.add_parser("log", parents=[base], help="Koch-Logbuch anzeigen.")
-    sp.add_argument("--days", type=int, help="Nur die letzten N Tage.")
+    sp.add_argument("--days", type=int, help="Nur die letzten positiven N Tage.")
     sp.set_defaults(func=cmd_log)
 
     sp = sub.add_parser("suggest", parents=[base], help="Kandidaten fuers naechste Essen.")
     sp.add_argument("--days", type=int, default=7,
-                    help="In den letzten N Tagen Gekochtes wird ausgeschlossen.")
+                    help="In den letzten positiven N Tagen Gekochtes wird ausgeschlossen.")
     sp.add_argument(
         "--limit", type=int,
         help="Hoechstens N Vorschlaege (nichtnegative ganze Zahl).",
     )
     sp.set_defaults(func=cmd_suggest)
 
-    sp = sub.add_parser("check", parents=[base], help="Konsistenz Index <-> .md pruefen.")
+    sp = sub.add_parser(
+        "check", parents=[base],
+        help="Integrität aller Gusto-Daten prüfen; Fehler liefern Status 1.",
+    )
     sp.set_defaults(func=cmd_check)
 
     sp = sub.add_parser("set", parents=[base], help="Metadaten eines Rezepts aendern.")
     sp.add_argument("slug")
-    sp.add_argument("--title")
+    sp.add_argument("--title", help="Titel und Markdown-H1 gemeinsam ändern.")
     sp.add_argument("--tags", help="Kommagetrennt; ersetzt die bisherigen Tags.")
     duration = sp.add_mutually_exclusive_group()
     duration.add_argument("--duration", type=int)
@@ -889,9 +1027,41 @@ def build_parser() -> argparse.ArgumentParser:
                           help="Gespeicherte Portionszahl entfernen.")
     sp.set_defaults(func=cmd_set)
 
-    sp = sub.add_parser("delete", parents=[base], help="Rezept loeschen (.md + Index).")
+    sp = sub.add_parser(
+        "delete", parents=[base],
+        help="Rezept samt Markdown, Metadaten und Bildern reversibel archivieren.",
+    )
     sp.add_argument("slug")
     sp.set_defaults(func=cmd_delete)
+
+    sp = sub.add_parser("archive", help="Archivierte Rezepte verwalten.")
+    asub = sp.add_subparsers(dest="archive_command", required=True)
+
+    ap = asub.add_parser("list", parents=[base],
+                         help="Archivierte Rezepte auflisten.")
+    ap.set_defaults(func=cmd_archive_list)
+
+    ap = asub.add_parser("show", parents=[base],
+                         help="Archiviertes Rezept ausgeben.")
+    ap.add_argument("slug")
+    ap.set_defaults(func=cmd_archive_show)
+
+    ap = asub.add_parser("restore", parents=[base],
+                         help="Rezept vollständig ins aktive Kochbuch zurückholen.")
+    ap.add_argument("slug")
+    ap.set_defaults(func=cmd_archive_restore)
+
+    purge_help = (
+        "Archiviertes Rezept unwiderruflich löschen; benötigt --yes und "
+        "scheitert bei sichtbaren Einkaufsposten aus diesem Rezept."
+    )
+    ap = asub.add_parser(
+        "purge", parents=[base], help=purge_help, description=purge_help,
+    )
+    ap.add_argument("slug")
+    ap.add_argument("--yes", action="store_true",
+                    help="Unwiderrufliches Löschen ausdrücklich bestätigen.")
+    ap.set_defaults(func=cmd_archive_purge)
 
     sp = sub.add_parser("image", help="Bilder eines Rezepts verwalten.")
     isub = sp.add_subparsers(dest="image_command", required=True)
@@ -950,8 +1120,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Exakte weitere Formulierung; mehrfach moeglich.")
     fp.set_defaults(func=cmd_favorites_add)
 
-    fp = fsub.add_parser("set", parents=[base],
-                         help="Einkaufsbedarf umbenennen.")
+    favorites_set_help = (
+        "Einkaufsbedarf umbenennen; alten Namen als Alias behalten."
+    )
+    fp = fsub.add_parser(
+        "set", parents=[base],
+        help=favorites_set_help, description=favorites_set_help,
+    )
     fp.add_argument("need")
     fp.add_argument("--name", required=True)
     fp.set_defaults(func=cmd_favorites_set)
@@ -1035,8 +1210,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ep.set_defaults(func=cmd_shopping_add_many)
 
-    ep = esub.add_parser("add-recipe", parents=[base],
-                         help="Zutaten einmalig aus einem Rezept importieren.")
+    add_recipe_help = (
+        "Zutaten importieren, solange keine sichtbaren Posten dieses Rezepts "
+        "existieren."
+    )
+    ep = esub.add_parser(
+        "add-recipe", parents=[base],
+        help=add_recipe_help, description=add_recipe_help,
+    )
     ep.add_argument("slug")
     ep.set_defaults(func=cmd_shopping_add_recipe)
 
@@ -1072,7 +1253,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("serve", parents=[base], help="Web-Oberflaeche starten.")
     sp.add_argument("--host", default="0.0.0.0")
-    sp.add_argument("--port", type=int, default=8000)
+    sp.add_argument("--port", type=_port, default=8000,
+                    help="TCP-Port zwischen 1 und 65535.")
     sp.add_argument("--reload", action="store_true", help="Auto-Reload (Entwicklung).")
     sp.set_defaults(func=cmd_serve)
 

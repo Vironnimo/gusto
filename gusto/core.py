@@ -7,6 +7,7 @@ Data model:
   recipes/<slug>.md   pure Markdown content of a recipe (NO frontmatter)
   data/recipes.json   metadata of ALL recipes (source for list/search/filter)
   images/<slug>/      image files owned and stored by Gusto
+  archive/<slug>/     reversible recipe archive (Markdown, metadata, images)
   data/favorites.json shared shopping needs and ranked preferred products
   images/_favorites/  preferred-product images owned and stored by Gusto
   data/log.json       cooking log: what was cooked when
@@ -195,6 +196,26 @@ def recipe_images_dir(slug: str) -> Path:
     return images_dir() / slug
 
 
+def archive_dir() -> Path:
+    return project_root() / "archive"
+
+
+def archive_recipe_dir(slug: str) -> Path:
+    return archive_dir() / slug
+
+
+def archive_recipe_file(slug: str) -> Path:
+    return archive_recipe_dir(slug) / "recipe.md"
+
+
+def archive_metadata_path(slug: str) -> Path:
+    return archive_recipe_dir(slug) / "metadata.json"
+
+
+def archive_images_dir(slug: str) -> Path:
+    return archive_recipe_dir(slug) / "images"
+
+
 def favorite_images_dir() -> Path:
     return images_dir() / "_favorites"
 
@@ -360,6 +381,40 @@ class Recipe:
 
 
 @dataclass
+class ArchivedRecipe:
+    """A complete reversible recipe snapshot outside the active catalog."""
+    recipe: Recipe
+    archived_at: str
+
+    @property
+    def slug(self) -> str:
+        return self.recipe.slug
+
+    @property
+    def title(self) -> str:
+        return self.recipe.title
+
+    @property
+    def images(self) -> list[RecipeImage]:
+        return self.recipe.images
+
+    @property
+    def cover_image(self) -> RecipeImage | None:
+        return self.recipe.cover_image
+
+    def content(self) -> str:
+        path = archive_recipe_file(self.slug)
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    def to_dict(self, *, include_content: bool = False) -> dict:
+        result = self.recipe.to_dict()
+        result["archived_at"] = self.archived_at
+        if include_content:
+            result["content"] = self.content()
+        return result
+
+
+@dataclass
 class FavoriteProduct:
     """One concrete product in a household preference ranking."""
     id: str
@@ -424,6 +479,73 @@ def get(slug: str) -> Recipe | None:
     return next((r for r in load_recipes() if r.slug == slug), None)
 
 
+def _load_archived_entry(path: Path) -> ArchivedRecipe:
+    try:
+        raw = json.loads((path / "metadata.json").read_text(encoding="utf-8"))
+        version = raw["version"]
+        recipe = Recipe.from_dict(raw["recipe"])
+        archived_at = raw["archived_at"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+        raise ValueError(
+            f"Ungültiger Archiveintrag '{path.name}': {error}"
+        ) from error
+    if version != 1:
+        raise ValueError(
+            f"Ungültiger Archiveintrag '{path.name}': "
+            f"nicht unterstützte Version '{version}'."
+        )
+    if recipe.slug != path.name:
+        raise ValueError(
+            f"Ungültiger Archiveintrag '{path.name}': "
+            f"Metadaten gehören zu '{recipe.slug}'."
+        )
+    if (not isinstance(archived_at, str) or not archived_at
+            or _parse_iso(archived_at) is None):
+        raise ValueError(
+            f"Ungültiger Archiveintrag '{path.name}': archived_at ist ungültig."
+        )
+    return ArchivedRecipe(recipe=recipe, archived_at=archived_at)
+
+
+def load_archive() -> list[ArchivedRecipe]:
+    root = archive_dir()
+    if not root.exists():
+        return []
+    entries = [
+        _load_archived_entry(path)
+        for path in sorted(root.iterdir(), key=lambda item: item.name)
+        if path.is_dir() and not path.name.startswith(".")
+    ]
+    return sorted(entries, key=lambda entry: entry.archived_at, reverse=True)
+
+
+def get_archived(slug: str) -> ArchivedRecipe | None:
+    if (not isinstance(slug, str) or not slug
+            or Path(slug).name != slug or slug.startswith(".")):
+        return None
+    path = archive_recipe_dir(slug)
+    return _load_archived_entry(path) if path.is_dir() else None
+
+
+def recipe_references() -> dict[str, dict]:
+    """Titles and lifecycle state for cross-domain slug references."""
+    references = {
+        recipe.slug: {
+            "slug": recipe.slug,
+            "title": recipe.title,
+            "archived": False,
+        }
+        for recipe in load_recipes()
+    }
+    for entry in load_archive():
+        references.setdefault(entry.slug, {
+            "slug": entry.slug,
+            "title": entry.title,
+            "archived": True,
+        })
+    return references
+
+
 def _write_json(path: Path, data) -> None:
     """Write atomically through a unique temporary file beside the target."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -435,6 +557,21 @@ def _write_json(path: Path, data) -> None:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(data, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _write_text(path: Path, content: str) -> None:
+    """Write UTF-8 text atomically through a temporary sibling."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
@@ -459,10 +596,17 @@ def add_recipe(title: str, tags=None, duration_min=None, servings=None,
     slug = slug or slugify(title)
     if any(r.slug == slug for r in recipes):
         raise ValueError(f"Es gibt bereits ein Rezept mit dem Slug '{slug}'.")
+    if archive_recipe_dir(slug).exists():
+        raise ValueError(
+            f"Der Slug '{slug}' liegt im Archiv. Stelle das Rezept wieder her "
+            "oder lösche den Archiveintrag endgültig."
+        )
     recipes_dir().mkdir(parents=True, exist_ok=True)
-    recipe_file(slug).write_text(
-        content if content is not None else _template(title), encoding="utf-8"
+    recipe_content = (
+        _content_with_title(content, title) if content is not None
+        else _template(title)
     )
+    _write_text(recipe_file(slug), recipe_content)
     r = Recipe(slug=slug, title=title, tags=tags or [],
                duration_min=duration_min, servings=servings)
     recipes.append(r)
@@ -479,6 +623,23 @@ def _recipe_title(value: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("Das Rezept braucht einen Titel.")
     return value.strip()
+
+
+def _content_with_title(content: str, title: str) -> str:
+    """Make the first Markdown line the canonical recipe title."""
+    normalized = (content or "").replace("\r\n", "\n").replace("\r", "\n")
+    first, separator, remainder = normalized.partition("\n")
+    if re.fullmatch(r"#(?:\s.*)?", first):
+        return f"# {title}" + (separator + remainder if separator else "\n")
+    if not normalized:
+        return f"# {title}\n"
+    return f"# {title}\n\n{normalized.lstrip(chr(10))}"
+
+
+def _markdown_title(content: str) -> str | None:
+    first = content.replace("\r\n", "\n").replace("\r", "\n").partition("\n")[0]
+    match = re.fullmatch(r"#\s+(.+?)\s*", first)
+    return match.group(1) if match else None
 
 
 def _positive_recipe_number(value: int | None, label: str) -> None:
@@ -564,6 +725,7 @@ def search(query: str = "", match: str = "any", tags: list[str] | None = None,
     matches if it has AT LEAST ONE of the selected tags in EVERY selected
     category -- i.e. OR within a category and AND across categories. Tags without
     a category form one shared group (OR among themselves)."""
+    _positive_recipe_number(max_time, "Die maximale Dauer")
     terms = [t.lower() for t in query.split()]
     groups = _group_tags(tags or [])
     hits = []
@@ -602,6 +764,7 @@ def _matches_tags(r: Recipe, groups: dict[str, set[str]]) -> bool:
 # --- Cooking log ------------------------------------------------------------
 
 def load_log(days: int | None = None) -> list[dict]:
+    _positive_recipe_number(days, "Die Anzahl der Tage")
     p = log_path()
     entries = json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
     if days is not None:
@@ -652,7 +815,7 @@ def suggest(days: int = 7, limit: int | None = None) -> list[Recipe]:
     return remaining[:limit] if limit is not None else remaining
 
 
-# --- Update / delete --------------------------------------------------------
+# --- Update / archive -------------------------------------------------------
 
 @_locked_mutation("catalog")
 def update_recipe(slug: str, title: str | None = None, tags=None,
@@ -685,27 +848,160 @@ def update_recipe(slug: str, title: str | None = None, tags=None,
         target.servings = None
     elif servings is not None:
         target.servings = servings
-    if content is not None:
-        recipe_file(slug).write_text(content, encoding="utf-8")
-    _save_recipes_unlocked(recipes)
+    markdown_path = recipe_file(slug)
+    old_content: str | None = None
+    next_content: str | None = None
+    if content is not None or title is not None:
+        if content is None:
+            if not markdown_path.is_file():
+                raise ValueError(
+                    f"Markdown-Datei für Rezept '{slug}' fehlt."
+                )
+            old_content = markdown_path.read_text(encoding="utf-8")
+            next_content = _content_with_title(old_content, target.title)
+        else:
+            old_content = (
+                markdown_path.read_text(encoding="utf-8")
+                if markdown_path.is_file() else None
+            )
+            next_content = _content_with_title(content, target.title)
+        _write_text(markdown_path, next_content)
+    try:
+        _save_recipes_unlocked(recipes)
+    except Exception:
+        if next_content is not None:
+            if old_content is None:
+                markdown_path.unlink(missing_ok=True)
+            else:
+                _write_text(markdown_path, old_content)
+        raise
     return target
 
 
 @_locked_mutation("catalog")
-def delete_recipe(slug: str) -> None:
-    """Remove the index entry and the .md file. Log entries are kept as
-    history."""
+def archive_recipe(slug: str) -> ArchivedRecipe:
+    """Move recipe-owned Markdown, metadata and images into the archive."""
     recipes = load_recipes()
-    remaining = [r for r in recipes if r.slug != slug]
-    if len(remaining) == len(recipes):
+    recipe = next((item for item in recipes if item.slug == slug), None)
+    if recipe is None:
         raise ValueError(f"Kein Rezept mit Slug '{slug}'.")
-    _save_recipes_unlocked(remaining)
-    p = recipe_file(slug)
-    if p.exists():
-        p.unlink()
-    image_folder = recipe_images_dir(slug)
-    if image_folder.exists():
-        shutil.rmtree(image_folder)
+    source_markdown = recipe_file(slug)
+    if not source_markdown.is_file():
+        raise ValueError(
+            f"Rezept '{slug}' kann nicht archiviert werden: "
+            "Die Markdown-Datei fehlt."
+        )
+    target = archive_recipe_dir(slug)
+    if target.exists():
+        raise ValueError(f"Rezept '{slug}' liegt bereits im Archiv.")
+
+    root = archive_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    temporary = Path(tempfile.mkdtemp(prefix=f".{slug}.archive.", dir=root))
+    archived_at = _now_iso()
+    source_images = recipe_images_dir(slug)
+    final_created = False
+    markdown_moved = False
+    images_moved = False
+    try:
+        source_markdown.replace(temporary / "recipe.md")
+        markdown_moved = True
+        if source_images.exists():
+            source_images.replace(temporary / "images")
+            images_moved = True
+        _write_json(temporary / "metadata.json", {
+            "version": 1,
+            "archived_at": archived_at,
+            "recipe": recipe.to_dict(),
+        })
+        temporary.replace(target)
+        final_created = True
+        _save_recipes_unlocked([
+            item for item in recipes if item.slug != slug
+        ])
+    except Exception:
+        rollback = target if final_created else temporary
+        if markdown_moved and (rollback / "recipe.md").exists():
+            source_markdown.parent.mkdir(parents=True, exist_ok=True)
+            (rollback / "recipe.md").replace(source_markdown)
+        if images_moved and (rollback / "images").exists():
+            source_images.parent.mkdir(parents=True, exist_ok=True)
+            (rollback / "images").replace(source_images)
+        if rollback.exists():
+            shutil.rmtree(rollback)
+        raise
+    return ArchivedRecipe(recipe=recipe, archived_at=archived_at)
+
+
+def delete_recipe(slug: str) -> ArchivedRecipe:
+    """Backward-compatible name: deleting now means reversible archiving."""
+    return archive_recipe(slug)
+
+
+@_locked_mutation("catalog")
+def restore_archived_recipe(slug: str) -> Recipe:
+    """Restore one archived snapshot to the active catalog."""
+    entry = get_archived(slug)
+    if entry is None:
+        raise ValueError(f"Kein archiviertes Rezept mit Slug '{slug}'.")
+    if get(slug) is not None:
+        raise ValueError(f"Rezept '{slug}' ist bereits aktiv.")
+    target_markdown = recipe_file(slug)
+    target_images = recipe_images_dir(slug)
+    if target_markdown.exists() or target_images.exists():
+        raise ValueError(
+            f"Rezept '{slug}' kann nicht wiederhergestellt werden: "
+            "Aktive Dateien mit diesem Slug sind bereits vorhanden."
+        )
+
+    source = archive_recipe_dir(slug)
+    root = archive_dir()
+    temporary = root / f".{slug}.restore.{uuid.uuid4().hex}"
+    source.replace(temporary)
+    markdown_moved = False
+    images_moved = False
+    try:
+        target_markdown.parent.mkdir(parents=True, exist_ok=True)
+        (temporary / "recipe.md").replace(target_markdown)
+        markdown_moved = True
+        if (temporary / "images").exists():
+            target_images.parent.mkdir(parents=True, exist_ok=True)
+            (temporary / "images").replace(target_images)
+            images_moved = True
+        recipes = load_recipes()
+        recipes.append(entry.recipe)
+        _save_recipes_unlocked(recipes)
+    except Exception:
+        if markdown_moved and target_markdown.exists():
+            target_markdown.replace(temporary / "recipe.md")
+        if images_moved and target_images.exists():
+            target_images.replace(temporary / "images")
+        if temporary.exists():
+            temporary.replace(source)
+        raise
+    shutil.rmtree(temporary)
+    return entry.recipe
+
+
+@_locked_mutation("catalog", "shopping")
+def purge_archived_recipe(slug: str) -> ArchivedRecipe:
+    """Permanently remove one archived recipe snapshot."""
+    entry = get_archived(slug)
+    if entry is None:
+        raise ValueError(f"Kein archiviertes Rezept mit Slug '{slug}'.")
+    visible_sources = [
+        item for item in shopping_load()
+        if not item.deleted and item.source == slug
+    ]
+    if visible_sources:
+        count = len(visible_sources)
+        verb = "verweist" if count == 1 else "verweisen"
+        raise ValueError(
+            f"{count} sichtbare Einkaufsposten {verb} noch auf '{slug}'. "
+            "Entferne diese Einträge vor dem endgültigen Löschen."
+        )
+    shutil.rmtree(archive_recipe_dir(slug))
+    return entry
 
 
 # --- Recipe images ----------------------------------------------------------
@@ -786,6 +1082,17 @@ def _valid_image_header(path: Path, suffix: str) -> bool:
 
 def recipe_image_path(slug: str, image: RecipeImage) -> Path:
     return recipe_images_dir(slug) / image.filename
+
+
+def archived_recipe_image_path(slug: str, image: RecipeImage) -> Path:
+    return archive_images_dir(slug) / image.filename
+
+
+def get_archived_recipe_image(slug: str, image_id: str) -> RecipeImage | None:
+    entry = get_archived(slug)
+    if entry is None:
+        return None
+    return next((image for image in entry.images if image.id == image_id), None)
 
 
 def list_recipe_images(slug: str) -> tuple[list[RecipeImage], str | None]:
@@ -902,14 +1209,22 @@ def remove_recipe_image(slug: str, image_id: str) -> str | None:
 # --- Consistency ------------------------------------------------------------
 
 def check() -> dict:
-    """Check whether the index (recipes.json) and the .md files match, and
-    whether every used tag is assigned to a category (categories.json)."""
+    """Check hard data-integrity errors and non-blocking organization warnings."""
     recipes = load_recipes()
     indexed = {r.slug for r in recipes}
     present = {p.stem for p in recipes_dir().glob("*.md")} if recipes_dir().exists() else set()
+    duplicate_recipe_slugs = sorted({
+        recipe.slug for recipe in recipes
+        if sum(item.slug == recipe.slug for item in recipes) > 1
+    })
     uncategorized = uncategorized_tags([
         tag for recipe in recipes for tag in recipe.tags
     ])
+    title_mismatches: list[str] = []
+    for recipe in recipes:
+        path = recipe_file(recipe.slug)
+        if path.is_file() and _markdown_title(path.read_text(encoding="utf-8")) != recipe.title:
+            title_mismatches.append(recipe.slug)
     image_root = images_dir()
     image_folders = ({path.name for path in image_root.iterdir()
                       if path.is_dir() and path.name != "_favorites"}
@@ -953,15 +1268,94 @@ def check() -> dict:
         if label and len(set(owners)) > 1
     )
 
-    return {
+    archive_root = archive_dir()
+    archive_folders = (
+        [path for path in archive_root.iterdir() if path.is_dir()]
+        if archive_root.exists() else []
+    )
+    orphaned_archive_root_files = (
+        sorted(path.name for path in archive_root.iterdir() if path.is_file())
+        if archive_root.exists() else []
+    )
+    stale_archive_transactions = sorted(
+        path.name for path in archive_folders if path.name.startswith(".")
+    )
+    archived_entries: list[ArchivedRecipe] = []
+    invalid_archive_entries: list[str] = []
+    missing_archive_files: list[str] = []
+    archived_title_mismatches: list[str] = []
+    missing_archive_image_files: list[str] = []
+    orphaned_archive_image_files: list[str] = []
+    invalid_archive_cover_images: list[str] = []
+    for folder in archive_folders:
+        if folder.name.startswith("."):
+            continue
+        try:
+            entry = _load_archived_entry(folder)
+        except ValueError:
+            invalid_archive_entries.append(folder.name)
+            continue
+        archived_entries.append(entry)
+        markdown = archive_recipe_file(entry.slug)
+        if not markdown.is_file():
+            missing_archive_files.append(entry.slug)
+        elif _markdown_title(markdown.read_text(encoding="utf-8")) != entry.title:
+            archived_title_mismatches.append(entry.slug)
+        referenced = {image.filename for image in entry.images}
+        folder_images = archive_images_dir(entry.slug)
+        present_images = (
+            {path.name for path in folder_images.iterdir() if path.is_file()}
+            if folder_images.exists() else set()
+        )
+        missing_archive_image_files.extend(
+            f"{entry.slug}/{filename}"
+            for filename in sorted(referenced - present_images)
+        )
+        orphaned_archive_image_files.extend(
+            f"{entry.slug}/{filename}"
+            for filename in sorted(present_images - referenced)
+        )
+        image_ids = {image.id for image in entry.images}
+        if ((entry.images and entry.recipe.cover_image_id is None)
+                or (entry.recipe.cover_image_id is not None
+                    and entry.recipe.cover_image_id not in image_ids)):
+            invalid_archive_cover_images.append(entry.slug)
+
+    archived_slugs = {entry.slug for entry in archived_entries}
+    known_slugs = indexed | archived_slugs
+    active_archive_conflicts = sorted(indexed & archived_slugs)
+    unresolved_shopping_sources = sorted({
+        item.source for item in shopping_load()
+        if not item.deleted and item.source and item.source not in known_slugs
+    })
+    unresolved_log_references = sorted({
+        entry.get("slug") for entry in load_log()
+        if entry.get("slug") and entry.get("slug") not in known_slugs
+    })
+
+    result = {
         "recipe_count": len(indexed),
+        "archive_count": len(archived_entries),
+        "duplicate_recipe_slugs": duplicate_recipe_slugs,
         "orphaned_files": sorted(present - indexed),   # .md without index entry
         "missing_files": sorted(indexed - present),    # index entry without .md
+        "title_mismatches": sorted(title_mismatches),
         "uncategorized_tags": uncategorized,           # tags in no category
         "orphaned_image_folders": orphaned_image_folders,
         "orphaned_image_files": orphaned_image_files,
         "missing_image_files": missing_image_files,
         "invalid_cover_images": sorted(invalid_cover_images),
+        "invalid_archive_entries": sorted(invalid_archive_entries),
+        "orphaned_archive_root_files": orphaned_archive_root_files,
+        "stale_archive_transactions": stale_archive_transactions,
+        "missing_archive_files": sorted(missing_archive_files),
+        "archived_title_mismatches": sorted(archived_title_mismatches),
+        "missing_archive_image_files": missing_archive_image_files,
+        "orphaned_archive_image_files": orphaned_archive_image_files,
+        "invalid_archive_cover_images": sorted(invalid_archive_cover_images),
+        "active_archive_conflicts": active_archive_conflicts,
+        "unresolved_shopping_sources": unresolved_shopping_sources,
+        "unresolved_log_references": unresolved_log_references,
         "favorite_need_count": len(favorite_needs),
         "duplicate_favorite_aliases": duplicate_favorite_aliases,
         "orphaned_favorite_image_files": sorted(
@@ -971,6 +1365,40 @@ def check() -> dict:
             referenced_favorite_images - present_favorite_images
         ),
     }
+    hard_error_fields = [
+        "duplicate_recipe_slugs",
+        "orphaned_files",
+        "missing_files",
+        "title_mismatches",
+        "orphaned_image_folders",
+        "orphaned_image_files",
+        "missing_image_files",
+        "invalid_cover_images",
+        "invalid_archive_entries",
+        "orphaned_archive_root_files",
+        "stale_archive_transactions",
+        "missing_archive_files",
+        "archived_title_mismatches",
+        "missing_archive_image_files",
+        "orphaned_archive_image_files",
+        "invalid_archive_cover_images",
+        "active_archive_conflicts",
+        "unresolved_shopping_sources",
+        "duplicate_favorite_aliases",
+        "orphaned_favorite_image_files",
+        "missing_favorite_image_files",
+    ]
+    warning_fields = ["uncategorized_tags", "unresolved_log_references"]
+    result["errors"] = [
+        {"code": field, "items": result[field]}
+        for field in hard_error_fields if result[field]
+    ]
+    result["warnings"] = [
+        {"code": field, "items": result[field]}
+        for field in warning_fields if result[field]
+    ]
+    result["ok"] = not result["errors"]
+    return result
 
 
 # ===========================================================================

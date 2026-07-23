@@ -71,6 +71,8 @@ def main():
           "tags across facets must use AND")
     check([r.slug for r in core.search(max_time=15)] == [quick.slug],
           "maximum duration must filter recipes")
+    expect_valueerror(core.search, max_time=0)
+    expect_valueerror(core.search, max_time=-1)
     check(core.uncategorized_tags(["VEGAN", "saisonal", "saisonal"])
           == ["saisonal"],
           "uncategorized tags must be distinct and category matching case-insensitive")
@@ -82,6 +84,9 @@ def main():
     check(updated.title == "Gurkensalat" and updated.duration_min == 12,
           "recipe metadata must update")
     check(updated.content() == "# Gurkensalat\n", "recipe content must update")
+    renamed = core.update_recipe(quick.slug, title="Gurkensalat Deluxe")
+    check(renamed.content().startswith("# Gurkensalat Deluxe\n"),
+          "renaming metadata must update the canonical Markdown H1")
     cleared = core.update_recipe(
         quick.slug, clear_duration=True, clear_servings=True,
     )
@@ -148,6 +153,38 @@ def main():
     )
     check([entry["date"] for entry in core.load_log()] == [older_cook, recent_cook],
           "invalid or future cooking dates must not mutate the log")
+    expect_valueerror(core.load_log, days=0)
+    expect_valueerror(core.load_log, days=-1)
+
+    # Delete is reversible archive: Markdown, metadata and owned images move
+    # together while log and shopping keep resolving the slug.
+    sourced = core.shopping_add("Tomaten", source=pasta.slug)
+    archived = core.archive_recipe(pasta.slug)
+    check(core.get(pasta.slug) is None and core.get_archived(pasta.slug) is not None,
+          "archiving must remove the recipe only from the active catalog")
+    check(archived.content().startswith("# Pasta Pomodoro")
+          and core.archive_recipe_file(pasta.slug).is_file(),
+          "the archive must retain the recipe Markdown")
+    archived_image = core.get_archived_recipe_image(pasta.slug, finished.id)
+    check(archived_image is not None
+          and core.archived_recipe_image_path(pasta.slug, archived_image).is_file(),
+          "the archive must retain owned recipe images")
+    check(core.recipe_references()[pasta.slug]["archived"] is True
+          and core.shopping_list()[0].source == pasta.slug
+          and any(entry["slug"] == pasta.slug for entry in core.load_log()),
+          "shopping and log references must survive archiving")
+    archived_check = core.check()
+    check(archived_check["archive_count"] == 1 and archived_check["ok"] is True,
+          "a complete archived snapshot must pass the full integrity check")
+    expect_valueerror(core.purge_archived_recipe, pasta.slug)
+    restored = core.restore_archived_recipe(pasta.slug)
+    check(restored.slug == pasta.slug and core.get_archived(pasta.slug) is None,
+          "restore must return the complete snapshot to the active catalog")
+    check(core.recipe_file(pasta.slug).is_file()
+          and core.recipe_image_path(pasta.slug, finished).is_file()
+          and core.recipe_references()[pasta.slug]["archived"] is False,
+          "restore must reconnect Markdown, images and recipe references")
+    core.shopping_remove(sourced.id)
 
     candidates = {r.slug for r in core.suggest(days=7)}
     check(pasta.slug not in candidates and curry.slug in candidates,
@@ -157,6 +194,7 @@ def main():
     check(len(core.suggest(days=7, limit=1)) == 1,
           "a positive suggestion limit must cap the result")
     expect_valueerror(core.suggest, 7, -1)
+    expect_valueerror(core.suggest, 0)
 
     initial = core.check()
     check(not initial["orphaned_files"] and not initial["missing_files"],
@@ -164,6 +202,8 @@ def main():
     check(initial["uncategorized_tags"] == [], "known tags must be categorized")
     check(not initial["missing_image_files"] and not initial["orphaned_image_files"],
           "stored image metadata and files must be consistent")
+    check(initial["ok"] is True and not initial["errors"],
+          "a consistent store must expose an explicit successful check result")
 
     (core.recipes_dir() / "orphan.md").write_text("# Orphan\n", encoding="utf-8")
     core.recipe_file(curry.slug).unlink()
@@ -175,6 +215,7 @@ def main():
     core.recipe_image_path(pasta.slug, finished).unlink()
     (core.recipe_images_dir(pasta.slug) / "orphan.png").write_bytes(b"orphan")
     (core.images_dir() / "missing-recipe").mkdir(parents=True)
+    core.recipe_file(quick.slug).write_text("# Falscher Titel\n", encoding="utf-8")
     broken = core.check()
     check(broken["orphaned_files"] == ["orphan"], "orphaned Markdown must be found")
     check(broken["missing_files"] == [curry.slug], "missing Markdown must be found")
@@ -188,13 +229,21 @@ def main():
           "image folders without recipes must be found")
     check(broken["invalid_cover_images"] == [pasta.slug],
           "cover ids must refer to stored image metadata")
+    check(broken["title_mismatches"] == [quick.slug] and broken["ok"] is False,
+          "title drift must be a hard consistency error")
 
-    core.delete_recipe(pasta.slug)
+    archived = core.delete_recipe(pasta.slug)
     check(core.get(pasta.slug) is None and not core.recipe_file(pasta.slug).exists(),
-          "delete must remove index entry and Markdown")
+          "delete must remove the recipe from the active catalog")
     check(not core.recipe_images_dir(pasta.slug).exists(),
-          "delete must remove all stored images for the recipe")
+          "delete must move all owned images out of active storage")
+    check(archived.slug == pasta.slug and core.archive_recipe_file(pasta.slug).is_file()
+          and core.archive_images_dir(pasta.slug).is_dir(),
+          "delete must be the reversible archive operation")
     expect_valueerror(core.delete_recipe, pasta.slug)
+    core.purge_archived_recipe(pasta.slug)
+    check(core.get_archived(pasta.slug) is None,
+          "explicit purge must permanently remove the archived snapshot")
 
     print(f"OK - {checks} recipe core checks passed (GUSTO_HOME={HOME})")
 

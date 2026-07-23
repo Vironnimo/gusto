@@ -12,8 +12,12 @@
   <li>
     <span class="tl-date">{{ e.date }}</span>
     <span class="tl-dot"></span>
-    {% if e.slug in title_map %}
-      <a class="tl-name" href="/recipe/{{ e.slug }}">{{ title_map[e.slug] }}</a>
+    {% set reference = references.get(e.slug) %}
+    {% if reference %}
+      <a class="tl-name" href="{{ reference.url }}">
+        {{ reference.title }}
+        {% if reference.archived %}<small class="archive-badge">archiviert</small>{% endif %}
+      </a>
     {% else %}
       <span class="tl-name tl-gone">{{ e.slug }}</span>
     {% endif %}

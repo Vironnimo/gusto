@@ -1,6 +1,6 @@
 # Catalog
 
-The catalog domain owns recipes, their metadata and images, tag-based discovery, cooking history, suggestions, and consistency diagnostics.
+The catalog domain owns active and archived recipes, their metadata and images, tag-based discovery, cooking history, suggestions, and consistency diagnostics.
 
 ## Overview
 
@@ -8,7 +8,7 @@ Catalog behavior lives in `gusto/core.py`. The CLI and web layers only translate
 
 ## Terms
 
-No cross-cutting terms for this domain are currently defined in `.vorch/GLOSSARY.md`.
+GLOSSARY → Rezeptarchiv defines the reversible default for recipe deletion.
 
 ### Facet
 
@@ -24,23 +24,39 @@ No cross-cutting terms for this domain are currently defined in `.vorch/GLOSSARY
 - `data/recipes.json` is the catalog index. Each entry carries the stable slug, title, flat tag list, optional duration and servings, latest cooked date, image metadata, and optional cover-image id.
 - `data/categories.json` owns tag-to-facet assignment and display order. A tag remains valid when unassigned, but `check` reports it as uncategorized.
 - `images/<slug>/` contains Gusto-owned copies named from their image ids. Image metadata remains in the catalog index.
-- `data/log.json` is append-only cooking history in `{date, slug}` records. Deleting a recipe does not delete its historical log entries.
+- `archive/<slug>/` is one self-contained reversible snapshot: `recipe.md`,
+  `metadata.json` with archived timestamp and full `Recipe` data, and an
+  optional owned `images/` folder.
+- `data/log.json` is append-only cooking history in `{date, slug}` records.
+  Archiving and purging do not rewrite historical log entries.
 
 The slug joins Markdown, metadata, image storage, log entries, shopping sources, and URLs. Editing a title does not rename the slug.
 
 ## Interfaces
 
-`gusto/core.py` exposes catalog reads and mutations, search and facet grouping, cooking-log and suggestion operations, image management, and the consistency check. Callers receive `Recipe` and `RecipeImage` objects or JSON-ready dictionaries produced from them.
+`gusto/core.py` exposes catalog reads and mutations, archive list/show/restore/
+purge, active-or-archived reference lookup, search and facet grouping,
+cooking-log and suggestion operations, image management, and the consistency
+check. Callers receive `Recipe`, `ArchivedRecipe`, and `RecipeImage` objects or
+JSON-ready dictionaries produced from them.
 
-The CLI exposes these capabilities through `gusto list|search|tags|show|new|edit|cooked|log|suggest|check|set|delete` and `gusto image ...`. Web catalog pages and form actions in `gusto/web.py` call the same core operations.
+The CLI exposes these capabilities through `gusto list|search|tags|show|new|
+edit|cooked|log|suggest|check|set|delete`, `gusto archive
+list|show|restore|purge`, and `gusto image ...`. `delete` is the compatibility
+verb for reversible archiving; only `archive purge --yes` means destruction.
+Web catalog/archive pages and form actions in `gusto/web.py` call the same core
+operations.
 
 `new` and a tag-changing `set` preserve tags that have no named facet but warn
 immediately in both CLI presentation modes. JSON adds a `warnings` array with
 the stable `uncategorized_tags` code and affected tags; those tags continue to
 share the runtime `Sonstige` facet until `categories.json` assigns them.
 
-Recipe titles must be non-empty, and duration/servings, when present, must be
-positive integers. `update_recipe` has explicit clear flags for the optional
+Recipe titles must be non-empty. Core always makes the first Markdown H1 match
+the metadata title when creating or setting a title, including when the same
+title is re-applied to repair drift. Duration/servings, time caps, and log/
+suggestion day ranges, when present, must be positive integers.
+`update_recipe` has explicit clear flags for the optional
 numeric values; the CLI exposes them through `gusto set --clear-duration` and
 `--clear-servings`, and blank web edit fields use the same core path.
 
@@ -61,7 +77,8 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
 - Every catalog mutation holds the cross-process catalog lock across its full
   read-modify-write transaction. This includes the cooking log and owned recipe
   images because both also update catalog state.
-- Web create and edit always reconstruct the first Markdown line from the separate title field.
+- Core create/update owns the metadata-title ↔ first-H1 invariant; web forms
+  still reconstruct the line, but are not the source of truth for the rule.
 - Images are copied into Gusto storage after extension and header/dimension validation. The first image becomes the cover unless another is explicitly selected.
 - Before core receives a browser photo, the web shell applies EXIF orientation,
   limits the longest edge to 1920 px, converts it to WebP, and omits metadata.
@@ -69,7 +86,11 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
   dependency-free.
 - `images/_favorites/` is reserved for the shopping domain and must be ignored
   when diagnosing recipe image folders.
-- `check` diagnoses index, Markdown, tag, image-file, image-folder, and cover-selection inconsistencies; it does not repair them.
+- `check` diagnoses active/archive H1, index, Markdown, image-file, image-folder,
+  cover, interrupted archive transaction, active/archive collision, visible
+  shopping source, favorite, and historical log-reference issues. It does not
+  repair them. Uncategorized tags and unresolved append-only log history are
+  warnings; other non-empty diagnostics are hard errors.
 
 ## Constraints & Gotchas
 
@@ -80,7 +101,14 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
   the interactive editor bypass the Core lock and remain caller-coordinated.
 - A duration limit excludes recipes whose duration is unknown, not only recipes over the limit.
 - Suggestions intentionally only exclude recently cooked recipes and order the rest by oldest `last_cooked`; meal intelligence belongs to the calling agent.
-- Removing the selected cover promotes the first remaining image. Deleting a recipe removes its Markdown and image folder but preserves cooking history.
+- Removing the selected cover promotes the first remaining image.
+- Archiving moves recipe-owned Markdown, metadata, and the whole image folder
+  out of the active catalog. Restore rejects active file/slug collisions. Purge
+  is irreversible and holds catalog plus shopping locks; it rejects the
+  operation while visible shopping items reference the slug.
+- Log and shopping records are not owned by an archive snapshot. Surfaces
+  resolve their source slug to active or archived metadata; a purge may leave
+  append-only log history showing its raw slug.
 - Native camera capture is a browser hint (`environment`), not a custom live
   camera. A separate library action remains available when the hint is ignored;
   both uploads require a reachable server and have a 25 MB input limit.

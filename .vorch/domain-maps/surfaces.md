@@ -22,7 +22,10 @@ The installed application command is `gusto`, backed by `gusto.cli:main`;
 the CLI configures both stdout and stderr as UTF-8 on Windows, and it converts
 expected command failures into `{ "ok": false, "error": "..." }` on stdout
 with exit 1. Parser/usage errors happen before command dispatch and remain plain
-stderr with exit 2.
+stderr with exit 2. `check --json` deliberately returns its complete diagnostics
+with `ok:false` and exit 1 for hard errors. `edit --json` reports the editor
+result after it exits; `serve --json` emits a startup object before entering
+the long-running server.
 
 `gusto home` reports the active store root, its resolution source, and the
 normal platform default. It also reports the instance `gusto.settings.json`
@@ -33,6 +36,14 @@ of inferring data paths from the checkout.
 `--clear-duration` and `--clear-servings`; these are mutually exclusive with
 setting the corresponding value, and a call with no requested change is an
 explicit command error.
+`set --title` updates metadata and Markdown H1 through Core, rather than
+creating surface-specific title behavior. Time caps and log/suggestion day
+ranges are positive; the serve port parser accepts only 1–65535.
+
+`gusto delete` exposes reversible recipe archiving. `gusto archive
+list|show|restore|purge` exposes the remaining lifecycle; purge requires
+`--yes`. The web mirrors these under `/archive`, `/archive/{slug}`, restore and
+purge POST actions, plus `/media/archive/...`.
 
 Successful `new` and tag-changing `set` JSON responses remain recipe objects.
 When tags lack a named facet, the object additively carries structured
@@ -55,7 +66,11 @@ app-plus-data, or cancel. Agents use `--keep-data --json` or the deliberately
 stronger `--delete-data --yes --json`; `--dry-run` is non-mutating. The command
 refuses source checkouts, system Python, broad roots, and unrecognized stores.
 
-The web application object is `gusto.web:app`. It serves catalog, log, suggestion, shopping, preferred-product management, and form pages; recipe and product media; shopping/favorite JSON; static assets; the root-scoped service worker; and a custom HTML 404. Entity URLs continue to use `/recipe/{slug}` because they address a recipe, not the application package.
+The web application object is `gusto.web:app`. It serves active catalog,
+read-only archive, log, suggestion, shopping, preferred-product management, and
+form pages; active/archive recipe and product media; shopping/favorite JSON;
+static assets; the root-scoped service worker; and a custom HTML 404. Active
+entity URLs use `/recipe/{slug}`; archived snapshots use `/archive/{slug}`.
 
 Browser photo forms use two explicit file controls: native outward-facing
 camera capture and image-library selection. Pillow in the web extra normalizes
@@ -64,7 +79,12 @@ by the CLI; JavaScript only adds selection previews and mutual exclusion.
 
 Templates and static assets are package-relative under `gusto/templates/` and `gusto/static/`. The PWA manifest names the installed browser app Gusto and starts at `/shopping`.
 
-At widths up to 720px, the web surface uses a fixed bottom primary navigation while the masthead retains the brand. Catalog filters and the shopping add form become compact disclosure panels; the recipe page exposes a direct jump to its content and keeps edit/delete actions in a secondary disclosure. Desktop keeps the conventional header navigation and visible catalog filters.
+At widths up to 720px, the web surface uses a six-entry fixed bottom primary
+navigation, including Archive, while the masthead retains the brand. Catalog
+filters and the shopping add form become compact disclosure panels; the recipe
+page exposes a direct jump to its content and keeps edit/archive actions in a
+secondary disclosure. Desktop keeps the conventional header navigation and
+visible catalog filters.
 
 ## Packaging & Runtime
 
@@ -142,7 +162,9 @@ At widths up to 720px, the web surface uses a fixed bottom primary navigation wh
   applies orientation, resizes to a 1920 px maximum edge, and stores WebP without
   source metadata.
 - Catalog filter markup is open by default so desktop and no-JavaScript use stay visible; `app.js` closes it only on an initial mobile load without selected tags. The mobile masthead must remain in a higher stacking context than main content so its fixed navigation cannot be covered by recipe cards.
-- Shopping items persist their recipe source as a slug. `gusto.web` supplies a slug-to-title presentation map to both the server fallback and offline client so the visible list uses recipe titles without changing the sync contract.
+- Shopping items persist their recipe source as a slug. `gusto.web` supplies an
+  active-or-archived reference map with title, URL, and lifecycle status to the
+  server fallback and offline client, without changing the sync contract.
 - The offline shopping client duplicates only client-side state transitions required for optimistic use; authoritative merge and persistence rules remain in core. Keep both timestamp and merge behaviors aligned.
 - The same client performs deterministic name/alias lookup for presentation;
   keep its case/whitespace normalization aligned with core and never add fuzzy

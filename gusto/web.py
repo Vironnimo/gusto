@@ -104,6 +104,14 @@ def _safe_return_to(value: str, fallback: str) -> str:
     return value if value.startswith("/") and not value.startswith("//") else fallback
 
 
+def _recipe_reference_map() -> dict[str, dict]:
+    references = core.recipe_references()
+    for reference in references.values():
+        prefix = "/archive/" if reference["archived"] else "/recipe/"
+        reference["url"] = prefix + reference["slug"]
+    return references
+
+
 def _error_redirect(path: str, message: str) -> RedirectResponse:
     separator = "&" if "?" in path else "?"
     return RedirectResponse(
@@ -184,6 +192,59 @@ def index(request: Request, q: str = "", tag: list[str] = Query(default=[])):
     })
 
 
+@app.get("/archive", response_class=HTMLResponse)
+def archive_page(request: Request, error: str = ""):
+    try:
+        entries = core.load_archive()
+    except ValueError as archive_error:
+        entries = []
+        error = str(archive_error)
+    return templates.TemplateResponse(request, "archive.html", {
+        "nav": "archive", "title": "Archiv",
+        "entries": entries, "error": error,
+    })
+
+
+@app.get("/archive/{slug}", response_class=HTMLResponse)
+def archive_detail(request: Request, slug: str, error: str = ""):
+    try:
+        entry = core.get_archived(slug)
+    except ValueError as archive_error:
+        return _error_redirect("/archive", str(archive_error))
+    if entry is None:
+        raise StarletteHTTPException(status_code=404)
+    return templates.TemplateResponse(request, "archive_recipe.html", {
+        "nav": "archive", "title": entry.title,
+        "entry": entry, "r": entry.recipe,
+        "content_html": _render(entry.content()), "error": error,
+    })
+
+
+@app.post("/archive/{slug}/restore")
+def archive_restore_route(slug: str):
+    try:
+        recipe = core.restore_archived_recipe(slug)
+    except ValueError as error:
+        return _error_redirect(f"/archive/{slug}", str(error))
+    return RedirectResponse(f"/recipe/{recipe.slug}", status_code=303)
+
+
+@app.post("/archive/{slug}/purge")
+def archive_purge_route(slug: str, confirm: str = Form("")):
+    if confirm != "1":
+        return _error_redirect(
+            f"/archive/{slug}",
+            "Das endgültige Löschen muss ausdrücklich bestätigt werden.",
+        )
+    try:
+        core.purge_archived_recipe(slug)
+    except ValueError as error:
+        if core.get_archived(slug) is None:
+            raise StarletteHTTPException(status_code=404)
+        return _error_redirect(f"/archive/{slug}", str(error))
+    return RedirectResponse("/archive", status_code=303)
+
+
 @app.get("/recipe/{slug}", response_class=HTMLResponse)
 def recipe_detail(request: Request, slug: str, error: str = ""):
     r = core.get(slug)
@@ -201,6 +262,20 @@ def recipe_image(slug: str, image_id: str):
     if image is None:
         raise StarletteHTTPException(status_code=404)
     path = core.recipe_image_path(slug, image)
+    if not path.is_file():
+        raise StarletteHTTPException(status_code=404)
+    return FileResponse(str(path))
+
+
+@app.get("/media/archive/{slug}/{image_id}", include_in_schema=False)
+def archived_recipe_image(slug: str, image_id: str):
+    try:
+        image = core.get_archived_recipe_image(slug, image_id)
+    except ValueError:
+        raise StarletteHTTPException(status_code=404)
+    if image is None:
+        raise StarletteHTTPException(status_code=404)
+    path = core.archived_recipe_image_path(slug, image)
     if not path.is_file():
         raise StarletteHTTPException(status_code=404)
     return FileResponse(str(path))
@@ -347,14 +422,16 @@ def mark_cooked(slug: str):
 @app.post("/recipe/{slug}/delete")
 def delete_recipe_route(slug: str):
     try:
-        core.delete_recipe(slug)
-    except ValueError:
-        raise StarletteHTTPException(status_code=404)
-    return RedirectResponse("/", status_code=303)
+        archived = core.archive_recipe(slug)
+    except ValueError as error:
+        if core.get(slug) is None:
+            raise StarletteHTTPException(status_code=404)
+        return _error_redirect(f"/recipe/{slug}", str(error))
+    return RedirectResponse(f"/archive/{archived.slug}", status_code=303)
 
 
 @app.get("/suggestions", response_class=HTMLResponse)
-def suggestions(request: Request, days: int = 7):
+def suggestions(request: Request, days: int = Query(7, ge=1)):
     return templates.TemplateResponse(request, "suggest.html", {
         "nav": "suggestions", "title": "Was koche ich?",
         "candidates": core.suggest(days=days), "days": days,
@@ -364,10 +441,10 @@ def suggestions(request: Request, days: int = 7):
 @app.get("/log", response_class=HTMLResponse)
 def log_page(request: Request):
     entries = list(reversed(core.load_log()))
-    title_map = {r.slug: r.title for r in core.load_recipes()}
+    references = _recipe_reference_map()
     return templates.TemplateResponse(request, "log.html", {
         "nav": "log", "title": "Logbuch",
-        "entries": entries, "title_map": title_map,
+        "entries": entries, "references": references,
     })
 
 
@@ -523,11 +600,11 @@ def shopping_page(request: Request):
     needs = core.favorites_load()
     open_items = [i for i in items if not i.checked]
     done_items = [i for i in items if i.checked]
-    source_titles = {recipe.slug: recipe.title for recipe in core.load_recipes()}
+    source_references = _recipe_reference_map()
     return templates.TemplateResponse(request, "shopping.html", {
         "nav": "shopping", "title": "Einkaufsliste",
         "open_items": open_items, "done_items": done_items,
-        "source_titles": source_titles,
+        "source_references": source_references,
         "favorite_matches": {item.id: core.favorite_match(item.text, needs)
                              for item in items},
     })

@@ -15,7 +15,7 @@
   var FAVORITES_KEY = "gusto.favorites";
   var FAVORITES_URL = "/api/favorites";
   var favoriteNeeds = [];
-  var sourceTitles = {};
+  var sourceReferences = {};
 
   // --- localStorage binding --------------------------------------------------
 
@@ -159,9 +159,13 @@
     }
 
     if (item.source) {
-      var source = el("a", "shop-source");
-      source.href = "/recipe/" + item.source;
-      source.textContent = "aus „" + (sourceTitles[item.source] || item.source) + "“";
+      var reference = sourceReferences[item.source];
+      var source = el(reference ? "a" : "span",
+        "shop-source" + (reference ? "" : " is-unresolved"));
+      if (reference) source.href = reference.url;
+      source.textContent = reference
+        ? "aus „" + reference.title + "“" + (reference.archived ? " (archiviert)" : "")
+        : "aus „" + item.source + "“ (nicht gefunden)";
       meta.appendChild(source);
     }
     if (meta.childNodes.length) body.appendChild(meta);
@@ -718,12 +722,12 @@
     clientEl = document.getElementById("shop-client");
     if (!clientEl) return; // No container -> do nothing (server fallback stays).
 
-    var titlesEl = document.getElementById("shop-recipe-titles");
-    if (titlesEl) {
+    var referencesEl = document.getElementById("shop-recipe-references");
+    if (referencesEl) {
       try {
-        var parsedTitles = JSON.parse(titlesEl.textContent);
-        if (parsedTitles && typeof parsedTitles === "object") {
-          sourceTitles = parsedTitles;
+        var parsedReferences = JSON.parse(referencesEl.textContent);
+        if (parsedReferences && typeof parsedReferences === "object") {
+          sourceReferences = parsedReferences;
         }
       } catch (e) {
         // A broken presentation map must not block the offline list.
