@@ -48,10 +48,10 @@ Festlegen, als Stubs committen, BEVOR Phase 1 startet:
   `updated_at` (UTC ISO) treibt later „letzter gewinnt"; `deleted` =
   Tombstone, damit Löschungen synchron propagieren.
 - **Core-Signaturen** (nur Stubs + Docstrings): `parse_zutaten`,
-  `shopping_load/save/add/add_rezept/list/toggle/remove/clear_done/merge`.
+  `shopping_load/save/add/add_rezept/list/toggle/remove/remove_done/clear/merge`.
 - **Zutaten-Parsing-Regel:** Bullet-Items (`-`/`*`) unter `## Zutaten` bis zur
   nächsten `##`-Überschrift; v1 = ganze Zeile als `text`.
-- **CLI-Spec:** `gusto shopping list|add|rezept|check|uncheck|remove|clear`
+- **CLI-Spec:** `gusto shopping list|add|rezept|check|uncheck|remove|remove-done|clear`
   (alle mit `--json`).
 - **Schon mit Blick auf Phase 2:** Merge-Regel = pro `id` neuestes
   `updated_at` gewinnt, Tombstones propagieren.

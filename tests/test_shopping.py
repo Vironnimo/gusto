@@ -154,21 +154,21 @@ def main():
     expect_valueerror(core.shopping_toggle, spaghetti.id)
     expect_valueerror(core.shopping_remove, "unknown-id")
 
-    # --- shopping_clear_done ------------------------------------------------
+    # --- shopping_remove_done -----------------------------------------------
     # Currently done + non-tombstone: only "Milch" (a). Speck is open,
     # Spaghetti is already a tombstone.
-    count = core.shopping_clear_done()
-    check(count == 1, f"clear_done should remove exactly 1 item, was {count}.")
+    count = core.shopping_remove_done()
+    check(count == 1, f"remove_done should remove exactly 1 item, was {count}.")
     milch = next(i for i in core.shopping_load() if i.id == a.id)
     check(milch.deleted is True,
-          "clear_done must turn done items into tombstones.")
+          "remove_done must turn done items into tombstones.")
     # Calling again removes nothing more.
-    check(core.shopping_clear_done() == 0,
-          "clear_done with no done items must return 0.")
+    check(core.shopping_remove_done() == 0,
+          "remove_done with no done items must return 0.")
     # Exactly the open Speck item stays visible.
     visible = core.shopping_list()
     check([i.text for i in visible] == ["100 g Speck"],
-          "After clear_done only the open Speck item may be visible.")
+          "After remove_done only the open Speck item may be visible.")
 
     # --- shopping_add_many --------------------------------------------------
     batch = core.shopping_add_many(["Brot", "6 Eier", "200 g Spaghetti"])
@@ -179,6 +179,15 @@ def main():
           "shopping_add_many must persist the complete group.")
     expect_valueerror(core.shopping_add_many, [])
     expect_valueerror(core.shopping_add_many, ["Brot", "  "])
+
+    # --- shopping_clear -----------------------------------------------------
+    # The visible list contains open Speck plus all three batch items.
+    check(core.shopping_clear() == 4,
+          "shopping_clear must remove every visible item in one operation.")
+    check(core.shopping_list() == [],
+          "shopping_clear must leave no visible shopping items.")
+    check(core.shopping_clear() == 0,
+          "shopping_clear on an empty visible list must return 0.")
 
     # --- sourced single add -------------------------------------------------
     sourced_recipe = core.add_recipe(

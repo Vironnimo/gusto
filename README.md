@@ -137,7 +137,8 @@ gusto favorites product-add Spaghetti "De Cecco n. 12" --brand "De Cecco" --imag
 gusto favorites product-move Spaghetti <id> 1
 gusto shopping add "Parmesan" --source spaghetti-carbonara
 gusto shopping add-many "Milch" "Brot" "6 Eier"  # one atomic group
-gusto shopping clear               # tombstone checked items; no CLI restore
+gusto shopping remove-done         # remove every checked item
+gusto shopping clear               # empty the complete visible list
 gusto uninstall                     # interactive: app only or app + data
 ```
 
@@ -152,7 +153,9 @@ they remain stored under `Sonstige`. `--max-time` excludes recipes whose
 duration is unknown. `shopping add --source` accepts only an existing recipe,
 and the sourced item participates in the same duplicate-import guard as
 `shopping add-recipe`. A rejected recipe import reports the number of visible
-sourced items. `shopping clear` has no CLI restore operation.
+sourced items. `shopping remove-done` removes checked items; `shopping clear`
+empties the complete visible list. Both use sync-safe tombstones and have no
+CLI restore operation.
 
 ## Layout
 

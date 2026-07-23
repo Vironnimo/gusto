@@ -1530,15 +1530,29 @@ def shopping_remove(item_id: str) -> None:
 
 
 @_locked_mutation("shopping")
-def shopping_clear_done() -> int:
-    """Mark all done (checked, not yet tombstone) items as a tombstone
-    (deleted=True + updated_at). Returns the number of items removed this way."""
+def shopping_remove_done() -> int:
+    """Tombstone every checked visible item and return the removed count."""
     items = shopping_load()
     count = 0
-    for i in items:
-        if i.checked and not i.deleted:
-            i.deleted = True
-            i.updated_at = _now_iso(i.updated_at)
+    for item in items:
+        if item.checked and not item.deleted:
+            item.deleted = True
+            item.updated_at = _now_iso(item.updated_at)
+            count += 1
+    if count:
+        _shopping_save_unlocked(items)
+    return count
+
+
+@_locked_mutation("shopping")
+def shopping_clear() -> int:
+    """Tombstone every visible item and return the removed count."""
+    items = shopping_load()
+    count = 0
+    for item in items:
+        if not item.deleted:
+            item.deleted = True
+            item.updated_at = _now_iso(item.updated_at)
             count += 1
     if count:
         _shopping_save_unlocked(items)

@@ -68,11 +68,21 @@
       <ul class="shop-list">
         {% for item in done_items %}{{ shopping_item(item, true) }}{% endfor %}
       </ul>
-      <form class="shop-clear" method="post" action="/shopping/clear">
+      <form class="shop-remove-done" method="post" action="/shopping/remove-done">
         <button class="btn-text" type="submit">Erledigte entfernen</button>
       </form>
     </section>
     {% endif %}
+
+    <details class="shop-clear-all">
+      <summary>Einkaufsliste leeren</summary>
+      <div class="shop-clear-all-body">
+        <p>Entfernt alle offenen und erledigten Einträge. Diese Aktion lässt sich in Gusto nicht rückgängig machen.</p>
+        <form method="post" action="/shopping/clear">
+          <button class="btn-text" type="submit">Alles entfernen</button>
+        </form>
+      </div>
+    </details>
   </div>
   {% else %}
   <div class="empty">

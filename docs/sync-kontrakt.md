@@ -112,6 +112,7 @@ offen/erledigt gruppieren, nach `created_at` aufsteigend.
 - Entfernen: `deleted=true`, `updated_at=now` (kein Hard-Delete).
 - Erledigte entfernen: alle `checked && !deleted` → `deleted=true`,
   `updated_at=now`.
+- Einkaufsliste leeren: alle `!deleted` → `deleted=true`, `updated_at=now`.
 
 **`sync()`** (idempotent, fehlertolerant):
 - Offline (`!navigator.onLine`) → nichts tun, Änderungen bleiben lokal.

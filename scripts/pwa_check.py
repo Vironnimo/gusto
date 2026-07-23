@@ -224,6 +224,26 @@ try:
         ctx.set_offline(False)
         check(wait_server(lambda its: any(i["checked"] for i in its)),
               "back online: checkmark synced to server")
+
+        page.locator("#shop-client .shop-remove-done button").click()
+        check(wait_count(page, "#shop-client .shop-item", 1),
+              "remove-done: only the checked item disappears")
+        check(wait_server(
+            lambda its: any(i["text"] == "Milch" and i["deleted"] for i in its)
+            and any(i["text"] == "Brot" and not i["deleted"] for i in its)
+        ), "remove-done: checked-only tombstone reaches the server")
+
+        ctx.set_offline(True)
+        page.locator("#shop-client .shop-clear-all summary").click()
+        page.once("dialog", lambda dialog: dialog.accept())
+        page.locator("#shop-client .shop-clear-all button").click()
+        check(wait_count(page, "#shop-client .shop-item", 0),
+              "offline clear: every visible item disappears optimistically")
+        check(any(i["text"] == "Brot" and not i["deleted"] for i in api_get()),
+              "offline clear: server stays unchanged until connectivity returns")
+        ctx.set_offline(False)
+        check(wait_server(lambda its: all(i["deleted"] for i in its)),
+              "back online: complete-list tombstones reach the server")
         ctx.close()
 
         # --- 3) two-device merge (two contexts = two localStorage) -----------

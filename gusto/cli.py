@@ -611,12 +611,22 @@ def cmd_shopping_remove(args):
         print(f"Entfernt: {args.id}")
 
 
-def cmd_shopping_clear(args):
-    count = core.shopping_clear_done()
+def cmd_shopping_remove_done(args):
+    count = core.shopping_remove_done()
     if args.json:
         _dump({"removed": count})
     else:
-        print(f"{count} erledigte(s) Item(s) entfernt.")
+        noun = "erledigter Eintrag" if count == 1 else "erledigte Einträge"
+        print(f"{count} {noun} entfernt.")
+
+
+def cmd_shopping_clear(args):
+    count = core.shopping_clear()
+    if args.json:
+        _dump({"removed": count})
+    else:
+        noun = "Eintrag" if count == 1 else "Einträge"
+        print(f"{count} {noun} entfernt; die Einkaufsliste ist leer.")
 
 
 def cmd_serve(args):
@@ -1042,8 +1052,18 @@ def build_parser() -> argparse.ArgumentParser:
     ep.add_argument("id")
     ep.set_defaults(func=cmd_shopping_remove)
 
+    remove_done_help = (
+        "Alle abgehakten Eintraege entfernen; nicht per CLI wiederherstellbar."
+    )
+    ep = esub.add_parser(
+        "remove-done", parents=[base],
+        help=remove_done_help, description=remove_done_help,
+    )
+    ep.set_defaults(func=cmd_shopping_remove_done)
+
     clear_help = (
-        "Alle erledigten Eintraege entfernen; nicht per CLI wiederherstellbar."
+        "Die gesamte Einkaufsliste leeren (offene und erledigte Eintraege); "
+        "nicht per CLI wiederherstellbar."
     )
     ep = esub.add_parser(
         "clear", parents=[base], help=clear_help, description=clear_help,

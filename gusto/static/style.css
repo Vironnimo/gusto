@@ -256,7 +256,15 @@ a.shop-source:hover{color:var(--accent)}
 .shop-item.is-done .shop-favorite-hint{color:var(--ink-soft)}
 
 .shop-empty{color:var(--ink-soft); font-style:italic; padding:.4rem 0}
-.shop-clear{margin-top:1rem}
+.shop-remove-done{margin-top:1rem}
+.shop-clear-all{border-top:1px solid rgba(191,69,40,.28); color:var(--ink-soft); padding-top:1rem}
+.shop-clear-all summary{cursor:pointer; font-size:.9rem; font-weight:700; list-style:none}
+.shop-clear-all summary::-webkit-details-marker{display:none}
+.shop-clear-all summary::after{content:"＋"; margin-left:.45rem}
+.shop-clear-all[open] summary::after{content:"−"}
+.shop-clear-all-body{display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.8rem 0 0}
+.shop-clear-all-body p{font-size:.82rem; max-width:34rem}
+.shop-clear-all-body .btn-text{color:var(--accent-deep); flex:none}
 
 /* ---- Preferred products: bottom sheet + shared cards ---- */
 body.has-favorite-sheet{overflow:hidden}
@@ -497,6 +505,7 @@ body.has-favorite-sheet .wrap{z-index:90}
   .shop-add-panel{margin-bottom:1.15rem}
   .shop-add-panel summary{min-height:2.75rem; padding:.55rem .8rem}
   .shop-board{gap:1.7rem}
+  .shop-clear-all-body{align-items:flex-start; flex-direction:column}
   .shop-group-title{margin-bottom:.65rem}
   .shop-list{gap:.45rem}
   .shop-item{gap:.4rem; padding:.5rem .45rem .5rem .55rem}

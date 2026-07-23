@@ -23,9 +23,9 @@ plain stderr with exit code 2.
 - Read-only: `home`, `list`, `search`, `show`, `tags`, `log`, `suggest`,
   `check`, `image list`, `shopping list`, and `favorites list|show|match`.
 - Change state: `new`, `set`, `delete`, `cooked`, `image add|set|cover|remove`,
-  `shopping add|add-many|add-recipe|check|uncheck|remove|clear`, the remaining
-  `favorites …` commands, and `uninstall` (only when the user explicitly asks
-  to remove the installed application).
+  `shopping add|add-many|add-recipe|check|uncheck|remove|remove-done|clear`,
+  the remaining `favorites …` commands, and `uninstall` (only when the user
+  explicitly asks to remove the installed application).
 - Interactive/runtime: `edit` opens the configured editor and may change the
   recipe body; `serve` starts the long-running web server.
 
@@ -41,7 +41,7 @@ plain stderr with exit code 2.
 - Keep dependent calls sequential: create a recipe/need before using its id or
   slug. Also serialize operations whose intended result depends on order, such
   as `product-move` with `product-add`, `image cover` with `image remove`, or
-  `shopping clear` with `check`.
+  `shopping clear` / `shopping remove-done` with `check`.
 - Direct Markdown/category writes and interactive `edit` run outside the Core
   locks. Never perform them concurrently with another write to the same files.
 
@@ -104,9 +104,10 @@ plain stderr with exit code 2.
   Other operations: `shopping add "<text>"`,
   `shopping add-many "<text>" ...` (one atomic group),
   `shopping list [--pending]`, `shopping check|uncheck|remove <id>`,
-  `shopping clear`. **Do not run `clear` merely to save checkmarks:** it
-  tombstones every checked item, hides it from normal lists, and has no CLI
-  restore operation.
+  `shopping remove-done`, and `shopping clear`. Use `remove-done` only when all
+  checked items should disappear. A request to empty the shopping list maps to
+  exactly one `shopping clear` call, which tombstones every visible item,
+  whether open or checked. Neither operation has a CLI restore.
 
 **Find and maintain preferred products**
 - `gusto favorites match "<shopping text>" --json` returns the shared household
@@ -154,15 +155,17 @@ stays the source of truth. The keyboard has **two kinds of buttons**:
   the list, also put the item lines in the `message` text, not only in buttons.
 - **"Fertig" saves the current checked-state to Gusto; it does not remove bought
   items.** To make "Fertig" also clear the bought ones, additionally run
-  `gusto shopping clear` (tombstones all checked, with no CLI restore) after the
-  sync only when removal was requested.
+  `gusto shopping remove-done` after the sync only when removal was requested.
+  To empty the complete list instead, run `gusto shopping clear`; both removals
+  use tombstones and have no CLI restore.
 - **Manage** (then re-render by posting a fresh list): add one with `gusto
   shopping add "<text>"` (optionally `--source <slug>`), or a known group with
-  `gusto shopping add-many "<text>" ...`; clear done `gusto shopping clear` →
-  `{ "removed": N }`; open-only
+  `gusto shopping add-many "<text>" ...`; remove checked items with
+  `gusto shopping remove-done`, or empty the complete visible list with one
+  `gusto shopping clear` call; both return `{ "removed": N }`. Open-only:
   `gusto shopping list --pending --json`. After old sourced items are removed,
-  a fresh `add-recipe` import mints new ids → send a fresh list, don't reuse the
-  old buttons. Background:
+  a fresh `add-recipe` import mints new ids → send a fresh list, don't reuse
+  the old buttons. Background:
   `docs/telegram-shopping-handoff.md`.
 
 ## Data model

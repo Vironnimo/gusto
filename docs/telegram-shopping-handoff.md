@@ -31,8 +31,11 @@ Datenordner setzen; `gusto home --json` zeigt die aktive Auflösung.
 | `shopping add-many "<text>" ...` | alle Einträge atomar hinzufügen (Array in Argumentreihenfolge) |
 | `shopping add-recipe <slug>` | Array der erzeugten Items (`source=slug`); leerer oder bereits sichtbarer Rezeptimport ist ein Fehler, der die vorhandene Anzahl nennt |
 | `shopping remove <id>` | Tombstone; Wiederholung ist ein No-op ohne neuen Zeitstempel |
-| `shopping clear` | `{ "removed": N }` — tombstoned alle gehakten; sie sind danach nicht per CLI wiederherstellbar |
+| `shopping remove-done` | `{ "removed": N }` — tombstoned alle gehakten |
+| `shopping clear` | `{ "removed": N }` — tombstoned alle sichtbaren Einträge, offen wie gehakt |
 | erwarteter Fehler mit `--json` | `{ "ok": false, "error": "…" }` auf stdout + **exit code 1** |
+
+Beide Sammelentfernungen sind nicht per CLI wiederherstellbar.
 
 Item-Form:
 
@@ -87,9 +90,10 @@ Item-Form:
 3. Tap kommt als `callback_query` → `id` aus `data` → in Gusto umschalten →
    `answerCallbackQuery` → Nachricht neu rendern & editieren.
 4. Nur auf ausdrücklichen Entfernungswunsch: „Erledigte entfernen"-Button →
-   `gusto shopping clear` (kein CLI-Restore); einen
-   neuen Eintrag per Chat („+ Milch") → `gusto shopping add`, mehrere bekannte
-   Einträge gemeinsam → `gusto shopping add-many`; danach neu rendern.
+   `gusto shopping remove-done` (kein CLI-Restore). „Einkaufsliste leeren" →
+   genau ein `gusto shopping clear`, das offene und erledigte Einträge entfernt.
+   Einen neuen Eintrag per Chat („+ Milch") → `gusto shopping add`, mehrere
+   bekannte Einträge gemeinsam → `gusto shopping add-many`; danach neu rendern.
 
 ## Zuerst untersuchen (bitte vor dem Bauen berichten)
 

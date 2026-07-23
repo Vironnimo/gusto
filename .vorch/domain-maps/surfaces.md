@@ -45,8 +45,9 @@ transaction. JSON output is the created-item array in argument order; the
 existing singular `shopping add` continues returning one object and retains
 its optional structured `--quantity` field. Its optional `--source <slug>`
 attributes the item to an existing recipe and documents that the item then
-participates in `add-recipe`'s active-source guard. The `clear` help calls out
-that tombstoned completed items have no CLI restore path.
+participates in `add-recipe`'s active-source guard. `shopping remove-done`
+removes checked entries, while `shopping clear` empties the complete visible
+list; both help texts call out that their tombstones have no CLI restore path.
 
 `gusto uninstall` owns installed-runtime removal, not catalog deletion. A bare
 TTY call shows the verified application/data paths and offers app-only,

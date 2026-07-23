@@ -257,20 +257,20 @@
       });
       grpDone.appendChild(listDone);
 
-      // "Remove done" — own form look (.shop-clear + .btn-text).
-      var clearForm = el("div", "shop-clear");
-      var clearBtn = el("button", "btn-text");
-      clearBtn.type = "button";
-      clearBtn.textContent = "Erledigte entfernen";
-      clearBtn.addEventListener("click", function () {
-        clearDone();
+      var removeDoneForm = el("div", "shop-remove-done");
+      var removeDoneBtn = el("button", "btn-text");
+      removeDoneBtn.type = "button";
+      removeDoneBtn.textContent = "Erledigte entfernen";
+      removeDoneBtn.addEventListener("click", function () {
+        removeDone();
       });
-      clearForm.appendChild(clearBtn);
-      grpDone.appendChild(clearForm);
+      removeDoneForm.appendChild(removeDoneBtn);
+      grpDone.appendChild(removeDoneForm);
 
       board.appendChild(grpDone);
     }
 
+    board.appendChild(renderClearAll());
     clientEl.appendChild(board);
   }
 
@@ -286,6 +286,30 @@
     summary.appendChild(plus);
     panel.appendChild(summary);
     panel.appendChild(renderAddForm());
+    return panel;
+  }
+
+  function renderClearAll() {
+    var panel = el("details", "shop-clear-all");
+    var summary = el("summary");
+    summary.textContent = "Einkaufsliste leeren";
+    panel.appendChild(summary);
+
+    var body = el("div", "shop-clear-all-body");
+    var explanation = el("p");
+    explanation.textContent = "Entfernt alle offenen und erledigten Einträge. Diese Aktion lässt sich in Gusto nicht rückgängig machen.";
+    body.appendChild(explanation);
+
+    var button = el("button", "btn-text");
+    button.type = "button";
+    button.textContent = "Alles entfernen";
+    button.addEventListener("click", function () {
+      if (window.confirm("Wirklich alle Einträge von der Einkaufsliste entfernen?")) {
+        clearAll();
+      }
+    });
+    body.appendChild(button);
+    panel.appendChild(body);
     return panel;
   }
 
@@ -605,10 +629,23 @@
     sync();
   }
 
-  function clearDone() {
+  function removeDone() {
     var items = loadItems();
     items.forEach(function (it) {
       if (it.checked && !it.deleted) {
+        it.deleted = true;
+        it.updated_at = nowIso(it.updated_at);
+      }
+    });
+    saveItems(items);
+    render();
+    sync();
+  }
+
+  function clearAll() {
+    var items = loadItems();
+    items.forEach(function (it) {
+      if (!it.deleted) {
         it.deleted = true;
         it.updated_at = nowIso(it.updated_at);
       }

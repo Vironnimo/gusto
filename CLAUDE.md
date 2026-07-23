@@ -115,7 +115,8 @@ gusto shopping add-many "<text>" ...              Add several entries atomically
 gusto shopping add-recipe <slug>                   Import once while no sourced items remain
 gusto shopping check|uncheck <id>              Check / uncheck an entry
 gusto shopping remove <id>                     Remove an entry (tombstone)
-gusto shopping clear                           Remove done; no CLI restore
+gusto shopping remove-done                    Remove all checked entries
+gusto shopping clear                          Empty the complete visible list
 ```
 
 **Parallel agent calls:** Read-only commands may always run in parallel. Gusto
@@ -123,10 +124,10 @@ serializes mutations that share the catalog, favorites, or shopping source of
 truth, so independent adds, image imports, and checkbox updates do not lose
 data. Prefer one `shopping add-many` call for a known group. Keep dependent or
 order-sensitive calls sequential (`new` before `image add`, `favorites add`
-before `product-add`, and `product-move` / `image cover` / `shopping clear`
-relative to mutations they order or remove). Direct Markdown/category edits
-and the interactive `edit` command are outside these Core locks and must not
-race another write to the same files.
+before `product-add`, and `product-move` / `image cover` / `shopping clear` /
+`shopping remove-done` relative to mutations they order or remove). Direct
+Markdown/category edits and the interactive `edit` command are outside these
+Core locks and must not race another write to the same files.
 
 Explicit `shopping check`/`uncheck` and repeated removal of the same tombstone
 are idempotent without advancing `updated_at`. `shopping add-recipe` rejects an
@@ -134,8 +135,9 @@ empty ingredient section and refuses a repeat while any visible item from that
 recipe remains; the error reports their count. `shopping add --source
 <slug>` accepts only an existing recipe and its item participates in the same
 guard. It never merges same-looking ingredients or guesses quantities.
-`shopping clear` tombstones all checked items for sync and has no CLI restore;
-run it only when those completed entries should actually disappear.
+`shopping remove-done` tombstones all checked items; `shopping clear`
+tombstones every visible item, whether open or checked. Both operations sync
+through tombstones and have no CLI restore.
 
 ## Typical tasks (agent)
 
@@ -180,7 +182,9 @@ glyph visually (vBot's checklist extension — no Gusto write); the **Fertig** t
 wakes the agent with the current button state, which then syncs Gusto (`gusto
 shopping check|uncheck <id>` per item; no `toggle` — decide from the ⬜/✅ glyph)
 and confirms in chat. "Fertig" saves the checked-state (add `gusto shopping
-clear` only if it should also remove bought items; there is no CLI restore).
+remove-done` only if it should also remove bought items). A request to empty
+the entire list maps to one `gusto shopping clear` call. Neither removal has a
+CLI restore.
 Full round-trip in the skill
 (`skill/gusto/SKILL.md`); client history: [docs/telegram-shopping-handoff.md](docs/telegram-shopping-handoff.md).
 

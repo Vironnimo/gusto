@@ -180,9 +180,15 @@ def main():
           and "Herkunftsrezept" in normalized_add_help,
           "shopping add help must document sourced single items")
     clear_help = run("shopping", "clear", "--help")
-    check("nicht per CLI wiederherstellbar"
-          in " ".join(clear_help.stdout.split()),
-          "shopping clear help must state that there is no CLI restore")
+    normalized_clear_help = " ".join(clear_help.stdout.split())
+    check("gesamte Einkaufsliste" in normalized_clear_help
+          and "offene und erledigte" in normalized_clear_help
+          and "nicht per CLI wiederherstellbar" in normalized_clear_help,
+          "shopping clear help must describe complete, irreversible removal")
+    remove_done_help = run("shopping", "remove-done", "--help")
+    check("abgehakten Eintraege"
+          in " ".join(remove_done_help.stdout.split()),
+          "shopping remove-done help must describe checked-only removal")
     imported = as_json("shopping", "add-recipe", slug)
     check([entry["text"] for entry in imported] == ["Wasser", "Salz"],
           "shopping add-recipe must return imported ingredients")
@@ -215,6 +221,19 @@ def main():
     check([entry["text"] for entry in pending]
           == ["Wasser", "Salz", "Brot", "6 Eier", "200 g Spaghetti"],
           "shopping list --pending --json must hide only checked items")
+    removed_done = as_json("shopping", "remove-done")
+    check(removed_done == {"removed": 1},
+          "shopping remove-done must remove only the checked item")
+    check([entry["text"] for entry in as_json("shopping", "list")]
+          == ["Wasser", "Salz", "Brot", "6 Eier", "200 g Spaghetti"],
+          "shopping remove-done must retain every open item")
+    cleared_shopping = as_json("shopping", "clear")
+    check(cleared_shopping == {"removed": 5},
+          "shopping clear must remove every remaining visible item")
+    check(as_json("shopping", "list") == [],
+          "shopping clear must leave the visible list empty")
+    check(as_json("shopping", "clear") == {"removed": 0},
+          "shopping clear on an empty list must be a successful no-op")
 
     need = as_json(
         "favorites", "add", "Pizzateig", "--alias", "1 Rolle Pizzateig",

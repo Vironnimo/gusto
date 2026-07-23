@@ -142,6 +142,11 @@ Quality gates:
   in the import guard, whose rejection now reports the blocking count; CLI docs
   flag that cleared tombstones have no restore command. Release version is
   0.1.2.
+- 2026-07-23: Shopping removal commands now describe their scope directly:
+  `gusto shopping clear` atomically tombstones the complete visible list, while
+  `gusto shopping remove-done` removes only checked entries. Core, CLI,
+  server-rendered web, offline PWA, Telegram handoff, and the shipped Gusto
+  skill share this contract.
 
 ## Domain Maps
 

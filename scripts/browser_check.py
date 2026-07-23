@@ -384,7 +384,7 @@ try:
         check(page.locator("#shop-client .shop-group-done .shop-item").count() == 1, "one item is done (client)")
 
         # Remove done (tombstone)
-        page.locator("#shop-client .shop-clear button").click()
+        page.locator("#shop-client .shop-remove-done button").click()
         page.wait_for_function("() => document.querySelectorAll('#shop-client .shop-group-done').length === 0")
         check(page.locator("#shop-client .shop-item").count() == 6, "6 open items again (client)")
         page.screenshot(path=str(SHOTS / "10_shopping_after.png"), full_page=True)
@@ -469,6 +469,34 @@ try:
             "mobile: open product sheet stays above the fixed navigation")
         m.wait_for_timeout(350)
         m.screenshot(path=str(SHOTS / "12_mobile_favorite_sheet.png"))
+        m.locator("#favorite-sheet .favorite-sheet-close").click()
+
+        # No-JS destructive actions use distinct routes and semantics.
+        nojs_clear = browser.new_context(java_script_enabled=False)
+        clear_page = nojs_clear.new_page()
+        clear_page.goto(BASE + "/shopping", wait_until="domcontentloaded")
+        before_clear = clear_page.locator("#shop-server .shop-item").count()
+        check(before_clear > 1, "no-JS: shopping list has entries for removal checks")
+        clear_page.locator("#shop-server .shop-item .shop-check button").first.click()
+        clear_page.wait_for_load_state("domcontentloaded")
+        check(clear_page.locator("#shop-server .shop-group-done .shop-item").count() == 1,
+              "no-JS: one item can be marked done before removing completed items")
+        clear_page.locator(
+            "#shop-server form[action='/shopping/remove-done'] button").click()
+        clear_page.wait_for_load_state("domcontentloaded")
+        check(clear_page.locator("#shop-server .shop-item").count() == before_clear - 1,
+              "no-JS: remove-done removes only the checked item")
+        clear_page.locator("#shop-server .shop-clear-all summary").click()
+        clear_page.screenshot(
+            path=str(SHOTS / "13_shopping_clear_confirmation.png"), full_page=True)
+        clear_page.locator(
+            "#shop-server form[action='/shopping/clear'] button").click()
+        clear_page.wait_for_load_state("domcontentloaded")
+        check(clear_page.locator("#shop-server .shop-item").count() == 0,
+              "no-JS: clear removes every remaining visible item")
+        check("Die Einkaufsliste ist leer" in clear_page.content(),
+              "no-JS: complete clear renders the empty-list state")
+        nojs_clear.close()
 
         browser.close()
 finally:

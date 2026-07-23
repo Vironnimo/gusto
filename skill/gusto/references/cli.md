@@ -121,9 +121,11 @@ Argument and usage errors from the parser remain plain stderr and exit `2`.
   `id` follows the JSON error contract above.
 - `shopping remove <id> [--json]` — tombstone (sync-safe; never hard-deleted).
   Repeating the same removal is a no-op that preserves `updated_at`.
-- `shopping clear [--json]` — tombstone all checked items; returns `{ "removed": N }`.
-  They disappear from normal lists and there is no CLI restore operation, so
-  use this only when completed entries should actually be removed.
+- `shopping remove-done [--json]` — tombstone all checked visible items; returns
+  `{ "removed": N }`.
+- `shopping clear [--json]` — tombstone every visible item, open or checked;
+  returns `{ "removed": N }`. The complete visible list is empty afterward.
+  Neither bulk removal has a CLI restore operation.
 
 Mutations sharing the catalog, favorites, or shopping store are serialized
 across Gusto processes. Independent adds, image imports, and item-specific
@@ -232,9 +234,9 @@ Shopping-list item:
 
 `id` is 32-hex, stable and unique. `list`/`list --pending` return a **flat JSON
 array** (no `{items}` wrapper); `check`/`uncheck`/`add` return a single item;
-`add-recipe` an array; `clear` returns `{ "removed": N }`. Rendering the list as
-a tappable **Telegram checklist** (inline-keyboard + `callback_query` in the
-client app): see `docs/telegram-shopping-handoff.md`.
+`add-recipe` an array; `remove-done` and `clear` return `{ "removed": N }`.
+Rendering the list as a tappable **Telegram checklist** (inline-keyboard +
+`callback_query` in the client app): see `docs/telegram-shopping-handoff.md`.
 
 Shopping need returned by `favorites list|show|match`:
 

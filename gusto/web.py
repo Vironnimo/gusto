@@ -558,9 +558,15 @@ def shopping_remove_route(item_id: str):
     return RedirectResponse("/shopping", status_code=303)
 
 
+@app.post("/shopping/remove-done")
+def shopping_remove_done_route():
+    core.shopping_remove_done()
+    return RedirectResponse("/shopping", status_code=303)
+
+
 @app.post("/shopping/clear")
 def shopping_clear_route():
-    core.shopping_clear_done()
+    core.shopping_clear()
     return RedirectResponse("/shopping", status_code=303)
 
 

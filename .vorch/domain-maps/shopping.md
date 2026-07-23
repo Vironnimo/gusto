@@ -37,19 +37,19 @@ offline reading only.
 Core operations load and save full state, add individual entries, add a
 free-text group in one transaction, import ingredients from a recipe, list
 visible entries, set or toggle checked state, tombstone entries, clear completed
-entries, and merge a remote full state.
+entries, clear the complete visible list, and merge a remote full state.
 
 The sync endpoint accepts only an object containing an `items` list. Core
 validates each remote item's required fields and field types before merging;
 malformed JSON shapes return HTTP 400 and are never persisted.
 
 Under `gusto shopping`, the CLI exposes `list`, `add`, `add-many`, `add-recipe`,
-`check`, `uncheck`, `remove`, and `clear`. `add-many` accepts one or more
-positional free-text entries, commits them together, and returns their array in
-argument order. Explicit check and uncheck are idempotent and suited to agents
-synchronizing an external checklist; a repeated target state does not write or
-advance its sync version. Re-removing an existing tombstone has the same no-op
-behavior.
+`check`, `uncheck`, `remove`, `remove-done`, and `clear`. `add-many` accepts one
+or more positional free-text entries, commits them together, and returns their
+array in argument order. Explicit check and uncheck are idempotent and suited
+to agents synchronizing an external checklist; a repeated target state does
+not write or advance its sync version. Re-removing an existing tombstone has
+the same no-op behavior.
 
 `shopping add --source <slug>` attributes one free-text item to an existing
 recipe. Core validates the recipe while holding both catalog and shopping locks;
@@ -63,9 +63,10 @@ recipes or guessing how quantities should combine. Once the old sourced items
 are tombstoned, a fresh import creates new ids. Rejection reports the number of
 visible sourced items that caused the block.
 
-`shopping clear` tombstones every checked visible item. Tombstones remain in
-sync state but are hidden from normal lists, and no CLI operation restores them;
-the command is only appropriate when completed entries should be removed.
+`shopping remove-done` tombstones every checked visible item. `shopping clear`
+tombstones every visible item, open or checked, in one transaction. Both return
+the removed count, retain tombstones for sync, hide removed items from normal
+lists, and have no CLI restore operation.
 
 The web provides server-rendered `/shopping` forms when JavaScript is unavailable. With JavaScript, the client hides that fallback, mutates local state first, and synchronizes in the background. `GET /api/shopping` returns all server items including tombstones; `POST /api/shopping/sync` accepts `{ "items": [...] }` and returns the merged full state.
 
@@ -101,8 +102,9 @@ with a 1920 px maximum edge before invoking the existing core product mutation.
   already existing Einkaufsbedarf or removing an unknown hard-deleted product
   remains an error because silently accepting it could hide a wrong identity.
 - Independent item adds/checks may arrive concurrently; order-sensitive pairs
-  such as `clear` with `check` still have a result determined by lock acquisition
-  order and should be sequenced by the caller when order expresses intent.
+  such as `clear` or `remove-done` with `check` still have a result determined
+  by lock acquisition order and should be sequenced by the caller when order
+  expresses intent.
 - Offline and failed syncs deliberately preserve local state. The browser retries on the next mutation, queued follow-up, initialization, or `online` event.
 - Preferred-product matching only lowercases (including `ß` → `ss`) and
   collapses whitespace. It does
