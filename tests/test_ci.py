@@ -1,15 +1,21 @@
 """Static contracts for the reusable CI and gated release workflow."""
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
 
-
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, os.fspath(ROOT))
+
+from scripts import ci_smoke_install  # noqa: E402
+
+
 QUALITY = ROOT / ".github/workflows/quality.yml"
 RELEASE = ROOT / ".github/workflows/release.yml"
 DEPENDABOT = ROOT / ".github/dependabot.yml"
@@ -123,6 +129,21 @@ for browser_check in (BROWSER_CHECK, PWA_CHECK):
     check(
         "networkidle" not in browser_check.read_text(encoding="utf-8"),
         f"{browser_check.name} must not wait for network idle while SSE remains open",
+    )
+
+with tempfile.TemporaryDirectory(prefix="gusto-ci-contract-") as temporary:
+    smoke_root = Path(temporary)
+    config_home = smoke_root / "xdg-config"
+    environment = {
+        "HOME": os.fspath(smoke_root / "home"),
+        "XDG_CONFIG_HOME": os.fspath(config_home),
+        "PATH": "",
+    }
+    ci_smoke_install.prepare_linux_service_adapter(smoke_root, environment)
+    check(
+        Path(environment["GUSTO_CI_UNIT_PATH"])
+        == config_home / "systemd/user/gusto.service",
+        "Linux smoke adapter must follow the installer's XDG user-unit path",
     )
 
 print(f"OK - {checks} CI contract checks passed")

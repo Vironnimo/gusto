@@ -71,6 +71,9 @@ for text in (shell, powershell):
 check("gusto update" in shell, "bootstrap must identify gusto update as normal flow")
 check("exit $LASTEXITCODE" not in powershell,
       "piped PowerShell bootstrap must not close the caller's shell")
+check("Get-FileHash" not in powershell
+      and "Security.Cryptography.SHA256" in powershell,
+      "PowerShell bootstrap checksum must not require optional cmdlets")
 
 with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
     output = Path(temporary)

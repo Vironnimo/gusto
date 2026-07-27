@@ -62,7 +62,18 @@ try {
             $checksumWords[0].ToLowerInvariant() -ne $manifest.sha256.ToLowerInvariant()) {
         throw "Manifest und Checksum-Datei stimmen nicht überein."
     }
-    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $archiveStream = [IO.File]::OpenRead($archivePath)
+        try {
+            $digestBytes = $sha256.ComputeHash($archiveStream)
+        } finally {
+            $archiveStream.Dispose()
+        }
+    } finally {
+        $sha256.Dispose()
+    }
+    $actual = [BitConverter]::ToString($digestBytes).Replace("-", "").ToLowerInvariant()
     if ($actual -ne $manifest.sha256.ToLowerInvariant()) {
         throw "SHA-256-Prüfung des Release-Archivs fehlgeschlagen."
     }

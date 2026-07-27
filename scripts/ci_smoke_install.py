@@ -103,8 +103,12 @@ def prepare_linux_service_adapter(
     environment["PATH"] = os.pathsep.join(
         (os.fspath(shim_dir), environment.get("PATH", "")),
     )
+    config_home = Path(
+        environment.get("XDG_CONFIG_HOME")
+        or Path(environment["HOME"]) / ".config"
+    )
     environment["GUSTO_CI_UNIT_PATH"] = os.fspath(
-        Path(environment["HOME"]) / ".config/systemd/user/gusto.service"
+        config_home / "systemd/user/gusto.service"
     )
     environment["GUSTO_CI_PID_FILE"] = os.fspath(
         work_dir / "gusto-service.pid"
@@ -209,6 +213,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             environment["HOME"] = os.fspath(fake_home)
             environment["XDG_DATA_HOME"] = os.fspath(fake_home / ".local/share")
+            environment["XDG_CONFIG_HOME"] = os.fspath(fake_home / ".config")
             prepare_linux_service_adapter(work_dir, environment)
             execute(
                 [
