@@ -155,7 +155,7 @@ def main():
             "ok": True,
             "status": "ready",
             "version": __version__,
-            "data_path": os.fspath(HOME),
+            "data_path": os.fspath(HOME.resolve()),
             "revision": 0,
             "resources": [],
         },
