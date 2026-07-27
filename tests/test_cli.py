@@ -342,11 +342,12 @@ def main():
     check_lifecycle_contract()
     start_server()
     home = as_json("home")
-    check(Path(home["path"]) == HOME and home["source"] == "environment",
+    check(Path(home["path"]).resolve() == HOME.resolve()
+          and home["source"] == "environment",
           "home --json must explain the active GUSTO_HOME data directory")
     check(home["server_url"] == SERVER_URL and home["server_reachable"] is True,
           "home --json must report server discovery and reachability separately")
-    check(Path(home["server_data_path"]) == HOME
+    check(Path(home["server_data_path"]).resolve() == HOME.resolve()
           and isinstance(home["server_revision"], int)
           and home["server_version"],
           "home --json must identify the reachable server-owned store/version")
