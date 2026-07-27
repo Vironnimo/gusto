@@ -180,6 +180,7 @@ jobs:
             dist/gusto-release.json \
             dist/install.ps1 \
             dist/install.sh \
+            --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --generate-notes \
             --latest

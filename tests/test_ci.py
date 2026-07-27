@@ -94,6 +94,11 @@ check(
     and publish_permissions.get("attestations") == "write",
     "only the publish job should receive release and attestation authority",
 )
+release_text = RELEASE.read_text(encoding="utf-8")
+check(
+    '--repo "$GITHUB_REPOSITORY"' in release_text,
+    "release publication must not depend on a local Git checkout",
+)
 check(
     any(
         update.get("package-ecosystem") == "github-actions"
