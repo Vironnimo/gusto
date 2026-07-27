@@ -1,15 +1,17 @@
 ---
 name: gusto
-description: Operate the Gusto recipe system through its `gusto` CLI. Use to answer "what should I cook?" and "what can I make with these ingredients?", find, show, add, edit, archive, restore, or permanently purge recipes, manage recipe images, filter recipes by tag categories, manage the shopping list and shared preferred products, record or read the cooking log, or safely uninstall an installed runtime when explicitly requested. Drive the `gusto` CLI and pass `--json` whenever you parse output.
+description: Operate live household or development instances of the Gusto recipe system through its CLI. Use to answer "what should I cook?" and "what can I make with these ingredients?", find, show, add, edit, archive, restore, or permanently purge recipes, manage recipe images, filter recipes by tag categories, manage the shopping list and shared preferred products, record or read the cooking log, or safely uninstall an installed runtime when explicitly requested. Select and verify the intended Gusto instance before acting; use the installed CLI for live household data and pass `--json` whenever you parse output.
 ---
 
 # Gusto — operating the recipe system via the CLI
 
-The `gusto` CLI is the only interface you need; every command takes `--json`
-for machine-readable output. `suggest` is intentionally dumb — the judgment for
-"what should I cook?" is yours, from combining `log`, `suggest`, `search` and
-`list`. (Recipe content and tag values are German; commands and JSON keys are
-English.)
+The CLI is Gusto's control surface; recipe bodies remain Markdown. Use CLI
+commands for lifecycle and metadata. Edit a body file only after the same CLI
+has selected the store and created the recipe entry. Every command takes
+`--json` for machine-readable output. `suggest` is intentionally dumb — the
+judgment for "what should I cook?" is yours, from combining `log`, `suggest`,
+`search` and `list`. (Recipe content and tag values are German; commands and
+JSON keys are English.)
 
 With `--json`, expected command failures are also JSON on stdout:
 `{"ok": false, "error": "..."}` with exit code 1. Argument/usage errors remain
@@ -20,11 +22,40 @@ validates every optional web dependency; missing packages use the expected
 error object, otherwise it emits one startup object before the long-running
 server takes over.
 
+## Select the instance first
+
+Gusto deliberately separates the installed household store from a development
+checkout. A command can succeed perfectly in the wrong store, so success is not
+evidence that the live application can see the result.
+
+1. For normal user requests about their cookbook, cooking history, favorites,
+   or shopping list, use the **installed release** by default.
+2. Use `python -m gusto` only when the user explicitly asks to work in a
+   development checkout or isolated test instance. The checkout normally
+   selects the separate `gusto-dev` store.
+3. At the first Gusto operation in every task, run `<chosen command> home
+   --json`. Before any mutation or direct file access, inspect `path`, `source`,
+   `platform_default`, and `settings_path`. If the path is unexpected or the
+   intended live/development instance is ambiguous, do not write; clarify it
+   with the user.
+4. Reuse the exact same executable or command prefix for every dependent call
+   and file path in that workflow. Never create through one runtime and then
+   edit, attach images, validate, or read through another.
+5. If the installed `gusto` command is unavailable, use its explicit installed
+   path; never silently fall back to `python -m gusto`.
+
 ## Invocation
 
-- Development checkout: `python -m gusto <command> --json`.
-- Installed release: `gusto <command>` in a new Windows console, or
-  `~/.local/opt/gusto/bin/gusto <command>` on Linux.
+- Installed Windows release (live default): `gusto <command> --json`. If the
+  current agent process has an old `PATH`, use this PowerShell prefix:
+  `& "$env:LOCALAPPDATA\Programs\Gusto\Scripts\gusto.exe"`.
+- Installed Linux release (live default):
+  `~/.local/opt/gusto/bin/gusto <command> --json`.
+- Development checkout (only when intentional):
+  `python -m gusto <command> --json`.
+- All examples below use `gusto`; replace it with the exact chosen installed
+  path or intentional development prefix and keep that choice unchanged.
+
 - Read-only: `home`, `list`, `search`, `show`, `tags`, `log`, `suggest`,
   `check`, `archive list|show`, `image list`, `shopping list`, and
   `favorites list|show|match`.
@@ -71,17 +102,29 @@ server takes over.
 - `gusto list --tag italienisch --tag pasta --json` — OR within a category,
   AND across categories. `--tag` repeats and is comma-separated.
 
-**Add a recipe**
-- `gusto new "<title>" --tags a,b --duration 25 --servings 2 --json` writes the
-  `.md` (a template) and the index entry.
-- Before direct file access, run `gusto home --json` and use its `path`. Then
-  write the body into `<path>/recipes/<slug>.md`: first line `# <title>`, then
-  a `## Zutaten` bullet list and a `## Zubereitung` numbered list. No
-  frontmatter. Never assume the checkout's `recipes/` directory is active.
-- Used a new tag? `new` and `set --tags` return an additive `warnings` array
-  when it has no category. Add it under a category in
-  `<path>/data/categories.json`; until then it shares the `Sonstige` facet and
-  `gusto check` reports it in `uncategorized_tags`.
+**Add a recipe from text or images**
+1. Select the instance as above and run `gusto home --json`. Keep its confirmed
+   `path` and use the same command prefix for every following step.
+2. Run `gusto search "<title>" --match all --json` and inspect exact
+   title/slug matches. Do not create a duplicate; update the existing recipe or
+   clarify the user's intent when the match is ambiguous.
+3. Run `gusto new "<title>" --tags a,b --duration 25 --servings 2 --json`.
+   This is mandatory: it creates both the Markdown template and catalog entry.
+   Use the returned `slug`; never create the `.md` first and never hand-edit
+   `data/recipes.json` for a normal recipe.
+4. Write the full body only to `<confirmed path>/recipes/<returned slug>.md`.
+   Preserve the first line as `# <title>`, followed by a `## Zutaten` bullet
+   list and a `## Zubereitung` numbered list. Do not add frontmatter.
+5. For every useful source image, run `gusto image add <slug> <source path>
+   --role <purpose> --caption "<description>" --json` with the same command
+   prefix. Gusto copies and owns these files.
+6. Verify through that same instance with `gusto show <slug> --json`, `gusto
+   image list <slug> --json`, and finally `gusto check --json`. Do not report
+   completion until the recipe appears there and `check` has no related error.
+7. If `new` or `set --tags` reports an additive `warnings` entry for a new tag,
+   place the tag under a category in
+   `<confirmed path>/data/categories.json`; until then it shares the `Sonstige`
+   facet and `check` reports it in `uncategorized_tags`.
 
 **Add and manage recipe images**
 - Inspect the source image yourself, then add it to the matching recipe with
@@ -99,8 +142,10 @@ server takes over.
   `--clear-duration` / `--clear-servings` remove optional numeric metadata.
   At least one change flag is required. `set --title` always updates both the
   metadata title and the first Markdown H1.
-  For a headless body edit, resolve `gusto home --json` and rewrite
+  For a headless body edit, use the already selected command to resolve `gusto
+  home --json`, confirm the recipe with `show`, and rewrite only
   `<path>/recipes/<slug>.md`; do not infer the store from the working directory.
+  Re-run `show` and `check` afterward.
 - `gusto cooked <slug>` — record today; an explicit `--date` must be a valid
   `YYYY-MM-DD` no later than today (updates the log + `last_cooked`).
 - `gusto shopping add-recipe <slug>` imports non-empty ingredients only when no
@@ -188,15 +233,15 @@ stays the source of truth. The keyboard has **two kinds of buttons**:
   `gusto shopping clear` call; both return `{ "removed": N }`. Open-only:
   `gusto shopping list --pending --json`. After old sourced items are removed,
   a fresh `add-recipe` import mints new ids → send a fresh list, don't reuse
-  the old buttons. Background:
-  `docs/telegram-shopping-handoff.md`.
+  the old buttons.
 
 ## Data model
 
 - `gusto home --json` reports the root containing the following paths and the
   instance settings that selected it. The checkout uses the platform data
   sibling `gusto-dev`; an installed release uses its configured production
-  store. `GUSTO_HOME` overrides both for isolated runs and tests.
+  store. `GUSTO_HOME` overrides both for isolated runs and tests; treat an
+  unexpected `source:"environment"` as an instance mismatch until confirmed.
 - `recipes/<slug>.md` — recipe content, no frontmatter.
 - `data/recipes.json` — metadata including `images[]` and `cover_image_id`.
 - `images/<slug>/` — original image files copied into and owned by Gusto.
@@ -216,11 +261,16 @@ manual edit run `gusto check`.
 - `--max-time`, `log --days`, and `suggest --days` require positive integers;
   `suggest --limit 0` is intentionally allowed. `serve --port` accepts
   1 through 65535.
-- Do not assume data lives beside the checkout; resolve it with
-  `gusto home --json` before direct file access.
+- For live household work, do not use `python -m gusto` merely because the
+  current directory is the repository. Use the installed CLI and confirm
+  `home --json` before acting.
+- Do not assume data lives beside the checkout. A successful `new` can still
+  target the wrong store; resolve and verify the instance before the command,
+  not only before direct file access.
 - The `.md` holds content only — never put metadata/frontmatter in it.
-- Don't hand-write a `.md` without an index entry — use `gusto new`, or add the
-  entry and run `gusto check`.
+- Never hand-write a new `.md` or edit `data/recipes.json` as the creation path.
+  Use `gusto new`, fill only its returned slug's file, then run `show` and
+  `check` through the same instance.
 - Tags are facets: multiple `--tag`, OR within a category, AND across.
 - Checklist buttons: the ⬜/✅ glyph must be **leading** in the label, or the `chk`
   flip silently does nothing. A `chk` tap flips the message only — it never writes

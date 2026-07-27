@@ -1,15 +1,32 @@
 # Gusto CLI — Full Reference
 
-All commands: `python -m gusto <command>` in a development checkout. Installed
-releases use `gusto <command>` in a newly opened Windows console or
-`~/.local/opt/gusto/bin/gusto <command>` on Linux. Every command accepts `--json`
-for machine-readable output.
+For normal household tasks, use the installed release: `gusto <command>` on
+Windows or `~/.local/opt/gusto/bin/gusto <command>` on Linux. If a Windows agent
+does not see the recently installed `gusto` on `PATH`, use the PowerShell prefix
+`& "$env:LOCALAPPDATA\Programs\Gusto\Scripts\gusto.exe"`; never silently
+substitute the checkout. Use `python -m gusto <command>` only for explicitly
+requested development or isolated testing. Every command accepts `--json` for
+machine-readable output.
+
+At the first Gusto operation in a task, run the exact chosen invocation with
+`home --json`. Before writing, verify its `path`, `source`, `platform_default`,
+and `settings_path`, then reuse that same invocation for the whole workflow. A
+checkout normally selects `gusto-dev`, while the installed release selects the
+household store. If the target is unexpected or ambiguous, do not mutate it.
 
 Expected command failures with `--json` return
 `{ "ok": false, "error": "<German message>" }` on stdout and exit `1`.
 `check --json` instead returns its full diagnostics with `ok:false` and exit
 `1` when it finds hard integrity errors. Argument and usage errors from the
 parser remain plain stderr and exit `2`.
+
+## Contents
+
+- [Commands](#commands)
+- [JSON shapes](#json-shapes)
+- [Tag facets in detail](#tag-facets-in-detail)
+- [Data files](#data-files)
+- [Worked example](#worked-example--what-should-i-cook)
 
 ## Commands
 
@@ -49,7 +66,11 @@ parser remain plain stderr and exit `2`.
 
 - `new "<title>" [--tags a,b] [--duration N] [--servings N] [--edit] [--json]`
   Create the `.md` (a template) **and** the index entry. `--edit` opens
-  `$EDITOR` (interactive — skip it when headless; write the file directly).
+  `$EDITOR` (interactive — skip it when headless). For a headless creation,
+  first confirm this invocation's `home --json`, run `new`, and write only the
+  returned slug's generated file under `<confirmed path>/recipes/`.
+  Search for an exact existing title first to avoid duplicates. Never create a
+  recipe Markdown file or catalog entry by hand first.
   Tags without a named category add a structured `warnings` entry to JSON and
   a warning line to human output; they are still stored in the `Sonstige` facet.
 - `set <slug> [--title ...] [--tags a,b]
@@ -160,6 +181,8 @@ interactive `edit` bypass these locks.
 
 - `serve [--host H] [--port N] [--reload] [--json]` — start the web UI
   (default `0.0.0.0:8000`, reachable across the LAN); port must be 1–65535.
+  Before any startup output, it validates all optional web dependencies.
+  Missing packages use the normal structured JSON error contract; otherwise
   JSON emits one `{status:"starting", host, port, url, reload}` object before
   the server begins its long-running work.
 
@@ -296,7 +319,8 @@ Shopping-list item:
 array** (no `{items}` wrapper); `check`/`uncheck`/`add` return a single item;
 `add-recipe` an array; `remove-done` and `clear` return `{ "removed": N }`.
 Rendering the list as a tappable **Telegram checklist** (inline-keyboard +
-`callback_query` in the client app): see `docs/telegram-shopping-handoff.md`.
+`callback_query` in the client app) is documented in the `Shopping list as a
+Telegram checklist` workflow in `../SKILL.md`.
 
 Shopping need returned by `favorites list|show|match`:
 
@@ -345,7 +369,8 @@ Resolve the root with `gusto home --json`. Each runtime owns an adjacent
 `gusto.settings.json`; the checkout selects the platform data sibling
 `gusto-dev`, while installed releases select their production store. A relative
 `data_dir` is resolved beside the platform default. `GUSTO_HOME` is the explicit
-override used by isolated runs and tests.
+override used by isolated runs and tests. Treat an unexpected environment
+override as an instance mismatch and stop before mutation.
 
 | File | Content |
 |---|---|
@@ -362,11 +387,11 @@ override used by isolated runs and tests.
 ## Worked example — "what should I cook?"
 
 ```
-$ python -m gusto log --days 7 --json
+$ gusto log --days 7 --json
 [ { "date": "2026-06-21", "slug": "spaghetti-carbonara" },
   { "date": "2026-06-18", "slug": "rotes-linsen-dal" } ]
 
-$ python -m gusto suggest --json
+$ gusto suggest --json
 [ { "slug": "ofengemuese-feta", "title": "Ofengemüse mit Feta",
     "tags": ["vegetarisch", "ofen", "einfach"], "last_cooked": null } ]
 ```

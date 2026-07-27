@@ -69,6 +69,15 @@ python install.py --cli-only   # the pure CLI needs no dependencies
 python -m gusto <command>      # CLI during development
 ```
 
+**Instance safety for agents:** Normal household tasks use the installed
+`gusto` command; `python -m gusto` from the checkout intentionally selects the
+separate `gusto-dev` store. At the first Gusto operation in each task, run the
+exact chosen invocation with `home --json`. Before any mutation, verify `path`,
+`source`, `platform_default`, and `settings_path`, then reuse that same
+invocation for all dependent commands and direct file paths. If the target is
+unexpected or ambiguous, do not write. Never fall back from a missing installed
+command to `python -m gusto`.
+
 All commands understand `--json` (machine-readable, for agents). `edit --json`
 returns the editor result after the editor exits. `serve --json` first validates
 every optional web dependency; missing packages are expected command failures,

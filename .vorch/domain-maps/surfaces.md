@@ -33,6 +33,14 @@ normal platform default. It also reports the instance `gusto.settings.json`
 when present. Installation and deployment tooling uses this contract instead
 of inferring data paths from the checkout.
 
+Agent workflows use the installed CLI for normal household work and reserve
+`python -m gusto` in the checkout for explicit development/testing. At the
+first Gusto operation they resolve `home --json`; before mutations they verify
+the returned path/source/settings and reuse the same invocation throughout the
+dependent workflow. They never fall back silently from an unavailable installed
+command to the checkout, because both runtimes can succeed against different
+stores.
+
 `gusto set` can remove optional duration or serving metadata with
 `--clear-duration` and `--clear-servings`; these are mutually exclusive with
 setting the corresponding value, and a call with no requested change is an

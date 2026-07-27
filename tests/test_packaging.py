@@ -52,6 +52,19 @@ assert linux_autostart.is_file()
 assert windows_autostart.is_file()
 assert (skill_root / "SKILL.md").is_file()
 assert (skill_root / "references" / "cli.md").is_file()
+skill_text = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+skill_reference = (skill_root / "references" / "cli.md").read_text(encoding="utf-8")
+for marker in [
+    "## Select the instance first",
+    "At the first Gusto operation in every task",
+    "never silently fall back to `python -m gusto`",
+    "gusto show <slug> --json",
+    "gusto check --json",
+]:
+    assert marker in skill_text, f"The Gusto skill is missing its safety rule: {marker}"
+assert "docs/telegram-shopping-handoff.md" not in skill_text + skill_reference, (
+    "The standalone Gusto skill must not link to repository-only documentation."
+)
 assert "User=pi" not in service_template
 assert "/home/pi/gusto" not in service_template
 assert "@GUSTO_PROJECT@" not in service_template

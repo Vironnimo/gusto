@@ -69,6 +69,11 @@ The extracted release contains the self-contained, generic skill under
 skill convention. `install.py` installs only the Gusto application and
 deliberately does not mutate agent-host configuration.
 
+For live household tasks, the skill uses the installed `gusto` command and
+verifies `gusto home --json` before writing. `python -m gusto` from a source
+checkout deliberately targets the separate development store; agents must not
+silently substitute it when the installed command is unavailable.
+
 Application and data stay separate:
 
 - Windows application: `%LOCALAPPDATA%\Programs\Gusto`
