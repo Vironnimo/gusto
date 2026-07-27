@@ -3,16 +3,23 @@
 For normal household tasks, use the installed release: `gusto <command>` on
 Windows or `~/.local/opt/gusto/bin/gusto <command>` on Linux. If a Windows agent
 does not see the recently installed `gusto` on `PATH`, use the PowerShell prefix
-`& "$env:LOCALAPPDATA\Programs\Gusto\Scripts\gusto.exe"`; never silently
+`& "$env:LOCALAPPDATA\Programs\Gusto\bin\gusto.cmd"`; never silently
 substitute the checkout. Use `python -m gusto <command>` only for explicitly
-requested development or isolated testing. Every command accepts `--json` for
+requested development or isolated testing. Normal domain commands are HTTP
+clients of the selected running service. Every command accepts `--json` for
 machine-readable output.
 
 At the first Gusto operation in a task, run the exact chosen invocation with
-`home --json`. Before writing, verify its `path`, `source`, `platform_default`,
-and `settings_path`, then reuse that same invocation for the whole workflow. A
-checkout normally selects `gusto-dev`, while the installed release selects the
-household store. If the target is unexpected or ambiguous, do not mutate it.
+`home --json`. Before writing, verify `server_url`, `server_reachable`,
+`server_data_path`, `path`, `source`, `platform_default`, and `settings_path`,
+then reuse the same executable and server selection. A checkout server normally
+selects `gusto-dev`; the installed service selects the household store. If the
+server is unreachable or ambiguous, do not mutate it. Never fall back to local
+Core or direct data-file access.
+
+Select a non-default server with global `--server http://host:port`; otherwise
+resolution is `GUSTO_URL`, then `server_url` in instance settings, then
+`http://127.0.0.1:8000`.
 
 Expected command failures with `--json` return
 `{ "ok": false, "error": "<German message>" }` on stdout and exit `1`.
@@ -25,7 +32,7 @@ parser remain plain stderr and exit `2`.
 - [Commands](#commands)
 - [JSON shapes](#json-shapes)
 - [Tag facets in detail](#tag-facets-in-detail)
-- [Data files](#data-files)
+- [Server and storage contract](#server-and-storage-contract)
 - [Worked example](#worked-example--what-should-i-cook)
 
 ## Commands
@@ -33,10 +40,9 @@ parser remain plain stderr and exit `2`.
 ### Reading
 
 - `home [--json]`
-  Show the active store root and whether it came from `GUSTO_HOME`, the
-  instance's `gusto.settings.json`, the normal platform user-data directory, or
-  the compatibility fallback. JSON also includes `platform_default` and, when
-  present, `settings_path`.
+  Local diagnosis that shows the configured store, selected `server_url`,
+  reachability, and — when reachable — `server_data_path`, server version and
+  revision. It remains usable while the service is down.
 - `list [--tag T ...] [--max-time N] [--json]`
   List/filter recipes. `--tag` is repeatable **and** comma-separated
   (`--tag a --tag b` ≡ `--tag a,b`). `--max-time` caps `duration_min` and
@@ -56,19 +62,19 @@ parser remain plain stderr and exit `2`.
 - `suggest [--days N] [--limit N] [--json]`
   Recipes not cooked in the last positive N days (default 7), longest-ago
   first. `limit` must be nonnegative; `0` returns an empty array.
-- `check [--json]`
+- `check [--offline] [--json]`
   Full active/archive H1, file, image, cover, cross-reference, and
   preferred-product integrity plus organization warnings. Hard errors set
   `ok:false` and exit 1; uncategorized tags and unresolved historical log slugs
-  are warnings and keep exit 0.
+  are warnings and keep exit 0. Normal mode runs on the server. `--offline` is
+  an explicit local recovery check and must never be used as silent fallback.
 
 ### Writing
 
 - `new "<title>" [--tags a,b] [--duration N] [--servings N] [--edit] [--json]`
-  Create the `.md` (a template) **and** the index entry. `--edit` opens
-  `$EDITOR` (interactive — skip it when headless). For a headless creation,
-  first confirm this invocation's `home --json`, run `new`, and write only the
-  returned slug's generated file under `<confirmed path>/recipes/`.
+  Create the Markdown template **and** index entry through the server. `--edit`
+  opens `$EDITOR` on a temporary downloaded copy and uploads it after exit.
+  For a headless creation, run `new` and then `content set`.
   Search for an exact existing title first to avoid duplicates. Never create a
   recipe Markdown file or catalog entry by hand first.
   Tags without a named category add a structured `warnings` entry to JSON and
@@ -80,11 +86,12 @@ parser remain plain stderr and exit `2`.
   optional duration or serving values. At least one change is required. A
   `--tags` change uses the same uncategorized-tag warning contract as `new`.
 - `edit <slug> [--json]`
-  Open the `.md` in `$EDITOR`. Interactive; for a headless agent, first read
-  `gusto home --json`, then rewrite `<path>/recipes/<slug>.md` directly. Never
-  assume the checkout's `recipes/` directory is the active store. JSON waits
-  until the editor exits and returns `slug`, absolute `path`, `editor`, and
-  `exit_code`.
+  Download Markdown to a temporary file, open it in `$EDITOR`, then upload the
+  completed content through the server. JSON waits until the editor exits and
+  returns `slug`, temporary absolute `path`, `editor`, and `exit_code`.
+- `content set <slug> (--file PATH | --stdin) [--json]`
+  Replace the complete Markdown body through the server from a local UTF-8 file
+  or stdin. Use this for headless agents; never edit the live data directory.
 - `cooked <slug> [--date YYYY-MM-DD] [--json]`
   Add a log entry (default: today) and bump `last_cooked`. An explicit date
   must be a valid calendar date in that exact format and cannot be in the future.
@@ -171,23 +178,38 @@ parser remain plain stderr and exit `2`.
   returns `{ "removed": N }`. The complete visible list is empty afterward.
   Neither bulk removal has a CLI restore operation.
 
-Mutations sharing the catalog, favorites, or shopping store are serialized
-across Gusto processes. Independent adds, image imports, and item-specific
-checks may run in parallel without lost updates. Calls with dependencies or
-ordering semantics must stay sequential. Direct recipe/category file edits and
-interactive `edit` bypass these locks.
+Mutations sharing the catalog, favorites, or shopping store are serialized by
+the server. Independent adds, image uploads, and item-specific checks may run
+in parallel without lost updates. Calls with dependencies or ordering
+semantics must stay sequential. `edit` and `content set` also write through the
+server; direct live-store edits are not a supported client path.
 
 ### Server
 
 - `serve [--host H] [--port N] [--reload] [--json]` — start the web UI
-  (default `0.0.0.0:8000`, reachable across the LAN); port must be 1–65535.
+  and command API in the foreground (default `0.0.0.0:8000`, reachable across
+  the LAN); port must be 1–65535. This is for recovery/development; a managed
+  installation is normally started by its user service.
   Before any startup output, it validates all optional web dependencies.
   Missing packages use the normal structured JSON error contract; otherwise
   JSON emits one `{status:"starting", host, port, url, reload}` object before
   the server begins its long-running work.
+- The API is intentionally anonymous on the trusted local network. No CLI,
+  browser or PWA token exists. Never expose it directly to the public internet.
+- `GET /api/v1/health` reports server version, data path and change revision;
+  `POST /api/v1/command` is the domain transport; `GET /api/v1/events` provides
+  replayable server-sent change events. The PWA remains offline-capable and
+  merges shopping state after reconnect.
 
 ### Installed application lifecycle
 
+- `status|start|stop|restart [--dry-run] [--json]` — inspect or control the
+  current-user background service locally. `start` and `restart` return only
+  after the health endpoint becomes ready.
+- `update [--check] [--dry-run] [--json]` — compare against the public release
+  manifest; normally download, verify its SHA-256 consistency, install side-by-side,
+  switch the version pointer, restart and health-check. A failed health check
+  rolls back to the previous version. `--check` never changes the installation.
 - `uninstall [--keep-data | --delete-data [--yes]] [--dry-run] [--json]` —
   remove a managed installed Gusto runtime. A bare interactive call offers
   **app only**, **app + all data**, or **cancel** and shows the exact runtime and
@@ -199,6 +221,9 @@ interactive `edit` bypass these locks.
   `delete_data`, cleanup booleans, and (when scheduled) `log_path`. The command
   refuses source checkouts, system Python, and unsafe/unrecognized deletion
   roots; do not invoke it without an explicit user request.
+
+For public install commands, repair behavior, exact per-user paths and update
+semantics, read `installation.md`.
 
 ## JSON shapes
 
@@ -358,19 +383,18 @@ prints one such object or `null`; it does not create an alias automatically.
   - `--tag italienisch --tag pasta` → Italian **and** a pasta dish (Küche + Art).
   - `--tag italienisch --tag pasta --tag vegetarisch` → Italian, pasta, **and**
     vegetarian.
-- A new tag still stores fine but shows up in `check` as `uncategorized_tags`; add
-  it under the right key in `categories.json` to assign it to a named facet.
-  Until then it remains filterable in the shared `Sonstige` facet. `new` and
-  `set --tags` surface the condition immediately through `warnings`.
+- A new tag still stores fine but shows up in `check` as `uncategorized_tags`
+  and remains filterable in `Sonstige`. `new` and `set --tags` surface this
+  through `warnings`; report it rather than bypassing the service to edit the
+  category file.
 
-## Data files
+## Server and storage contract
 
-Resolve the root with `gusto home --json`. Each runtime owns an adjacent
-`gusto.settings.json`; the checkout selects the platform data sibling
-`gusto-dev`, while installed releases select their production store. A relative
-`data_dir` is resolved beside the platform default. `GUSTO_HOME` is the explicit
-override used by isolated runs and tests. Treat an unexpected environment
-override as an instance mismatch and stop before mutation.
+Resolve and verify the server with `gusto home --json`; when it is reachable,
+`server_data_path` comes from that server's health response. The following
+paths are server-owned implementation details, not a normal editing interface.
+The checkout service selects `gusto-dev`, installed releases select the
+production store, and `GUSTO_HOME` is an explicit server/test override.
 
 | File | Content |
 |---|---|
@@ -383,6 +407,11 @@ override as an instance mismatch and stop before mutation.
 | `data/log.json` | `[ { date, slug } ]`. |
 | `data/shopping_list.json` | `{ items: [ … ] }` (includes tombstones). |
 | `data/favorites.json` | `{ needs: [ … ] }` with exact aliases and ranked products. |
+| `data/changes.json` | Persisted bounded revision journal for browser/PWA change events. |
+
+Use CLI/API operations for every normal read or write. `gusto check --offline`
+is the only deliberate direct-Core client operation and exists for diagnosis
+while the service is stopped.
 
 ## Worked example — "what should I cook?"
 

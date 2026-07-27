@@ -15,3 +15,21 @@
 **Definition:** Eine besonders wichtige Umgebung, auf der Gusto zuverlässig laufen und geprüft werden soll. Sie bestimmt weder das allgemeine Installationsmodell noch schränkt sie die unterstützten Plattformen ein.
 
 **Not:** Der Raspberry Pi ist ein erstes Linux-Deployment-Ziel, keine Exklusivplattform.
+
+## Gusto-Dienst
+
+**Definition:** Der pro Benutzer laufende Gusto-Prozess, der Core, Browser-UI,
+anonyme LAN-API und Änderungsereignisse gemeinsam bereitstellt. Browser und
+normale CLI-Befehle benutzen diesen einen Dienst.
+
+**Not:** Keine bloße installierte Runtime und kein optionaler Zusatz zur App;
+`gusto serve` ist nur der explizite Vordergrund-/Recovery-Start.
+
+## Betriebsbereite Installation
+
+**Definition:** Eine versionierte App-Runtime mit stabilem `gusto`-Befehl,
+registriertem Benutzer-Autostart, sofort gestarteten Gusto-Dienst und
+erfolgreicher Health-Prüfung.
+
+**Not:** Weder eine bloß kopierte Runtime noch die Installation eines
+Agent-Skills; normale Updates erfolgen ausschließlich mit `gusto update`.

@@ -4,7 +4,11 @@ The shopping domain owns the shared shopping list, ingredient import, preferred 
 
 ## Overview
 
-Server-side rules and persistence live in the shopping section of `gusto/core.py`. `gusto/web.py` provides HTML fallbacks and APIs, while `gusto/static/shopping-client.js` owns the offline browser copies and optimistic list interaction. Recipe lookup and ingredient content come from the catalog domain.
+Server-side rules and persistence live in the shopping section of
+`gusto/core.py`. `gusto/api.py` exposes the same operations to the CLI;
+`gusto/web.py` provides HTML fallbacks and browser sync APIs, while
+`gusto/static/shopping-client.js` owns offline browser copies and optimistic
+interaction. Recipe lookup and ingredients come from the catalog domain.
 
 ## Terms
 
@@ -51,6 +55,11 @@ to agents synchronizing an external checklist; a repeated target state does
 not write or advance its sync version. Re-removing an existing tombstone has
 the same no-op behavior.
 
+CLI shopping commands use `/api/v1/command`; browser PWA full-state exchange
+keeps `GET /api/shopping` and `POST /api/shopping/sync`. Successful real
+mutations advance the shared `shopping` change revision. Idempotent
+check/uncheck/remove retries and no-op merges do not emit a revision.
+
 `shopping add --source <slug>` attributes one free-text item to an existing
 recipe. Core validates the recipe while holding both catalog and shopping locks;
 unsourced adds retain the shopping-only lock. A visible manually sourced item
@@ -75,6 +84,11 @@ the removed count, retain tombstones for sync, hide removed items from normal
 lists, and have no CLI restore operation.
 
 The web provides server-rendered `/shopping` forms when JavaScript is unavailable. With JavaScript, the client hides that fallback, mutates local state first, and synchronizes in the background. `GET /api/shopping` returns all server items including tombstones; `POST /api/shopping/sync` accepts `{ "items": [...] }` and returns the merged full state.
+
+While online, the page shell also receives `/api/v1/events`. A `shopping`
+change triggers the existing full-state `sync()` path rather than replacing
+local state or reloading the page; a `favorites` change refreshes the cached
+preference catalog. The revision is replayable after reconnect.
 
 Core also owns deterministic favorite matching, need/alias CRUD, ranked-product
 CRUD and movement, image ownership, and consistency checks. The CLI exposes
@@ -122,8 +136,12 @@ with a 1920 px maximum edge before invoking the existing core product mutation.
 - Taking or selecting a product photo is an online catalog mutation and is not
   queued by the shopping PWA. The camera control requests the outward-facing
   camera as a hint; the separate library control remains the fallback.
-- The service worker uses network-only handling for the sync API and active or
-  archived recipe media. Navigations are network-first with the cached shopping
-  page as fallback; other same-origin static GETs are cache-first.
+- The service worker uses network-only handling for every `/api/` request and
+  active/archive recipe media. Navigations are network-first with the cached
+  shopping page as fallback; other same-origin static GETs are cache-first.
 - Update the cache version when changing cached assets or offline shell behavior.
-- Verify core behavior with `tests/test_shopping.py`, `tests/test_favorites.py`, and `tests/test_merge.py`; verify offline, two-device, API, manifest, product-image cache, and service-worker behavior with `scripts/pwa_check.py`.
+- Verify Core behavior with `tests/test_shopping.py`, `tests/test_favorites.py`,
+  and `tests/test_merge.py`; verify API revision behavior with
+  `tests/test_api.py`; verify offline, two-device, live-event merge, manifest,
+  product-image cache, and service-worker behavior with
+  `scripts/pwa_check.py`.

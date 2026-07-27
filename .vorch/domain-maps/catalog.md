@@ -4,7 +4,11 @@ The catalog domain owns active and archived recipes, their metadata and images, 
 
 ## Overview
 
-Catalog behavior lives in `gusto/core.py`. The CLI and web layers only translate user input and present core results; shopping consumes recipe content only to extract ingredients. Persisted content is split deliberately between portable Markdown and JSON metadata.
+Catalog behavior lives in `gusto/core.py`. `gusto/api.py` exposes it to both
+normal CLI and browser clients; surfaces only translate input and present
+results. Shopping consumes recipe content only to extract ingredients.
+Persisted content is split deliberately between portable Markdown and JSON
+metadata.
 
 ## Terms
 
@@ -40,12 +44,14 @@ cooking-log and suggestion operations, image management, and the consistency
 check. Callers receive `Recipe`, `ArchivedRecipe`, and `RecipeImage` objects or
 JSON-ready dictionaries produced from them.
 
-The CLI exposes these capabilities through `gusto list|search|tags|show|new|
-edit|cooked|log|suggest|check|set|delete`, `gusto archive
+The API command registry exposes these capabilities to the CLI through `gusto
+list|search|tags|show|new|edit|content set|cooked|log|suggest|check|set|delete`,
+`gusto archive
 list|show|restore|purge`, and `gusto image ...`. `delete` is the compatibility
 verb for reversible archiving; only `archive purge --yes` means destruction.
-Web catalog/archive pages and form actions in `gusto/web.py` call the same core
-operations.
+`edit` and `content set` write bodies through `recipe.content.set`; normal CLI
+commands never modify catalog files directly. Web catalog/archive pages and
+form actions in `gusto/web.py` use the same Core.
 
 `new` and a tag-changing `set` preserve tags that have no named facet but warn
 immediately in both CLI presentation modes. JSON adds a `warnings` array with
@@ -73,7 +79,8 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
 
 ## Conventions
 
-- JSON writes use the shared atomic writer. New catalog behavior belongs in core before either surface.
+- JSON writes use the shared atomic writer. New catalog behavior belongs in
+  Core, then API/CLI, before web presentation.
 - Every catalog mutation holds the cross-process catalog lock across its full
   read-modify-write transaction. This includes the cooking log and owned recipe
   images because both also update catalog state.
@@ -82,8 +89,8 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
 - Images are copied into Gusto storage after extension and header/dimension validation. The first image becomes the cover unless another is explicitly selected.
 - Before core receives a browser photo, the web shell applies EXIF orientation,
   limits the longest edge to 1920 px, converts it to WebP, and omits metadata.
-  CLI imports are copied in their supported original format so core/CLI remain
-  dependency-free.
+  CLI imports travel as bounded API attachments and are copied in their
+  supported original format, so the CLI client remains dependency-free.
 - `images/_favorites/` is reserved for the shopping domain and must be ignored
   when diagnosing recipe image folders.
 - `check` diagnoses active/archive H1, index, Markdown, image-file, image-folder,
@@ -95,10 +102,12 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
 ## Constraints & Gotchas
 
 - Search reads both indexed metadata and the Markdown body, so ingredient text participates in full-text results.
-- Separate Gusto processes may safely create recipes, record cooking, or import
-  images concurrently without losing index/log/image metadata. Their final
-  order can follow lock acquisition order. Direct Markdown/category edits and
-  the interactive editor bypass the Core lock and remain caller-coordinated.
+- Separate clients may safely create recipes, record cooking, replace content,
+  or import images concurrently without losing index/log/image metadata. Their
+  final order can follow server lock acquisition order. Lock files must be
+  created with their lockable byte atomically; pre-lock concurrent writes race
+  on Windows. Direct live-store edits are outside the supported client
+  contract.
 - A duration limit excludes recipes whose duration is unknown, not only recipes over the limit.
 - Suggestions intentionally only exclude recently cooked recipes and order the rest by oldest `last_cooked`; meal intelligence belongs to the calling agent.
 - Removing the selected cover promotes the first remaining image.
@@ -112,4 +121,6 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
 - Native camera capture is a browser hint (`environment`), not a custom live
   camera. A separate library action remains available when the hint is ignored;
   both uploads require a reachable server and have a 25 MB input limit.
-- Verify catalog changes with `tests/test_recipes.py`, `tests/test_cli.py`, and, for web-visible behavior, `scripts/browser_check.py` against throwaway data.
+- Verify catalog changes with `tests/test_recipes.py`, `tests/test_api.py`,
+  `tests/test_cli.py`, and, for web-visible behavior, `scripts/browser_check.py`
+  against throwaway data.

@@ -17,62 +17,53 @@ important Linux deployment target, not a separate or exclusive edition.
 - **Recipe photos** can be captured or selected in the web UI and managed there
   as cover, result, ingredient, step, or gallery images. Browser uploads are
   resized to a 1920 px maximum edge, converted to WebP, and stripped of metadata.
-- **Two equal surfaces over the same core** (`gusto/core.py`): a **CLI** (also
-  for agents; guide in [CLAUDE.md](CLAUDE.md) and as a skill under
-  `skill/gusto/`) and a polished **web UI**. No feature exists in only one of them.
+- **One running service, several thin clients:** the browser UI and normal
+  `gusto` commands use the same anonymous LAN server and the same
+  `gusto/core.py`. Server-sent change events keep open browser pages current.
+  The shopping PWA remains usable offline and merges when it reconnects.
 
 The UI and the data fields are German; the code is English.
 
 ## Installation
 
-Gusto needs Python 3.10 or newer. A transferable release archive contains a
-regular Python wheel, the standalone installer, the optional autostart
-adapters, and the complete `skill/gusto/` agent skill. The target computer
-needs neither the private repository nor GitHub credentials.
+Gusto needs Python 3.10 or newer. Installation is entirely per-user: no
+administrator or root rights, no system-wide files and no token configuration.
+The installer downloads the latest public release, creates a versioned managed
+runtime, registers Gusto for the current user, enables login autostart, starts
+the service immediately and verifies its health.
 
-Build the archive once in a development checkout:
-
-```powershell
-py -3 scripts/build_release.py
-```
-
-Copy `dist/gusto-<version>-release.zip` to the Windows or Linux target and
-extract it. Run the following commands inside that extracted folder.
-
-### Windows
+### Windows (PowerShell)
 
 ```powershell
-py -3 install.py
-# Open a new PowerShell after installation:
-gusto serve
+irm https://github.com/Vironnimo/gusto/releases/latest/download/install.ps1 | iex
 ```
 
 ### Linux
 
 ```bash
-python3 install.py
-"$HOME/.local/opt/gusto/bin/gusto" serve
+curl -fsSL https://github.com/Vironnimo/gusto/releases/latest/download/install.sh | bash
 ```
 
-Then open `http://<computer-name>:8000` from another device in the LAN, or
-`http://localhost:8000` on the same computer. `python install.py --dry-run`
-shows the planned paths without changing anything; `--cli-only` omits the web
-dependencies. The same installer can run directly from a complete source
-checkout, but the release archive is the normal deployment artifact.
-On Windows the installer adds its command directory to the user `PATH`, so a
-new console can invoke `gusto` directly.
+Afterwards open `http://<computer-name>:8000` from another device in the LAN
+or `http://localhost:8000` locally. Normal updates are deliberately separate:
 
-### Agent skill
+```bash
+gusto update
+```
 
-The extracted release contains the self-contained, generic skill under
-`skill/gusto/`. Agent hosts import that complete folder according to their own
-skill convention. `install.py` installs only the Gusto application and
-deliberately does not mutate agent-host configuration.
+Running the installer again is rejected. Use its explicit `--repair` /
+`-Repair` mode only to repair an existing managed installation. `gusto status`,
+`gusto start`, `gusto stop`, and `gusto restart` control the current-user
+service. Gusto does not start before login.
 
-For live household tasks, the skill uses the installed `gusto` command and
-verifies `gusto home --json` before writing. `python -m gusto` from a source
-checkout deliberately targets the separate development store; agents must not
-silently substitute it when the installed command is unavailable.
+The HTTP API is intentionally anonymous on the trusted home LAN. There are no
+tokens to distribute to the CLI or browser. Do not expose port 8000 directly
+to the public internet.
+
+The application installer installs only Gusto. It never installs or configures
+an agent skill. The repository still contains the standalone operating guide
+under `skill/gusto/` for agent hosts that receive skills by their normal
+mechanism.
 
 Application and data stay separate:
 
@@ -81,19 +72,15 @@ Application and data stay separate:
 - Windows data: `%LOCALAPPDATA%\Gusto`
 - Linux data: `$XDG_DATA_HOME/gusto`, otherwise `~/.local/share/gusto`
 
-Every instance owns a `gusto.settings.json` beside its application runtime. The
-installer writes the production data path into the installed application
-directory. The development checkout carries its own settings file with
-`"data_dir": "gusto-dev"`; relative names resolve beside the normal platform
-data directory. Development therefore uses `%LOCALAPPDATA%\gusto-dev` on
-Windows or `~/.local/share/gusto-dev` on Linux without a different start command.
+The managed app root contains immutable version directories plus a small
+current-version pointer. The data directory remains separate and survives
+normal updates and app-only uninstall. `gusto home --json` reports the server,
+service reachability and the server-owned data directory. `GUSTO_URL` or the
+global `--server` option selects another Gusto server explicitly.
 
-`gusto home` (`--json` for agents) shows the active location and why it was
-chosen. `GUSTO_HOME` still overrides it for a portable store or server setup.
-When the installer runs directly from a source checkout, existing checkout data
-is copied into an empty user directory without deleting the original. Release
-archives contain application code and the agent skill, but never existing user
-data; user data is transferred separately.
+A development checkout carries `gusto.settings.json` with the isolated
+`gusto-dev` data path. `python -m gusto serve` runs that development service;
+normal installed commands still default to `http://127.0.0.1:8000`.
 
 ### Development checkout
 
@@ -101,35 +88,44 @@ data; user data is transferred separately.
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # Linux:   source .venv/bin/activate
-python -m pip install -e ".[web]"
+python -m pip install -e ".[web,test]"
 ```
 
 The checkout's `gusto.settings.json` keeps manual development isolated from
-production data. The pure CLI has no third-party dependencies.
+production data. The CLI HTTP client itself uses only the standard library.
 
-## Start the web UI
+## Service and web UI
+
+A normal installation already has a running service. Open
+`http://<machine>:8000` in the browser or inspect it locally:
 
 ```bash
-gusto serve                 # http://0.0.0.0:8000 – reachable across the LAN
-gusto serve --port 9000     # different port
+gusto status
+gusto home --json
 ```
 
-Then open `http://<machine>:8000` in the browser.
-Before reporting a successful start, `serve` validates every optional web
-dependency. If a CLI-only installation is used, rerun `python install.py`
-without `--cli-only`; in a development checkout use
-`python -m pip install -e ".[web]"`. With `--json`, a missing dependency is a
-structured command error and no `starting` object or traceback is emitted.
+`gusto serve` remains the foreground recovery/development command. It is not
+the normal installed-app startup path. All normal recipe, favorites, log and
+shopping commands fail clearly when the selected server is unavailable; they
+never fall back to editing local files. `gusto check --offline` is the explicit
+exception for diagnosing a stopped service against the locally configured
+store.
+
+The browser receives server-sent change notifications after CLI or other
+browser writes. Ordinary pages reload from the server; the shopping page
+performs its existing state merge. The service worker still caches the PWA
+shell and shopping state for offline use, and `/api/` stays network-only.
 
 ## CLI
 
 ```bash
 gusto list                          # all recipes
 gusto list --max-time 30            # only recipes with a known duration <= 30
-gusto home                          # active user-data directory
+gusto home                          # server, service and active data directory
 gusto search "linsen kokos"         # full-text incl. ingredients in the body
 gusto show spaghetti-carbonara
 gusto new "Title" --tags a,b --duration 25 --servings 2
+gusto content set <slug> --file recipe.md # replace body through the server
 gusto set <slug> --title "New title" # changes metadata and Markdown H1 together
 gusto set <slug> --servings 4       # change metadata
 gusto set <slug> --clear-servings   # remove optional metadata again
@@ -154,13 +150,18 @@ gusto shopping add "Parmesan" --source spaghetti-carbonara
 gusto shopping add-many "Milch" "Brot" "6 Eier"  # one atomic group
 gusto shopping remove-done         # remove every checked item
 gusto shopping clear               # empty the complete visible list
+gusto update                        # verified release update + rollback on failure
+gusto status                        # current-user service status
 gusto uninstall                     # interactive: app only or app + data
 ```
 
-Every command takes `--json` for machine-readable output. Expected command
+Every command takes `--json` for machine-readable output; normal remote
+commands also accept global `--server URL`, with `GUSTO_URL` as the environment
+equivalent. Expected command
 failures then return `{ "ok": false, "error": "..." }` on stdout with exit
-code 1. `check --json` returns the full diagnostics with `ok: false` and exit 1
-instead; `edit --json` reports the completed editor process. `serve --json`
+code 1. `check --json` returns the full server diagnostics with `ok: false` and
+exit 1 instead; `edit --json` downloads to a temporary editor file and uploads
+the final content. `serve --json`
 validates the web runtime first and emits a startup object only when that
 validation succeeds. Parser/usage errors remain on stderr with exit code 2.
 
@@ -194,51 +195,39 @@ data/recipes.json   metadata of all recipes
 data/favorites.json shared shopping needs, exact aliases, ranked products
 data/log.json       cooking log
 gusto/core.py      all the logic
-gusto/cli.py       the CLI
-gusto/uninstall.py safe installed-runtime removal lifecycle
-gusto/web.py       the FastAPI web app
+gusto/api.py       anonymous versioned command API + change events
+gusto/client.py    standard-library HTTP client
+gusto/cli.py       thin remote CLI plus local lifecycle commands
+gusto/service.py   current-user service registration and control
+gusto/update.py    verified side-by-side update with rollback
+gusto/uninstall.py safe managed-runtime removal lifecycle
+gusto/web.py       the FastAPI web app and API host
 gusto/templates/   Jinja2 templates
 gusto/static/      CSS + JS
-install.py          cross-platform Windows/Linux installer
+install.py          managed local installer implementation
+install.ps1         public Windows bootstrap
+install.sh          public Linux bootstrap
 gusto.settings.json development instance data selection
-deploy/             optional Linux systemd + Windows logon autostart
-scripts/build_release.py  build the transferable release archive
+deploy/             platform user-autostart compatibility helpers
+scripts/build_release.py  build public release assets + manifest/checksum
 scripts/            end-to-end tests of the web UI (Playwright)
-skill/gusto/        self-contained CLI skill, also shipped in the release ZIP
+skill/gusto/        self-contained agent operating guide
 ```
 
-## Optional autostart
+## User autostart
 
-Installation and autostart are deliberately separate. Gusto works normally
-without either helper.
+Autostart is part of a successful installation:
 
-Linux systems with systemd, including a Raspberry Pi:
+- Windows registers a limited-privilege Scheduled Task for the current user's
+  logon and an entry under the current user's Installed Apps.
+- Linux writes `~/.config/systemd/user/gusto.service` and enables it with
+  `systemctl --user enable --now`.
 
-```bash
-./deploy/install-systemd.sh
-./deploy/install-systemd.sh --data-dir /srv/gusto --port 9000
-```
-
-Windows can start Gusto when the current user signs in:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\deploy\install-windows-task.ps1
-```
-
-The Windows task calls the installed `gusto-autostart.exe` GUI launcher
-directly, so sign-in does not open a console window. The normal `gusto serve`
-command remains a Console application with its usual output. Autostart stdout,
-stderr, and startup failures are written to
-`%LOCALAPPDATA%\Gusto\gusto-autostart.log`; Task Scheduler also retains the
-process result. Rerunning the adapter stops the active task before updating its
-runtime, replaces an existing PowerShell-based task action, removes its obsolete
-`start-gusto.ps1`, and restarts the task, so an existing installation does not
-need to be recreated and no in-use Windows launcher blocks the update.
-
-Both helpers call the same bundled installer first, use the normal per-user
-application directory, and then add only the platform-specific background-start
-mechanism. `--install-dir` on Linux and `-InstallDir` on Windows override the
-application location.
+Both start the service immediately and restart it after failures. Neither
+requires administrator rights, neither runs before user login, and uninstall
+removes the integration. The scripts under `deploy/` remain compatibility
+entry points for existing source-based setups; new systems use the public
+one-shot installer.
 
 ## Uninstall
 
@@ -273,16 +262,28 @@ to the temporary log path returned by the command.
 python scripts/browser_check.py    # starts a server against throwaway data and
                                    # clicks through the web UI in a real browser
 python scripts/pwa_check.py        # offline / sync / service worker
+python tests/test_api.py           # anonymous command API + SSE journal
 python tests/test_shopping.py      # core shopping-list logic
 python tests/test_favorites.py     # aliases, rankings, product cards/images
 python tests/test_merge.py         # full-state sync merge rule
 python tests/test_recipes.py       # recipe/search/log/suggestion core logic
-python tests/test_cli.py           # agent-facing JSON CLI
+python tests/test_cli.py           # remote CLI and local recovery commands
+python tests/test_service.py       # per-user service lifecycle
+python tests/test_update.py        # verified update and rollback
 python tests/test_autostart.py     # windowless Windows launcher and exit codes
 python tests/test_uninstall.py     # safe app/data removal lifecycle
 python tests/test_packaging.py     # fresh-install dependency declaration
 python tests/test_paths.py         # Windows/Linux data-directory contract
 ```
+
+## Publishing a release
+
+Keep `pyproject.toml` and `gusto/__init__.py` on the same version, then push the
+matching `v<version>` tag. The release workflow runs Linux, Windows, browser,
+and PWA gates before publishing the stable manifest, archive, checksum, and
+both one-shot scripts. The public installation URLs become usable after the
+first successful tagged release; publishing the tag is intentionally not part
+of a local install/build.
 
 ## Roadmap
 
@@ -292,4 +293,6 @@ python tests/test_paths.py         # Windows/Linux data-directory contract
 - [x] Shared preferred products (exact aliases, ranking, photos, offline view)
 - [x] Multiple stored images per recipe (cover + gallery, CLI + web camera/library)
 - [x] Reversible recipe archive (complete snapshots, restore, guarded purge)
+- [x] Managed user service, shared CLI/browser API, live events, and offline PWA
+- [x] Public no-admin installers and verified `gusto update` with rollback
 - [ ] Weekly plan

@@ -14,15 +14,17 @@ also be available through the JSON-capable CLI so an agent can operate the produ
 
 ## Architecture
 
-Python 3.10+ with a stdlib-only core and CLI. FastAPI, Jinja2, Markdown,
-Uvicorn, and python-multipart form the optional web surface. Core owns recipe,
-search, log, suggestion, shopping-list, and sync behavior; CLI and web are thin
-shells. The shopping PWA uses localStorage plus full-state last-writer-wins sync
-and tombstones. Shared preferred products are a separate server-owned shopping
-catalog mirrored read-only into browser localStorage for offline display.
-Cross-process transaction locks serialize mutations per catalog, favorites, or
-shopping source of truth while allowing independent domains and reads to run in
-parallel.
+Python 3.10+ with a stdlib-only Core and CLI HTTP client. FastAPI, Jinja2,
+Markdown, Uvicorn, python-multipart, and Pillow form the always-installed
+service/UI runtime. Core owns recipe, search, log, suggestion, shopping-list,
+and sync behavior. The versioned anonymous LAN API exposes that Core; browser
+and normal CLI commands are thin clients of the same running service with no
+tokens and no local CLI fallback. A persisted revision journal drives
+server-sent change events. The shopping PWA keeps its localStorage,
+full-state last-writer-wins sync, tombstones, offline app shell, and offline
+preferred-product display. Cross-process transaction locks serialize mutations
+per catalog, favorites, or shopping source of truth while allowing independent
+domains and reads to run in parallel.
 
 ## Conventions
 
@@ -30,30 +32,29 @@ Recipes contain no frontmatter. Metadata is linked to Markdown by the filename
 slug; the metadata title and first Markdown H1 are one enforced contract.
 Reversible recipe snapshots live under `archive/<slug>/`. Product copy and data
 fields are German; code identifiers are English.
-Writes to JSON are atomic. Features are implemented in core and CLI before web,
-and every CLI command accepts `--json`. Complete Core mutations, not only their
-final JSON replacement, hold the matching resource lock. MCP is explicitly out
-of scope.
+Writes to JSON are atomic. Features are implemented in Core, API, and CLI
+before web, and every CLI command accepts `--json`. Complete Core mutations,
+not only their final JSON replacement, hold the matching resource lock. Normal
+domain commands require a reachable server; only explicit lifecycle/recovery
+commands (`serve`, `home`, service control, update/uninstall, and
+`check --offline`) operate locally. MCP is explicitly out of scope.
 
 ## Development
 
-`scripts/build_release.py` creates a transferable ZIP containing a regular
-wheel, standalone `install.py`, both optional autostart adapters, and the
-self-contained `skill/gusto/` agent skill; targets need no repository access.
-The app installer does not mutate agent-host configuration. Normal application
-installs use
-`%LOCALAPPDATA%\Programs\Gusto` on Windows or `~/.local/opt/gusto` on Linux; an
-editable `-e ".[web]"` checkout install remains available for development.
-Stores remain separate under `%LOCALAPPDATA%\Gusto` or the XDG user-data
-directory. Every source or installed runtime owns an adjacent
-`gusto.settings.json`; the checkout selects the platform-data sibling
-`gusto-dev`, while the installer records the production data path beside the
-installed runtime. `GUSTO_HOME` overrides instance settings for tests and
-explicit portable stores. Browser tests always use throwaway data through
-`GUSTO_HOME`. Linux systemd and Windows logon autostart use the installed
-runtime and are optional deployment helpers under `deploy/`. Windows installs
-add the runtime command directory to the user `PATH`; new consoles can invoke
-`gusto` directly.
+`scripts/build_release.py` creates stable public assets:
+`gusto-release.zip`, its SHA-256 file, and `gusto-release.json`.
+`.github/workflows/release.yml` verifies version tags and publishes those
+assets after the full script/browser/PWA quality gates. Public
+`install.ps1`/`install.sh` bootstraps install the application
+only; agent skills are delivered separately. Managed application roots use
+versioned side-by-side runtimes and a current pointer under
+`%LOCALAPPDATA%\Programs\Gusto` or `~/.local/opt/gusto`; data stays separate
+under `%LOCALAPPDATA%\Gusto` or the XDG user-data directory. Installation is
+current-user only, registers a limited Windows logon task or `systemd --user`,
+starts immediately, and must pass health without admin/root. `gusto update` is
+the sole normal update path and rolls back a failed activation; installer
+reruns require explicit repair mode. Browser/PWA tests always use throwaway
+data through `GUSTO_HOME`.
 
 ## Testing
 
@@ -63,12 +64,15 @@ checks start isolated servers and drive real Chromium through Playwright.
 Quality gates:
 
 - `python tests/test_packaging.py`
+- `python tests/test_api.py`
 - `python tests/test_shopping.py`
 - `python tests/test_favorites.py`
 - `python tests/test_merge.py`
 - `python tests/test_concurrency.py`
 - `python tests/test_recipes.py`
 - `python tests/test_cli.py`
+- `python tests/test_service.py`
+- `python tests/test_update.py`
 - `python tests/test_autostart.py`
 - `python tests/test_uninstall.py`
 - `python tests/test_paths.py`
@@ -160,6 +164,17 @@ Quality gates:
   files, images, covers, interrupted moves, collisions, shopping sources,
   favorite data, and historical log references. Time/day ranges must be
   positive, ports stay within 1–65535, and `edit`/`serve` now honor `--json`.
+- 2026-07-27: Gusto 0.2.0 centralizes normal browser and CLI behavior on one
+  anonymous LAN service/API. CLI business commands have no local fallback;
+  explicit recovery/lifecycle commands remain local. Persisted change
+  revisions and SSE keep online browser pages current while shopping PWA
+  offline operation and merge behavior remain intact.
+- 2026-07-27: Public Windows/Linux one-shot bootstraps install versioned
+  per-user runtimes, register login autostart, start immediately, and require a
+  healthy service without admin rights. `gusto update` verifies public release
+  assets, switches side-by-side, and rolls back unhealthy activation.
+  Installer reruns are repair-only; app installation never installs the agent
+  skill.
 
 ## Domain Maps
 
