@@ -211,7 +211,7 @@ try:
         seed_shopping([mk("Milch", past_iso())])
         live_context = browser.new_context()
         live_page = live_context.new_page()
-        live_page.goto(BASE + "/shopping", wait_until="networkidle")
+        live_page.goto(BASE + "/shopping", wait_until="load")
         check(wait_count(live_page, "#shop-client .shop-item", 1),
               "live: initial server item loaded")
         # app.js intentionally waits until the initial navigation has settled
@@ -229,7 +229,7 @@ try:
         seed_shopping([mk("Milch", past_iso()), mk("Brot", past_iso())])
         ctx = browser.new_context()
         page = ctx.new_page()
-        page.goto(BASE + "/shopping", wait_until="networkidle")
+        page.goto(BASE + "/shopping", wait_until="load")
         check(wait_count(page, "#shop-client .shop-item", 2), "online: 2 items loaded from server")
 
         ctx.set_offline(True)
@@ -268,8 +268,8 @@ try:
         reset_shopping()
         ca = browser.new_context(); a = ca.new_page()
         cb = browser.new_context(); b = cb.new_page()
-        a.goto(BASE + "/shopping", wait_until="networkidle")
-        b.goto(BASE + "/shopping", wait_until="networkidle")
+        a.goto(BASE + "/shopping", wait_until="load")
+        b.goto(BASE + "/shopping", wait_until="load")
 
         a.locator("#shop-client .shop-add-panel summary").click()
         a.fill("#shop-client input[name=text]", "Apfel")
@@ -289,8 +289,8 @@ try:
         check(wait_server(lambda its: any(i["text"] == "Banane" for i in its)),
               "device B: 'Banane' on server")
 
-        a.reload(wait_until="networkidle")
-        b.reload(wait_until="networkidle")
+        a.reload(wait_until="load")
+        b.reload(wait_until="load")
         check(wait_count(a, "#shop-client .shop-item", 2), "device A sees both items")
         check(wait_count(b, "#shop-client .shop-item", 2), "device B sees both items")
         check("Banane" in a.content(), "device A sees 'Banane' (from B)")
@@ -299,7 +299,7 @@ try:
 
         # --- 5) manifest + service worker ------------------------------------
         cp = browser.new_context(); pg = cp.new_page()
-        pg.goto(BASE + "/shopping", wait_until="networkidle")
+        pg.goto(BASE + "/shopping", wait_until="load")
         check(pg.locator("link[rel=manifest]").count() == 1, "manifest is linked")
         with urllib.request.urlopen(BASE + "/static/manifest.webmanifest") as r:
             man = json.loads(r.read())
@@ -318,7 +318,7 @@ try:
         # available inside the shopping sheet after a fully offline reload.
         seed_shopping([mk("200 g Spaghetti", past_iso())])
         pg.evaluate("localStorage.removeItem('gusto.shopping')")
-        pg.reload(wait_until="networkidle")
+        pg.reload(wait_until="load")
         check(wait_count(pg, "#shop-client .shop-item", 1),
               "preferred products: matching shopping item loaded")
         pg.wait_for_function(

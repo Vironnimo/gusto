@@ -13,6 +13,8 @@ ROOT = Path(__file__).resolve().parent.parent
 QUALITY = ROOT / ".github/workflows/quality.yml"
 RELEASE = ROOT / ".github/workflows/release.yml"
 DEPENDABOT = ROOT / ".github/dependabot.yml"
+BROWSER_CHECK = ROOT / "scripts/browser_check.py"
+PWA_CHECK = ROOT / "scripts/pwa_check.py"
 checks = 0
 
 
@@ -116,5 +118,11 @@ for helper in (
         text=True,
     )
     check(result.returncode == 0, result.stdout + result.stderr)
+
+for browser_check in (BROWSER_CHECK, PWA_CHECK):
+    check(
+        "networkidle" not in browser_check.read_text(encoding="utf-8"),
+        f"{browser_check.name} must not wait for network idle while SSE remains open",
+    )
 
 print(f"OK - {checks} CI contract checks passed")

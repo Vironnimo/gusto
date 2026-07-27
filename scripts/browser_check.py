@@ -86,7 +86,7 @@ try:
         page.on("dialog", lambda d: d.accept())  # archive/purge confirmations
 
         # Home page
-        page.goto(BASE, wait_until="networkidle")
+        page.goto(BASE, wait_until="load")
         check("Gusto" in page.content(), "homepage shows the brand")
         check(page.locator(".card").count() == 3, "3 recipe cards visible")
         check(page.locator(".card-image").count() == 3,
@@ -94,12 +94,12 @@ try:
         page.screenshot(path=str(SHOTS / "01_home.png"), full_page=True)
 
         # Search (also searches ingredients in the text) -- server route (no-JS)
-        page.goto(BASE + "/?q=kokos", wait_until="networkidle")
+        page.goto(BASE + "/?q=kokos", wait_until="load")
         check(page.locator(".card").count() == 1, "search 'kokos' -> 1 hit (Dal)")
         page.screenshot(path=str(SHOTS / "02_search.png"), full_page=True)
 
         # Live search: typing updates without submit (and searches ingredients)
-        page.goto(BASE, wait_until="networkidle")
+        page.goto(BASE, wait_until="load")
         page.fill("input[name=q]", "kokos")
         page.wait_for_function("() => document.querySelectorAll('#results .card').length === 1")
         check(page.locator("#results .card").count() == 1, "live search 'kokos' -> 1 hit (no submit)")
@@ -109,45 +109,45 @@ try:
         check(page.locator("#results .card").count() == 3, "live search cleared -> 3 hits again")
 
         # --- Tag filter: facets / multi-select ---
-        page.goto(BASE, wait_until="networkidle")
+        page.goto(BASE, wait_until="load")
         check(page.locator(".taggroup").count() >= 3, "tag bar grouped by category")
         check(page.locator(".taggroup-label", has_text="Küche").count() == 1, "category 'Küche' visible")
 
         # Single tag (as before)
-        page.goto(BASE + "/?tag=vegan", wait_until="networkidle")
+        page.goto(BASE + "/?tag=vegan", wait_until="load")
         check(page.locator(".card").count() == 1, "tag filter 'vegan' -> 1 hit")
 
         # OR within a category (cuisine: italienisch OR indisch)
-        page.goto(BASE + "/?tag=italienisch&tag=indisch", wait_until="networkidle")
+        page.goto(BASE + "/?tag=italienisch&tag=indisch", wait_until="load")
         check(page.locator(".card").count() == 2, "italienisch+indisch (OR) -> 2 hits")
 
         # AND across categories (cuisine=italienisch AND dish_type=pasta)
-        page.goto(BASE + "/?tag=italienisch&tag=pasta", wait_until="networkidle")
+        page.goto(BASE + "/?tag=italienisch&tag=pasta", wait_until="load")
         check(page.locator(".card").count() == 1, "italienisch+pasta (AND) -> 1 hit (Carbonara)")
 
         # AND across categories with no intersection (vegetarisch AND pasta)
-        page.goto(BASE + "/?tag=vegetarisch&tag=pasta", wait_until="networkidle")
+        page.goto(BASE + "/?tag=vegetarisch&tag=pasta", wait_until="load")
         check(page.locator(".card").count() == 0, "vegetarisch+pasta (AND) -> 0 hits")
 
         # Combine by clicking (toggle links, selection is kept)
-        page.goto(BASE, wait_until="networkidle")
+        page.goto(BASE, wait_until="load")
         page.locator(".tagchip", has_text="indisch").first.click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check(page.locator(".tagchip.is-on", has_text="indisch").count() == 1, "click: 'indisch' active")
         check(page.locator(".card").count() == 1, "click 'indisch' -> 1 hit")
         page.locator(".tagchip", has_text="italienisch").first.click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check(page.locator(".tagchip.is-on").count() == 2, "click: two tags active at once")
         check(page.locator(".card").count() == 2, "indisch+italienisch -> 2 hits")
         page.screenshot(path=str(SHOTS / "02b_tagfilter.png"), full_page=True)
         page.locator(".tagchip.is-on", has_text="indisch").first.click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check(page.locator(".card").count() == 1, "'indisch' deselected again -> 1 hit")
 
         # Recipe page
-        page.goto(BASE, wait_until="networkidle")
+        page.goto(BASE, wait_until="load")
         page.locator(".card-title", has_text="Carbonara").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check("Zutaten" in page.content() and "Zubereitung" in page.content(),
               "recipe shows ingredients + steps")
         check(page.locator(".recipe-body ol li").count() >= 4, "steps rendered as a list")
@@ -169,18 +169,18 @@ try:
 
         # "Cooked today" -> log
         page.locator("button.btn", has_text="Heute gekocht").click()
-        page.wait_for_load_state("networkidle")
-        page.goto(BASE + "/log", wait_until="networkidle")
+        page.wait_for_load_state("load")
+        page.goto(BASE + "/log", wait_until="load")
         check(page.locator(".timeline li").count() >= 3, "log has a new entry")
         page.screenshot(path=str(SHOTS / "04_log.png"), full_page=True)
 
         # Suggestions
-        page.goto(BASE + "/suggestions", wait_until="networkidle")
+        page.goto(BASE + "/suggestions", wait_until="load")
         check("Was koche ich" in page.content(), "suggestions page loads")
         page.screenshot(path=str(SHOTS / "05_suggest.png"), full_page=True)
 
         # Create a new recipe
-        page.goto(BASE + "/new", wait_until="networkidle")
+        page.goto(BASE + "/new", wait_until="load")
         page.fill("input[name=title]", "Test Pfannkuchen")
         page.fill("input[name=tags]", "test, suess")
         page.fill("input[name=duration]", "20")
@@ -189,14 +189,14 @@ try:
                   "## Zutaten\n\n- 2 Eier\n- 250 ml Milch\n- 150 g Mehl\n\n"
                   "## Zubereitung\n\n1. Alles verruehren.\n2. In der Pfanne backen.")
         page.locator("button.btn", has_text="Speichern").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check("Test Pfannkuchen" in page.content(), "new recipe created")
         check(page.url.endswith("/recipe/test-pfannkuchen"), "slug generated correctly")
         page.screenshot(path=str(SHOTS / "06_new.png"), full_page=True)
 
         # Take or select recipe photos directly in the web UI.
         page.locator(".recipe-photo-action").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check("/recipe/test-pfannkuchen/images" in page.url,
               "recipe photo action opens image management")
         check(page.locator("input[name=image_camera]").first.get_attribute("capture") == "environment",
@@ -209,7 +209,7 @@ try:
         page.select_option("form[action$='/images/add'] select[name=role]", "result")
         page.fill("form[action$='/images/add'] input[name=caption]", "Direkt fotografiert")
         page.locator("form[action$='/images/add'] button", has_text="Bild hinzufügen").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check(page.locator(".image-admin-card").count() == 1,
               "camera photo is stored on the recipe")
         recipe_data = json.loads((TESTDATA / "data" / "recipes.json").read_text(encoding="utf-8"))
@@ -224,24 +224,24 @@ try:
         page.select_option("form[action$='/images/add'] select[name=role]", "step")
         page.fill("form[action$='/images/add'] input[name=caption]", "Beim Wenden")
         page.locator("form[action$='/images/add'] button", has_text="Bild hinzufügen").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check(page.locator(".image-admin-card").count() == 2,
               "existing image can be selected separately from the camera")
         second_image = page.locator(".image-admin-card").nth(1)
         second_image.locator("input[name=cover]").check()
         second_image.locator("button", has_text="Angaben speichern").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check(page.locator(".image-admin-card").nth(1).locator(".cover-badge").count() == 1,
               "any recipe image can become the top image in the web UI")
         page.screenshot(path=str(SHOTS / "06b_recipe_images.png"), full_page=True)
 
         # Edit (slug stays stable)
-        page.goto(BASE + "/recipe/test-pfannkuchen/edit", wait_until="networkidle")
+        page.goto(BASE + "/recipe/test-pfannkuchen/edit", wait_until="load")
         page.fill("input[name=title]", "Test Pfannkuchen Deluxe")
         page.fill("input[name=duration]", "")
         page.fill("input[name=servings]", "")
         page.locator("button.btn", has_text="Speichern").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check("Deluxe" in page.content(), "recipe edited")
         recipe_data = json.loads((TESTDATA / "data" / "recipes.json").read_text(encoding="utf-8"))
         edited = next(item for item in recipe_data if item["slug"] == "test-pfannkuchen")
@@ -251,7 +251,7 @@ try:
         # Archive preserves the complete recipe and restore returns it intact.
         page.locator(".recipe-more summary").click()
         page.locator("button.btn-text", has_text="Archivieren").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check(page.url.endswith("/archive/test-pfannkuchen")
               and page.locator(".archive-badge", has_text="archiviert").count() >= 1,
               "archiving opens the read-only archived recipe")
@@ -260,7 +260,7 @@ try:
               "archiving retains the recipe cover and gallery")
         page.screenshot(path=str(SHOTS / "06c_recipe_archive.png"), full_page=True)
         page.locator("button.btn", has_text="Wiederherstellen").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check(page.url.endswith("/recipe/test-pfannkuchen")
               and page.locator(".recipe-gallery-item").count() == 1,
               "restore returns the complete recipe to the active cookbook")
@@ -268,10 +268,10 @@ try:
         # Archive once more and exercise the deliberately separate purge.
         page.locator(".recipe-more summary").click()
         page.locator("button.btn-text", has_text="Archivieren").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         page.locator(".archive-purge summary").click()
         page.locator(".archive-purge button", has_text="Unwiderruflich").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check(page.url.endswith("/archive")
               and "Test Pfannkuchen Deluxe" not in page.content(),
               "explicit purge permanently removes the archived test recipe")
@@ -281,13 +281,13 @@ try:
         check(resp.status == 404, "unknown recipe -> 404 page")
 
         # --- Shopping list (JS client takes over: renders into #shop-client) ---
-        page.goto(BASE, wait_until="networkidle")
+        page.goto(BASE, wait_until="load")
         check(page.locator(".nav a", has_text="Einkauf").count() >= 1, "nav link to the shopping list")
 
         # Put a recipe's ingredients onto the list (server form on the recipe page)
-        page.goto(BASE + "/recipe/spaghetti-carbonara", wait_until="networkidle")
+        page.goto(BASE + "/recipe/spaghetti-carbonara", wait_until="load")
         page.locator("form[action$='/shopping'] button").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check(page.url.endswith("/shopping"), "button leads to /shopping")
         page.wait_for_function("() => document.querySelectorAll('#shop-client .shop-item').length === 6")
         check(page.locator("#shop-client .shop-item").count() == 6, "6 Carbonara ingredients (client)")
@@ -296,47 +296,47 @@ try:
         page.screenshot(path=str(SHOTS / "09_shopping.png"), full_page=True)
 
         # A repeated recipe import must explain the no-op and keep the list stable.
-        page.goto(BASE + "/recipe/spaghetti-carbonara", wait_until="networkidle")
+        page.goto(BASE + "/recipe/spaghetti-carbonara", wait_until="load")
         page.locator("form[action$='/shopping'] button").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check(page.url.startswith(BASE + "/recipe/spaghetti-carbonara?error="),
               "duplicate recipe import returns to the recipe with context")
         check(page.locator(".error", has_text="bereits auf der Einkaufsliste").count() == 1,
               "duplicate recipe import is visibly explained")
         page.screenshot(path=str(SHOTS / "09a_shopping_duplicate.png"), full_page=True)
-        page.goto(BASE + "/shopping", wait_until="networkidle")
+        page.goto(BASE + "/shopping", wait_until="load")
         page.wait_for_function("() => document.querySelectorAll('#shop-client .shop-item').length === 6")
         check(page.locator("#shop-client .shop-item").count() == 6,
               "duplicate recipe import does not add shopping items")
 
         # Archiving keeps shopping and log references useful.
-        page.goto(BASE + "/recipe/spaghetti-carbonara", wait_until="networkidle")
+        page.goto(BASE + "/recipe/spaghetti-carbonara", wait_until="load")
         page.locator(".recipe-more summary").click()
         page.locator("button.btn-text", has_text="Archivieren").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check(page.url.endswith("/archive/spaghetti-carbonara"),
               "a recipe with external references can still be archived")
-        page.goto(BASE + "/shopping", wait_until="networkidle")
+        page.goto(BASE + "/shopping", wait_until="load")
         page.wait_for_function("() => document.querySelectorAll('#shop-client .shop-item').length === 6")
         archived_sources = page.locator("#shop-client .shop-source[href='/archive/spaghetti-carbonara']")
         check(archived_sources.count() == 6
               and archived_sources.first.text_content().endswith("(archiviert)"),
               "shopping sources resolve to the archived recipe")
-        page.goto(BASE + "/log", wait_until="networkidle")
+        page.goto(BASE + "/log", wait_until="load")
         check(page.locator(
             ".timeline a[href='/archive/spaghetti-carbonara'] .archive-badge"
         ).count() >= 1, "log entries resolve to the archived recipe")
-        page.goto(BASE + "/shopping", wait_until="networkidle")
+        page.goto(BASE + "/shopping", wait_until="load")
 
         # Create a reusable shopping need and two ranked preferred products.
         page.locator(".shop-favorites-link").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check(page.url.endswith("/favorites"), "preferred-product library opens from shopping")
         create_need = page.locator(".favorite-create-panel")
         page.fill(".favorite-create-panel input[name=name]", "Spaghetti")
         page.fill(".favorite-create-panel input[name=alias]", "200 g Spaghetti")
         create_need.locator("button", has_text="Anlegen").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check(page.locator(".favorite-alias", has_text="200 g Spaghetti").count() == 1,
               "exact shopping text is stored as an alias")
 
@@ -353,7 +353,7 @@ try:
         check(page.locator(".favorite-product-create .photo-preview:not([hidden])").count() == 1,
               "preferred-product photo selection shows a preview")
         add_product.locator("button", has_text="Produkt hinzufügen").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         favorite_data = json.loads((TESTDATA / "data" / "favorites.json").read_text(encoding="utf-8"))
         first_product_image = favorite_data["needs"][0]["products"][0]["image_filename"]
         check(first_product_image.endswith(".webp"),
@@ -364,24 +364,24 @@ try:
         page.fill(".favorite-product-create input[name=store]", "EDEKA")
         page.set_input_files(".favorite-product-create input[name=image_file]", PRODUCT_PHOTO)
         page.locator(".favorite-product-create button", has_text="Produkt hinzufügen").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check(page.locator(".favorite-admin-product").count() == 2,
               "two preferred product cards are managed centrally")
         page.locator(".favorite-admin-product").nth(1).locator("summary").click()
         page.locator(".favorite-admin-product").nth(1).locator("button", has_text="Weiter nach oben").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check("Barilla" in page.locator(".favorite-admin-product").first.text_content(),
               "manual move changes the household ranking")
         first_product = page.locator(".favorite-admin-product").first
         first_product.locator("summary").click()
         first_product.locator("input[name=image_camera]").set_input_files(CAMERA_PHOTO)
         first_product.locator("button", has_text="Änderungen speichern").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         check(page.locator(".favorite-admin-product").first.locator("summary img").count() == 1,
               "preferred-product photo can be replaced from the camera action")
         page.screenshot(path=str(SHOTS / "09b_favorites_admin.png"), full_page=True)
 
-        page.goto(BASE + "/shopping", wait_until="networkidle")
+        page.goto(BASE + "/shopping", wait_until="load")
         spaghetti_item = page.locator("#shop-client .shop-item", has_text="200 g Spaghetti")
         page.wait_for_function(
             "() => [...document.querySelectorAll('#shop-client .shop-favorite-hint')].some(el => el.textContent.includes('2 Favoriten'))"
@@ -411,7 +411,7 @@ try:
         check(page.locator("#favorite-sheet .favorite-setup-card").count() == 2,
               "unknown shopping text offers assignment or a new need")
         page.locator("#favorite-sheet form[action='/favorites/assign'] button").click()
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("load")
         page.wait_for_function(
             "() => [...document.querySelectorAll('#shop-client .shop-item')].some(item => item.querySelector('.shop-text').textContent === 'Spaghettini' && item.querySelector('.shop-favorite-hint').textContent.includes('2 Favoriten'))"
         )
@@ -466,7 +466,7 @@ try:
 
         # Mobile views
         m = browser.new_page(viewport={"width": 390, "height": 844}, device_scale_factor=2)
-        m.goto(BASE, wait_until="networkidle")
+        m.goto(BASE, wait_until="load")
         first_card = m.locator(".card").first.bounding_box()
         check(m.locator(".nav").evaluate("el => getComputedStyle(el).position") == "fixed",
               "mobile: primary navigation stays at the bottom")
@@ -478,14 +478,14 @@ try:
         check(first_card is not None and first_card["y"] < 520,
               "mobile: the first recipe is visible without a long filter wall")
         m.screenshot(path=str(SHOTS / "07_mobile_home.png"))
-        m.goto(BASE + "/recipe/rotes-linsen-dal", wait_until="networkidle")
+        m.goto(BASE + "/recipe/rotes-linsen-dal", wait_until="load")
         check(m.locator(".recipe-jump").is_visible(),
               "mobile: recipe content has a direct jump action")
         check(m.locator(".recipe-more").get_attribute("open") is None,
               "mobile: administration stays in the closed More menu")
         m.screenshot(path=str(SHOTS / "08_mobile_recipe.png"))
         m.locator(".recipe-photo-action").click()
-        m.wait_for_load_state("networkidle")
+        m.wait_for_load_state("load")
         check(m.locator(".photo-choice", has_text="Foto aufnehmen").is_visible()
               and m.locator(".photo-choice", has_text="Bild auswählen").is_visible(),
               "mobile: camera and library are separate, visible actions")
@@ -493,7 +493,7 @@ try:
         check(first_photo_choice is not None and first_photo_choice["y"] < 520,
               "mobile: photo actions appear before the existing image library")
         m.screenshot(path=str(SHOTS / "08b_mobile_recipe_images.png"), full_page=True)
-        m.goto(BASE + "/shopping", wait_until="networkidle")
+        m.goto(BASE + "/shopping", wait_until="load")
         first_shop_item = m.locator("#shop-client .shop-item").first.bounding_box()
         check(m.locator("#shop-client .shop-add-panel").get_attribute("open") is None,
               "mobile: add-item form starts collapsed")
@@ -542,7 +542,7 @@ try:
         # A normal CLI mutation goes through this running server and is pushed
         # to an already open catalog page without a manual reload.
         live_page = browser.new_page(viewport={"width": 1280, "height": 900})
-        live_page.goto(BASE, wait_until="networkidle")
+        live_page.goto(BASE, wait_until="load")
         live_page.wait_for_timeout(1400)
         cli_env = {**env, "GUSTO_URL": BASE}
         live_create = subprocess.run(
