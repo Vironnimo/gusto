@@ -761,4 +761,14 @@
     sync();
     refreshFavoriteNeeds();
   });
+  document.addEventListener("gusto:change", function (event) {
+    var resources = event.detail && Array.isArray(event.detail.resources)
+      ? event.detail.resources
+      : [];
+    if (resources.indexOf("shopping") !== -1) sync();
+    if (resources.indexOf("favorites") !== -1) refreshFavoriteNeeds();
+    // Recipe-source titles and lifecycle links are embedded in the server page,
+    // not in the shopping sync schema. Reload only for that catalog metadata.
+    if (resources.indexOf("catalog") !== -1) window.location.reload();
+  });
 })();

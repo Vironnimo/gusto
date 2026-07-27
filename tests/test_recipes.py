@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from pathlib import Path
 import base64
@@ -244,6 +245,30 @@ def main():
     core.purge_archived_recipe(pasta.slug)
     check(core.get_archived(pasta.slug) is None,
           "explicit purge must permanently remove the archived snapshot")
+
+    # The persisted change journal is monotone across concurrent transactions,
+    # while reads and idempotent PWA merges stay silent.
+    before_parallel = core.change_state()["revision"]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        created = list(executor.map(core.shopping_add, ["Parallel A", "Parallel B"]))
+    events = core.change_events(before_parallel)
+    check(
+        [event["revision"] for event in events]
+        == [before_parallel + 1, before_parallel + 2],
+        "parallel mutations must retain two distinct monotone revisions",
+    )
+    check(
+        all(event["resources"] == ["shopping"] for event in events),
+        "change events must identify their affected resource",
+    )
+    after_parallel = core.change_state()["revision"]
+    core.shopping_merge([item.to_dict() for item in core.shopping_load()])
+    check(
+        core.change_state()["revision"] == after_parallel,
+        "an idempotent full-state merge must not emit a change event",
+    )
+    for item in created:
+        core.shopping_remove(item.id)
 
     print(f"OK - {checks} recipe core checks passed (GUSTO_HOME={HOME})")
 

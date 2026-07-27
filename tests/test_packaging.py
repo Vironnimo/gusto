@@ -1,12 +1,7 @@
-"""Packaging smoke checks, runnable without pytest.
-
-The web extra must be sufficient on a fresh installation. Importing the web
-application alone is not enough in a developer environment because a missing
-dependency may already be installed for unrelated reasons, so the declared
-dependency list is checked directly as well.
-"""
+"""Release asset and public bootstrap checks, without network access."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -14,377 +9,283 @@ import struct
 import subprocess
 import sys
 import tempfile
-import time
 import venv
 import zipfile
 from pathlib import Path
-
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.fspath(ROOT))
 
-import install as gusto_installer  # noqa: E402
+import install  # noqa: E402
 import gusto  # noqa: E402
-from gusto import cli as gusto_cli  # noqa: E402
+from gusto import service  # noqa: E402
+from scripts import build_release  # noqa: E402
+
+checks = 0
 
 
-manifest = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-project_version = re.search(r'^version\s*=\s*"([^"]+)"$', manifest, re.MULTILINE)
-assert project_version and project_version.group(1) == gusto.__version__
-assert re.search(r'^name\s*=\s*"gusto"$', manifest, re.MULTILINE)
-assert re.search(r'^gusto\s*=\s*"gusto\.cli:main"$', manifest, re.MULTILINE)
-assert re.search(
-    r'^gusto-autostart\s*=\s*"gusto\.cli:autostart_main"$',
-    manifest,
-    re.MULTILINE,
-)
-assert not (ROOT / "recipe").exists()
-
-installer = ROOT / "install.py"
-linux_autostart = ROOT / "deploy" / "install-systemd.sh"
-windows_autostart = ROOT / "deploy" / "install-windows-task.ps1"
-skill_root = ROOT / "skill" / "gusto"
-service_template = (ROOT / "deploy" / "gusto.service").read_text(encoding="utf-8")
-linux_autostart_text = linux_autostart.read_text(encoding="utf-8")
-windows_autostart_text = windows_autostart.read_text(encoding="utf-8")
-assert installer.is_file()
-assert linux_autostart.is_file()
-assert windows_autostart.is_file()
-assert (skill_root / "SKILL.md").is_file()
-assert (skill_root / "references" / "cli.md").is_file()
-skill_text = (skill_root / "SKILL.md").read_text(encoding="utf-8")
-skill_reference = (skill_root / "references" / "cli.md").read_text(encoding="utf-8")
-for marker in [
-    "## Select the instance first",
-    "At the first Gusto operation in every task",
-    "never silently fall back to `python -m gusto`",
-    "gusto show <slug> --json",
-    "gusto check --json",
-]:
-    assert marker in skill_text, f"The Gusto skill is missing its safety rule: {marker}"
-assert "docs/telegram-shopping-handoff.md" not in skill_text + skill_reference, (
-    "The standalone Gusto skill must not link to repository-only documentation."
-)
-assert "User=pi" not in service_template
-assert "/home/pi/gusto" not in service_template
-assert "@GUSTO_PROJECT@" not in service_template
-assert 'Environment="GUSTO_HOME=' not in service_template
-for marker in ["@GUSTO_USER@", "@GUSTO_HOME@", "@GUSTO_PYTHON@", "@GUSTO_PORT@"]:
-    assert marker in service_template
-assert 'project_dir/.venv' not in linux_autostart_text
-assert 'Join-Path $ProjectDir ".venv"' not in windows_autostart_text
-assert "$escapedData" not in windows_autostart_text
-assert "--install-dir" in linux_autostart_text
-assert "$InstallDir" in windows_autostart_text
-assert 'Join-Path $InstallDir "Scripts\\gusto-autostart.exe"' in windows_autostart_text
-assert "-Execute $AutostartLauncher" in windows_autostart_text
-assert "-WindowStyle Hidden" not in windows_autostart_text
-assert '"Scripts\\python.exe"' not in windows_autostart_text
-assert (
-    windows_autostart_text.index("Stop-ScheduledTask")
-    < windows_autostart_text.index("& $bootstrap.Source")
-    < windows_autostart_text.index("Register-ScheduledTask")
-), "an active task must stop before its installed launcher is updated/replaced"
+def check(value, message):
+    global checks
+    assert value, message
+    checks += 1
 
 
 def pe_subsystem(executable: Path) -> int:
-    """Read IMAGE_OPTIONAL_HEADER.Subsystem from a Windows PE launcher."""
     data = executable.read_bytes()
-    assert data[:2] == b"MZ", f"Not a PE executable: {executable}"
+    check(data[:2] == b"MZ", f"not a PE executable: {executable}")
     pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
-    assert data[pe_offset:pe_offset + 4] == b"PE\0\0"
-    optional_header = pe_offset + 4 + 20
-    return struct.unpack_from("<H", data, optional_header + 68)[0]
+    check(data[pe_offset:pe_offset + 4] == b"PE\0\0",
+          f"invalid PE signature: {executable}")
+    return struct.unpack_from("<H", data, pe_offset + 4 + 20 + 68)[0]
 
-with tempfile.TemporaryDirectory(prefix="gusto-app-path-test-") as path_dir:
-    path_root = Path(path_dir)
-    fake_home = path_root / "home"
-    windows_default = gusto_installer.default_install_dir(
-        "win32", {"LOCALAPPDATA": os.fspath(path_root / "LocalAppData")}, fake_home,
-    )
-    linux_default = gusto_installer.default_install_dir("linux", {}, fake_home)
-    assert windows_default == (path_root / "LocalAppData" / "Programs" / "Gusto").resolve()
-    assert linux_default == (fake_home / ".local" / "opt" / "gusto").resolve()
 
-    command_dir = path_root / "LocalAppData" / "Programs" / "Gusto" / "Scripts"
-    updated_path, changed = gusto_installer.append_path_entry(
-        os.pathsep.join([os.fspath(path_root / "existing"), "second"]), command_dir,
-    )
-    assert changed and updated_path.endswith(os.fspath(command_dir.resolve()))
-    duplicate_path, changed = gusto_installer.append_path_entry(
-        updated_path, command_dir,
-    )
-    assert not changed and duplicate_path == updated_path
+project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+version = re.search(r'^version\s*=\s*"([^"]+)"$', project, re.MULTILINE)
+check(version and version.group(1) == gusto.__version__,
+      "package and runtime versions must agree")
+for requirement in (
+    "fastapi", "uvicorn[standard]", "jinja2", "markdown",
+    "python-multipart", "pillow",
+):
+    check(f'"{requirement}"' in project.lower(),
+          f"web runtime dependency missing: {requirement}")
 
-    existing_runtime = path_root / "existing-runtime"
-    existing_python = gusto_installer.venv_python(existing_runtime)
-    existing_python.parent.mkdir(parents=True)
-    existing_python.write_bytes(b"already installed")
-    assert not gusto_installer.ensure_virtual_environment(existing_runtime)
-    assert existing_python.read_bytes() == b"already installed"
 
-with tempfile.TemporaryDirectory(prefix="gusto-installer-test-") as install_dir:
-    dry_run = subprocess.run(
-        [sys.executable, os.fspath(installer), "--dry-run", "--venv",
-         os.fspath(Path(install_dir) / "venv")],
-        cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
-    )
-    assert dry_run.returncode == 0, dry_run.stdout + dry_run.stderr
-    assert "CLI + Web" in dry_run.stdout
-    assert "Projekt-Checkout" in dry_run.stdout
-    assert not (Path(install_dir) / "venv").exists()
+for path in (
+    ROOT / "install.py", ROOT / "install.ps1", ROOT / "install.sh",
+    ROOT / "deploy" / "install-systemd.sh",
+    ROOT / "deploy" / "install-windows-task.ps1",
+    ROOT / ".github" / "workflows" / "release.yml",
+):
+    check(path.is_file(), f"release surface missing: {path}")
 
-editable_dry_run = subprocess.run(
-    [sys.executable, os.fspath(installer), "--dry-run", "--editable"],
-    cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
-)
-assert editable_dry_run.returncode == 0, (
-    editable_dry_run.stdout + editable_dry_run.stderr
-)
-assert os.fspath((ROOT / ".venv").resolve()) in editable_dry_run.stdout
+shell = (ROOT / "install.sh").read_text(encoding="utf-8")
+powershell = (ROOT / "install.ps1").read_text(encoding="utf-8")
+for text in (shell, powershell):
+    check("gusto-release.json" in text and "sha256" in text.lower(),
+          "bootstrap must fetch a manifest and verify SHA-256")
+    check(not re.search(r"(?m)^\s*sudo\s", text.lower())
+          and "-verb runas" not in text.lower(),
+          "bootstrap must not request elevation")
+check("gusto update" in shell, "bootstrap must identify gusto update as normal flow")
+check("exit $LASTEXITCODE" not in powershell,
+      "piped PowerShell bootstrap must not close the caller's shell")
 
-with tempfile.TemporaryDirectory(prefix="gusto-migration-test-") as migration_dir:
-    migration_root = Path(migration_dir)
-    source = migration_root / "checkout"
-    destination = migration_root / "user-data"
-    (source / "recipes").mkdir(parents=True)
-    (source / "data").mkdir()
-    (source / "recipes" / "suppe.md").write_text("# Suppe\n", encoding="utf-8")
-    (source / "data" / "recipes.json").write_text("[]\n", encoding="utf-8")
-    assert gusto_installer.migrate_checkout_data(source, destination)
-    assert (destination / "recipes" / "suppe.md").is_file()
-    (destination / "recipes" / "suppe.md").write_text("changed\n", encoding="utf-8")
-    assert not gusto_installer.migrate_checkout_data(source, destination)
-    assert (destination / "recipes" / "suppe.md").read_text(encoding="utf-8") == "changed\n"
-
-with tempfile.TemporaryDirectory(prefix="gusto-settings-test-") as settings_dir:
-    settings_root = Path(settings_dir)
-    data_root = settings_root / "user-data"
-    settings_path = gusto_installer.write_instance_settings(
-        settings_root / "application", data_root,
-    )
-    assert json.loads(settings_path.read_text(encoding="utf-8")) == {
-        "data_dir": os.fspath(data_root.resolve()),
-    }
-
-optional_dependencies = re.search(
-    r"\[project\.optional-dependencies\](.*?)(?=\n\[|\Z)", manifest, re.DOTALL
-)
-assert optional_dependencies is not None
-web_dependencies = re.search(r"^web\s*=.*$", optional_dependencies.group(1), re.MULTILINE)
-assert web_dependencies is not None
-normalized = web_dependencies.group(0).lower()
-declared_web_requirements = set(re.findall(r'"([^"]+)"', normalized))
-preflight_requirements = {
-    requirement.lower() for requirement, _ in gusto_cli._WEB_DEPENDENCIES
-}
-
-assert preflight_requirements == declared_web_requirements, (
-    "The serve preflight and the declared web extra must cover the same requirements."
-)
-
-assert '"python-multipart"' in normalized, (
-    "The web extra must install python-multipart because the application uses "
-    "HTML form routes."
-)
-assert '"pillow"' in normalized, (
-    "The web extra must install Pillow because browser photo uploads are "
-    "resized and stripped of metadata before storage."
-)
-
-# A regular wheel (not only an editable checkout) must contain everything the
-# web application reads at runtime. Missing package data used to make an
-# apparently successful installation fail as soon as gusto.web was imported.
-with tempfile.TemporaryDirectory(prefix="gusto-wheel-test-") as wheel_dir:
-    build = subprocess.run(
-        [sys.executable, "-m", "pip", "wheel", "--no-deps",
-         "--wheel-dir", wheel_dir, os.fspath(ROOT)],
-        capture_output=True, text=True,
-    )
-    assert build.returncode == 0, build.stdout + build.stderr
-    wheels = list(Path(wheel_dir).glob("gusto-*.whl"))
-    assert len(wheels) == 1, f"Expected one Gusto wheel, found: {wheels}"
-    with zipfile.ZipFile(wheels[0]) as archive:
-        packaged = set(archive.namelist())
-
-    required_assets = {
-        "gusto/uninstall.py",
-        "gusto/templates/base.html",
-        "gusto/templates/list.html",
-        "gusto/templates/archive.html",
-        "gusto/templates/archive_recipe.html",
-        "gusto/static/style.css",
-        "gusto/static/app.js",
-        "gusto/static/shopping-client.js",
-        "gusto/static/manifest.webmanifest",
-        "gusto/static/icons/icon-192.png",
-        "gusto/static/icons/icon-512.png",
-    }
-    missing_assets = required_assets - packaged
-    assert not missing_assets, (
-        "The wheel is missing web runtime assets: " + ", ".join(sorted(missing_assets))
-    )
+with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
+    output = Path(temporary)
+    archive = build_release.build_release(output)
+    manifest_path = output / build_release.MANIFEST_NAME
+    checksum_path = output / build_release.CHECKSUM_NAME
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    check(archive.name == "gusto-release.zip"
+          and manifest["archive"] == archive.name,
+          "release archive must use a stable latest asset name")
+    check(manifest["sha256"] == digest
+          and checksum_path.read_text(encoding="utf-8").split()[0] == digest,
+          "manifest and checksum asset must bind the exact archive")
+    check((output / "install.ps1").read_bytes() == (ROOT / "install.ps1").read_bytes()
+          and (output / "install.sh").read_bytes() == (ROOT / "install.sh").read_bytes(),
+          "standalone bootstraps must be published beside release assets")
+    with zipfile.ZipFile(archive) as bundle:
+        names = bundle.namelist()
+        for suffix in (
+            "/install.py", "/install.ps1", "/install.sh",
+            "/deploy/gusto.service", "/deploy/install-systemd.sh",
+            "/deploy/install-windows-task.ps1", "/skill/gusto/SKILL.md",
+            "/skill/gusto/references/cli.md",
+            "/skill/gusto/references/installation.md",
+        ):
+            check(any(name.endswith(suffix) for name in names),
+                  f"release payload missing {suffix}")
+        check(sum(name.endswith(".whl") for name in names) == 1,
+              "release must contain exactly one wheel")
+        wheel_name = next(name for name in names if name.endswith(".whl"))
+        wheel_path = output / Path(wheel_name).name
+        wheel_path.write_bytes(bundle.read(wheel_name))
+        shell_info = next(info for info in bundle.infolist()
+                          if info.filename.endswith("/install.sh"))
+        check((shell_info.external_attr >> 16) & 0o111,
+              "POSIX bootstrap must be executable after extraction")
+    with zipfile.ZipFile(wheel_path) as wheel:
+        packaged = set(wheel.namelist())
+    for required in (
+        "gusto/api.py", "gusto/client.py", "gusto/service.py",
+        "gusto/update.py", "gusto/uninstall.py", "gusto/templates/base.html",
+        "gusto/static/app.js", "gusto/static/shopping-client.js",
+        "gusto/static/sw.js", "gusto/static/manifest.webmanifest",
+        "gusto/static/icons/icon-192.png", "gusto/static/icons/icon-512.png",
+    ):
+        check(required in packaged, f"wheel runtime asset missing: {required}")
 
     if sys.platform.startswith("win"):
-        # Install the real wheel under a path containing spaces.  setuptools
-        # must create two distinct PE launchers: regular Console for the CLI,
-        # GUI for Task Scheduler autostart.
-        runtime = Path(wheel_dir) / "runtime with spaces"
-        venv.EnvBuilder(with_pip=True).create(runtime)
-        runtime_python = runtime / "Scripts" / "python.exe"
-        installed = subprocess.run(
-            [os.fspath(runtime_python), "-m", "pip", "install", "--no-deps",
-             os.fspath(wheels[0])],
-            capture_output=True, text=True,
-        )
-        assert installed.returncode == 0, installed.stdout + installed.stderr
-        console_launcher = runtime / "Scripts" / "gusto.exe"
-        autostart_launcher = runtime / "Scripts" / "gusto-autostart.exe"
-        assert pe_subsystem(console_launcher) == 3, (
-            "the normal gusto launcher must remain a Console application"
-        )
-        assert pe_subsystem(autostart_launcher) == 2, (
-            "the autostart launcher must be a windowless GUI application"
-        )
-
-        isolated_data = Path(wheel_dir) / "data with spaces"
-        gusto_installer.write_instance_settings(runtime, isolated_data)
-        launched = subprocess.run(
-            [os.fspath(autostart_launcher), "--help"],
-            cwd=runtime, capture_output=True,
-        )
-        assert launched.returncode == 0
-        assert launched.stdout == b"" and launched.stderr == b""
-        autostart_log = isolated_data / "gusto-autostart.log"
-        assert "usage: gusto serve" in autostart_log.read_text(encoding="utf-8")
-
-        uninstall_preview = subprocess.run(
-            [os.fspath(console_launcher), "uninstall", "--keep-data",
-             "--dry-run", "--json"],
-            cwd=runtime, capture_output=True, text=True, encoding="utf-8",
-        )
-        assert uninstall_preview.returncode == 0, (
-            uninstall_preview.stdout + uninstall_preview.stderr
-        )
-        preview = json.loads(uninstall_preview.stdout)
-        assert preview["status"] == "dry_run" and not preview["delete_data"]
-        assert Path(preview["application_path"]) == runtime.resolve()
-        assert Path(preview["data_path"]) == isolated_data.resolve()
-        assert console_launcher.is_file() and autostart_log.is_file()
-
-        # Exercise self-removal from an actually active installed venv without
-        # touching platform autostart/PATH. The detached helper must wait for
-        # this interpreter and its Windows launchers before deleting the app.
-        self_remove_code = (
-            "import sys; from pathlib import Path; "
-            "from gusto.uninstall import UninstallTargets, schedule_removal; "
-            "root=Path(sys.prefix); "
-            "targets=UninstallTargets(root, Path(sys.argv[1]), root/'Scripts', "
-            "root/'gusto.settings.json', sys.platform); "
-            "print(schedule_removal(targets, separate_data_target=None))"
-        )
-        self_remove = subprocess.run(
-            [os.fspath(runtime_python), "-c", self_remove_code,
-             os.fspath(isolated_data)],
-            cwd=wheel_dir, capture_output=True, text=True, encoding="utf-8",
-        )
-        assert self_remove.returncode == 0, self_remove.stdout + self_remove.stderr
-        self_remove_log = Path(self_remove.stdout.strip())
-        deadline = time.monotonic() + 15
-        while ((runtime.exists() or not self_remove_log.is_file())
-               and time.monotonic() < deadline):
-            time.sleep(0.1)
-        assert not runtime.exists(), "the active installed runtime was not self-removed"
-        assert isolated_data.is_dir(), "app-only self-removal deleted the data store"
-        assert "completed" in self_remove_log.read_text(encoding="utf-8")
-        self_remove_log.unlink()
-
-with tempfile.TemporaryDirectory(prefix="gusto-task-path-test-") as task_dir:
-    task_root = Path(task_dir)
-    install_with_spaces = task_root / "Application With Spaces"
-    data_with_spaces = task_root / "Data With Spaces"
-    if sys.platform.startswith("win"):
-        dry_task = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-             "-File", os.fspath(windows_autostart), "-DryRun",
-             "-InstallDir", os.fspath(install_with_spaces),
-             "-DataDir", os.fspath(data_with_spaces), "-Port", "8123"],
-            cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
-        )
-        assert dry_task.returncode == 0, dry_task.stdout + dry_task.stderr
-        expected_launcher = install_with_spaces / "Scripts" / "gusto-autostart.exe"
-        assert f'"{expected_launcher}" --host 0.0.0.0 --port 8123' in dry_task.stdout
-
-# A release bundle must work without a checkout or GitHub access. It contains
-# one regular wheel, the standalone installer, both optional autostart adapters,
-# and the complete self-contained agent skill.
-with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as release_dir:
-    release_root = Path(release_dir)
-    build_release = subprocess.run(
-        [sys.executable, os.fspath(ROOT / "scripts" / "build_release.py"),
-         "--output-dir", os.fspath(release_root)],
-        cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
-    )
-    assert build_release.returncode == 0, build_release.stdout + build_release.stderr
-    archives = list(release_root.glob("gusto-*-release.zip"))
-    assert len(archives) == 1, f"Expected one release archive, found: {archives}"
-    with zipfile.ZipFile(archives[0]) as archive:
-        archive.extractall(release_root / "extracted")
-        bundled = set(archive.namelist())
-    assert any(name.endswith("/install.py") for name in bundled)
-    assert any(name.endswith("/deploy/install-systemd.sh") for name in bundled)
-    assert any(name.endswith("/deploy/install-windows-task.ps1") for name in bundled)
-    assert sum(name.endswith(".whl") for name in bundled) == 1
-    assert not any(name.endswith("/gusto.settings.json") for name in bundled)
-    bundle_prefix = next(
-        name[:-len("install.py")] for name in bundled
-        if name.endswith("/install.py")
-    )
-    source_skill = {
-        path.relative_to(ROOT).as_posix(): path.read_bytes()
-        for path in skill_root.rglob("*")
-        if (path.is_file() and "__pycache__" not in path.parts
-            and path.suffix != ".pyc")
-    }
-    bundled_skill = {
-        name[len(bundle_prefix):]
-        for name in bundled if name.startswith(bundle_prefix + "skill/gusto/")
-    }
-    assert bundled_skill == set(source_skill), (
-        "The release skill differs from skill/gusto: "
-        f"missing={sorted(set(source_skill) - bundled_skill)}, "
-        f"extra={sorted(bundled_skill - set(source_skill))}"
-    )
-    with zipfile.ZipFile(archives[0]) as archive:
-        for relative, expected in source_skill.items():
-            assert archive.read(bundle_prefix + relative) == expected, (
-                f"Bundled skill file is stale: {relative}"
+        powershell_exe = (
+            subprocess.run(
+                ["where.exe", "pwsh.exe"], capture_output=True, text=True,
+                encoding="utf-8",
+            ).stdout.splitlines() or [None]
+        )[0]
+        if powershell_exe:
+            bootstrap = subprocess.run(
+                [
+                    powershell_exe, "-NoProfile", "-File",
+                    os.fspath(ROOT / "install.ps1"),
+                    "-ReleaseBase", os.fspath(output),
+                    "-InstallDir", os.fspath(output / "bootstrap-app"),
+                    "-DataDir", os.fspath(output / "bootstrap-data"),
+                    "-DryRun", "-Json",
+                ],
+                capture_output=True, text=True, encoding="utf-8",
             )
-        installation_guide = archive.read(
-            bundle_prefix + "INSTALLATION.txt"
-        ).decode("utf-8")
-    assert "skill/gusto" in installation_guide
-    assert "install.py verändert keine" in installation_guide
-    with zipfile.ZipFile(archives[0]) as archive:
-        systemd_script = next(
-            info for info in archive.infolist()
-            if info.filename.endswith("/deploy/install-systemd.sh")
+            check(bootstrap.returncode == 0, bootstrap.stdout + bootstrap.stderr)
+            check(json.loads(bootstrap.stdout)["status"] == "dry_run",
+                  "PowerShell bootstrap must consume local release fixtures")
+        runtime = output / "runtime with spaces"
+        venv.EnvBuilder(with_pip=True).create(runtime)
+        installed = subprocess.run(
+            [
+                os.fspath(runtime / "Scripts" / "python.exe"),
+                "-m", "pip", "install", "--no-deps", os.fspath(wheel_path),
+            ],
+            capture_output=True, text=True, encoding="utf-8",
         )
-    assert (systemd_script.external_attr >> 16) & 0o111
+        check(installed.returncode == 0, installed.stdout + installed.stderr)
+        check(pe_subsystem(runtime / "Scripts" / "gusto.exe") == 3,
+              "gusto launcher must use the Console subsystem")
+        check(pe_subsystem(runtime / "Scripts" / "gusto-autostart.exe") == 2,
+              "autostart launcher must use the GUI subsystem")
+    else:
+        environment = dict(os.environ)
+        environment["PYTHON_BIN"] = sys.executable
+        bootstrap = subprocess.run(
+            [
+                "bash", os.fspath(ROOT / "install.sh"),
+                "--release-base", os.fspath(output),
+                "--install-dir", os.fspath(output / "bootstrap-app"),
+                "--data-dir", os.fspath(output / "bootstrap-data"),
+                "--dry-run", "--json",
+            ],
+            capture_output=True, text=True, encoding="utf-8", env=environment,
+        )
+        check(bootstrap.returncode == 0, bootstrap.stdout + bootstrap.stderr)
+        check(json.loads(bootstrap.stdout)["status"] == "dry_run",
+              "POSIX bootstrap must consume local release fixtures")
 
-    bundle_root = next((release_root / "extracted").iterdir())
-    standalone_dry_run = subprocess.run(
-        [sys.executable, os.fspath(bundle_root / "install.py"), "--dry-run",
-         "--venv", os.fspath(release_root / "installed")],
-        cwd=bundle_root, capture_output=True, text=True, encoding="utf-8",
+with tempfile.TemporaryDirectory(prefix="gusto-dry-run-") as temporary:
+    destination = Path(temporary) / "app"
+    result = subprocess.run(
+        [sys.executable, os.fspath(ROOT / "install.py"), "--dry-run",
+         "--install-dir", os.fspath(destination), "--json"],
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
     )
-    assert standalone_dry_run.returncode == 0, (
-        standalone_dry_run.stdout + standalone_dry_run.stderr
+    check(result.returncode == 0 and not destination.exists(),
+          "installer dry-run must be non-mutating")
+    value = json.loads(result.stdout)
+    check(value["status"] == "dry_run" and value["autostart"] in {
+        "windows_task", "systemd_user",
+    }, "installer dry-run must describe the user service")
+
+    # A second bootstrap is not the update flow and must fail before touching
+    # the existing managed root.
+    destination.mkdir(parents=True)
+    (destination / "current.json").write_text("{}\n", encoding="utf-8")
+    (destination / "install-state.json").write_text("{}\n", encoding="utf-8")
+    before = {
+        path.name: path.read_bytes() for path in destination.iterdir()
+    }
+    repeated = subprocess.run(
+        [sys.executable, os.fspath(ROOT / "install.py"),
+         "--install-dir", os.fspath(destination)],
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
     )
-    assert "Release-Paket" in standalone_dry_run.stdout
-    assert not (release_root / "installed").exists()
+    after = {path.name: path.read_bytes() for path in destination.iterdir()}
+    check(repeated.returncode == 1 and "gusto update" in repeated.stderr,
+          "repeated bootstrap must direct the user to gusto update")
+    check(before == after, "repeated bootstrap failure must not mutate the app")
 
-from gusto.web import app  # noqa: E402
+with tempfile.TemporaryDirectory(prefix="gusto-install-rollback-") as temporary:
+    root = Path(temporary)
+    app_root = root / "claimed-app"
+    data_root = root / "data"
 
-assert app is not None
-print("OK - web packaging metadata and application import")
+    def fake_runtime(source, runtime, version, data, server_url):
+        runtime.mkdir(parents=True)
+
+    def fake_wrappers(application, bootstrap):
+        wrapper = application / "bin" / "gusto.cmd"
+        wrapper.parent.mkdir(parents=True, exist_ok=True)
+        wrapper.write_text("@echo off\n", encoding="utf-8")
+        return wrapper
+
+    with (
+        patch.object(install.sys, "platform", "win32"),
+        patch.object(install, "install_source_runtime",
+                     side_effect=fake_runtime),
+        patch.object(install, "write_wrappers", side_effect=fake_wrappers),
+        patch.object(install, "add_windows_user_path", return_value=True),
+        patch.object(install, "remove_windows_user_path", return_value=True),
+        patch.object(install, "remove_windows_app_registration"),
+        patch.object(service, "install_user_service",
+                     side_effect=service.ServiceError("forced start failure")),
+        patch.object(service, "remove_user_service", return_value=True),
+    ):
+        failed = install.main([
+            "--install-dir", os.fspath(app_root),
+            "--data-dir", os.fspath(data_root),
+        ])
+    check(failed == 1 and not app_root.exists(),
+          "failed first activation must release the complete newly claimed app root")
+    check(data_root.exists(),
+          "failed first activation must preserve the separate data root")
+
+with tempfile.TemporaryDirectory(prefix="gusto-runtime-repair-") as temporary:
+    root = Path(temporary)
+    app_root = root / "managed-app"
+    data_root = root / "data"
+    paths = service.managed_paths(app_root)
+    data_root.mkdir()
+    service.write_state(paths, {
+        "data_dir": os.fspath(data_root),
+        "host": "0.0.0.0",
+        "port": 9123,
+        "manifest_url": "fixture",
+    })
+    service.write_current(paths, gusto.__version__)
+    rebuilt = []
+
+    def rebuild_runtime(source, runtime, version, data, server_url):
+        rebuilt.append((version, server_url))
+        scripts = runtime / "Scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "python.exe").write_bytes(b"python")
+        (runtime / ".gusto-runtime.json").write_text(
+            json.dumps({"version": version, "verified": True}),
+            encoding="utf-8",
+        )
+
+    with (
+        patch.object(install.sys, "platform", "win32"),
+        patch.object(install, "install_source_runtime",
+                     side_effect=rebuild_runtime),
+        patch.object(install, "write_wrappers", side_effect=fake_wrappers),
+        patch.object(install, "add_windows_user_path", return_value=False),
+        patch.object(service, "remove_user_service", return_value=True),
+        patch.object(service, "install_user_service", return_value={"ok": True}),
+        patch.object(service, "wait_for_health", return_value={"ok": True}),
+    ):
+        repaired = install.main([
+            "--repair", "--install-dir", os.fspath(app_root),
+        ])
+    repaired_settings = json.loads(
+        (paths.version(gusto.__version__) / "gusto.settings.json").read_text(
+            encoding="utf-8",
+        )
+    )
+    check(repaired == 0
+          and rebuilt == [(gusto.__version__, "http://127.0.0.1:9123")],
+          "repair must reconstruct a missing active runtime from matching payload")
+    check(repaired_settings["server_url"] == "http://127.0.0.1:9123",
+          "repair must restore the runtime's configured client URL")
+
+print(f"OK - {checks} release packaging checks passed")

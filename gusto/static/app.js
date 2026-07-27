@@ -64,3 +64,58 @@ document.addEventListener("keydown", (e) => {
   input.addEventListener("search", schedule); // Clear-Button mancher Browser
   form.addEventListener("submit", (e) => { e.preventDefault(); clearTimeout(timer); update(); });
 })();
+
+// Online-Aktualisierung: Der laufende Gusto-Dienst meldet erfolgreiche
+// Fachmutationen mit einer monotonen Revision. Die erste Meldung ist nur der
+// Ausgangsstand; spätere relevante Änderungen aktualisieren die offene Seite.
+// Die offline-fähige Einkaufsliste übernimmt ihren Merge selbst.
+(function () {
+  if (!document.body.hasAttribute("data-gusto-live") || !window.EventSource) return;
+
+  const pageResources = (() => {
+    const path = window.location.pathname;
+    if (path === "/shopping") return new Set(["shopping", "favorites", "catalog"]);
+    if (path.startsWith("/favorites")) return new Set(["favorites"]);
+    if (path === "/log") return new Set(["log", "catalog"]);
+    if (path === "/suggestions") return new Set(["catalog", "log"]);
+    if (path === "/archive" || path.startsWith("/archive/")) return new Set(["catalog"]);
+    if (path === "/new" || path.startsWith("/recipe/") || path === "/") {
+      return new Set(["catalog", "log"]);
+    }
+    return new Set();
+  })();
+
+  let latestRevision = Number(document.body.dataset.gustoRevision);
+  if (!Number.isFinite(latestRevision)) latestRevision = 0;
+
+  function connectLiveEvents() {
+    const events = new EventSource(
+      "/api/v1/events?after=" + encodeURIComponent(String(latestRevision))
+    );
+    events.onmessage = (event) => {
+      let change;
+      try {
+        change = JSON.parse(event.data);
+      } catch (_error) {
+        return;
+      }
+
+      const revision = Number(change && change.revision);
+      if (!Number.isFinite(revision) || revision <= latestRevision) return;
+      latestRevision = revision;
+
+      const resources = Array.isArray(change.resources) ? change.resources : [];
+      if (!resources.some((resource) => pageResources.has(resource))) return;
+
+      if (window.location.pathname === "/shopping") {
+        document.dispatchEvent(new CustomEvent("gusto:change", { detail: change }));
+        return;
+      }
+      window.location.reload();
+    };
+  }
+
+  // Let the initial page and its images settle first. This keeps navigation
+  // completion meaningful while the subsequent EventSource remains open.
+  window.setTimeout(connectLiveEvents, 1000);
+})();

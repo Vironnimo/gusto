@@ -206,7 +206,25 @@ try:
     with sync_playwright() as p:
         browser = p.chromium.launch()
 
-        # --- 2) offline: tick optimistically, online -> sync -----------------
+        # --- 2) live server change -> existing client merges -----------------
+        reset_shopping()
+        seed_shopping([mk("Milch", past_iso())])
+        live_context = browser.new_context()
+        live_page = live_context.new_page()
+        live_page.goto(BASE + "/shopping", wait_until="networkidle")
+        check(wait_count(live_page, "#shop-client .shop-item", 1),
+              "live: initial server item loaded")
+        # app.js intentionally waits until the initial navigation has settled
+        # before opening its long-lived EventSource.
+        live_page.wait_for_timeout(1400)
+        api_sync([*api_get(), mk("Brot", now_iso())])
+        check(wait_count(live_page, "#shop-client .shop-item", 2),
+              "live: server mutation reaches the open PWA without reload")
+        check("Brot" in live_page.content(),
+              "live: merged server item is rendered")
+        live_context.close()
+
+        # --- 3) offline: tick optimistically, online -> sync -----------------
         reset_shopping()
         seed_shopping([mk("Milch", past_iso()), mk("Brot", past_iso())])
         ctx = browser.new_context()
@@ -246,7 +264,7 @@ try:
               "back online: complete-list tombstones reach the server")
         ctx.close()
 
-        # --- 3) two-device merge (two contexts = two localStorage) -----------
+        # --- 4) two-device merge (two contexts = two localStorage) -----------
         reset_shopping()
         ca = browser.new_context(); a = ca.new_page()
         cb = browser.new_context(); b = cb.new_page()
@@ -279,7 +297,7 @@ try:
         check("Apfel" in b.content(), "device B sees 'Apfel' (from A)")
         ca.close(); cb.close()
 
-        # --- 4) manifest + service worker ------------------------------------
+        # --- 5) manifest + service worker ------------------------------------
         cp = browser.new_context(); pg = cp.new_page()
         pg.goto(BASE + "/shopping", wait_until="networkidle")
         check(pg.locator("link[rel=manifest]").count() == 1, "manifest is linked")

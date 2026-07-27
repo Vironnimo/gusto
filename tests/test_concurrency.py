@@ -12,10 +12,14 @@ import base64
 import multiprocessing
 import os
 import queue
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 import traceback
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 
@@ -30,6 +34,25 @@ def check(condition, message):
     global checks
     assert condition, message
     checks += 1
+
+
+def free_port() -> int:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return listener.getsockname()[1]
+
+
+def wait_for_server(url: str, process: subprocess.Popen, timeout: float = 30) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url + "/api/v1/health", timeout=1):
+                return True
+        except (OSError, urllib.error.URLError):
+            if process.poll() is not None:
+                return False
+            time.sleep(0.1)
+    return False
 
 
 def worker(home: str, image_path: str, number: int, ready, start, results) -> None:
@@ -120,20 +143,50 @@ def main() -> None:
               f"worker {process.pid} exited with {process.exitcode}")
     check(not errors, "parallel workers failed:\n" + "\n".join(errors))
 
-    cli_processes = [
-        subprocess.Popen(
-            [sys.executable, "-m", "gusto", "shopping", "add",
-             f"CLI shopping {number}", "--json"],
-            cwd=ROOT, env={**os.environ, "GUSTO_HOME": os.fspath(home)},
-            text=True, encoding="utf-8", stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        for number in range(CLI_CALLS)
-    ]
-    for process in cli_processes:
-        stdout, stderr = process.communicate(timeout=30)
-        check(process.returncode == 0,
-              f"parallel CLI add failed: {stderr or stdout}")
+    port = free_port()
+    server_url = f"http://127.0.0.1:{port}"
+    server_environment = {
+        **os.environ,
+        "GUSTO_HOME": os.fspath(home),
+    }
+    server = subprocess.Popen(
+        [
+            sys.executable, "-m", "uvicorn", "gusto.web:app",
+            "--host", "127.0.0.1", "--port", str(port),
+            "--log-level", "warning",
+        ],
+        cwd=ROOT, env=server_environment,
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8",
+    )
+    try:
+        check(wait_for_server(server_url, server),
+              "isolated server did not become ready for parallel CLI calls")
+        cli_environment = {
+            **server_environment,
+            "GUSTO_URL": server_url,
+        }
+        cli_processes = [
+            subprocess.Popen(
+                [sys.executable, "-m", "gusto", "shopping", "add",
+                 f"CLI shopping {number}", "--json"],
+                cwd=ROOT, env=cli_environment,
+                text=True, encoding="utf-8", stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            for number in range(CLI_CALLS)
+        ]
+        for process in cli_processes:
+            stdout, stderr = process.communicate(timeout=30)
+            check(process.returncode == 0,
+                  f"parallel CLI add failed: {stderr or stdout}")
+    finally:
+        server.terminate()
+        try:
+            server.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            server.wait(timeout=10)
 
     expected = WORKERS * ITERATIONS
     shopping = core.shopping_load()

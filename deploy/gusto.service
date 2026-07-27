@@ -1,15 +1,14 @@
 [Unit]
-Description=Gusto – Rezept-Webserver
+Description=Gusto Rezeptserver
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=@GUSTO_USER@
-WorkingDirectory="@GUSTO_HOME@"
-ExecStart="@GUSTO_PYTHON@" -m gusto serve --host 0.0.0.0 --port @GUSTO_PORT@
+WorkingDirectory="@GUSTO_DATA@"
+ExecStart="@GUSTO_PYTHON@" -m gusto serve --host "@GUSTO_HOST@" --port @GUSTO_PORT@
 Restart=on-failure
 RestartSec=3
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

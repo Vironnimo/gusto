@@ -1,0 +1,78 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test and web dependencies
+        run: python -m pip install -e ".[web,test]"
+      - name: Run Windows lifecycle and client gates
+        run: |
+          python tests/test_service.py
+          python tests/test_update.py
+          python tests/test_paths.py
+          python tests/test_autostart.py
+          python tests/test_uninstall.py
+          python tests/test_packaging.py
+          python tests/test_api.py
+          python tests/test_cli.py
+
+  build-and-release:
+    needs: windows-contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "$GITHUB_REF_NAME" = "v$version"
+      - name: Install test and web dependencies
+        run: python -m pip install -e ".[web,test]"
+      - name: Run non-browser quality gates
+        run: |
+          python tests/test_service.py
+          python tests/test_update.py
+          python tests/test_paths.py
+          python tests/test_autostart.py
+          python tests/test_uninstall.py
+          python tests/test_packaging.py
+          python tests/test_api.py
+          python tests/test_recipes.py
+          python tests/test_shopping.py
+          python tests/test_favorites.py
+          python tests/test_merge.py
+          python tests/test_concurrency.py
+          python tests/test_cli.py
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Run browser and PWA quality gates
+        run: |
+          python scripts/browser_check.py
+          python scripts/pwa_check.py
+      - name: Build verified release assets
+        run: python scripts/build_release.py
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/gusto-release.zip
+            dist/gusto-release.zip.sha256
+            dist/gusto-release.json
+            dist/install.ps1
+            dist/install.sh

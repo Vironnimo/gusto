@@ -539,6 +539,37 @@ try:
               "no-JS: complete clear renders the empty-list state")
         nojs_clear.close()
 
+        # A normal CLI mutation goes through this running server and is pushed
+        # to an already open catalog page without a manual reload.
+        live_page = browser.new_page(viewport={"width": 1280, "height": 900})
+        live_page.goto(BASE, wait_until="networkidle")
+        live_page.wait_for_timeout(1400)
+        cli_env = {**env, "GUSTO_URL": BASE}
+        live_create = subprocess.run(
+            [sys.executable, "-m", "gusto", "new", "Live SSE Rezept", "--json"],
+            cwd=str(ROOT), env=cli_env, text=True, encoding="utf-8",
+            capture_output=True,
+        )
+        check(live_create.returncode == 0,
+              "live: CLI mutation succeeds through the server")
+        if live_create.returncode == 0:
+            live_recipe = json.loads(live_create.stdout)
+            live_slug = live_recipe["slug"]
+            try:
+                live_page.wait_for_selector(
+                    f'a[href="/recipe/{live_slug}"]', timeout=5000)
+                live_visible = True
+            except Exception:
+                live_visible = False
+            check(live_visible,
+                  "live: CLI-created recipe appears without manual reload")
+            subprocess.run(
+                [sys.executable, "-m", "gusto", "delete", live_slug, "--json"],
+                cwd=str(ROOT), env=cli_env, text=True, encoding="utf-8",
+                capture_output=True,
+            )
+        live_page.close()
+
         browser.close()
 finally:
     srv.terminate()

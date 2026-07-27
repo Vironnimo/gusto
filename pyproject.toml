@@ -1,13 +1,14 @@
 [project]
 name = "gusto"
-version = "0.1.2"
+version = "0.2.0"
 description = "Markdown-basiertes Rezept-System, steuerbar per CLI und Web – agent-freundlich."
 requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-# Werden erst fuer die Web-UI gebraucht:
+# Managed apps install the server extra; the standalone CLI client stays stdlib-only.
 web = ["fastapi", "uvicorn[standard]", "jinja2", "markdown", "python-multipart", "pillow"]
+test = ["httpx2", "playwright"]
 
 [project.scripts]
 gusto = "gusto.cli:main"

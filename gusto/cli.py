@@ -1,8 +1,8 @@
 """Command line for Gusto.
 
-Thin shell around gusto.core. Every command understands --json for machine-
-readable output (for agents & scripts); without --json it is formatted nicely
-for the terminal. User-facing output and --help texts stay German.
+Normal domain commands are thin clients of the running Gusto server. Explicit
+lifecycle and recovery commands remain local. Every command understands
+``--json``; user-facing output and help text stay German.
 """
 from __future__ import annotations
 
@@ -12,13 +12,14 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import traceback
 from collections.abc import Callable, Sequence
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 
-from . import core, uninstall
+from . import client
 
 
 def _dump(data) -> None:
@@ -61,36 +62,41 @@ def _port(value: str) -> int:
     return port
 
 
-def _print_list(recipes, as_json: bool) -> None:
+def _remote(args, operation: str, arguments: dict | None = None, *,
+            attachments: list[dict] | None = None):
+    return client.command(
+        operation,
+        arguments,
+        attachments=attachments,
+        server_url=getattr(args, "server", None),
+    )
+
+
+def _print_list(recipes: list[dict], as_json: bool) -> None:
     if as_json:
-        _dump([r.to_dict() for r in recipes])
+        _dump(recipes)
         return
     if not recipes:
         print("Keine Rezepte gefunden.")
         return
     for r in recipes:
         meta = []
-        if r.duration_min:
-            meta.append(f"{r.duration_min} min")
-        if r.servings:
-            meta.append(f"{r.servings} P.")
-        if r.tags:
-            meta.append(", ".join(r.tags))
-        if r.images:
-            meta.append(f"{len(r.images)} Bild" + ("er" if len(r.images) != 1 else ""))
+        if r.get("duration_min"):
+            meta.append(f"{r['duration_min']} min")
+        if r.get("servings"):
+            meta.append(f"{r['servings']} P.")
+        if r.get("tags"):
+            meta.append(", ".join(r["tags"]))
+        if r.get("images"):
+            meta.append(
+                f"{len(r['images'])} Bild"
+                + ("er" if len(r["images"]) != 1 else "")
+            )
         extra = "  ·  ".join(meta)
-        print(f"  {r.slug:<22} {r.title}" + (f"   [{extra}]" if extra else ""))
-
-
-def _tag_warnings(recipe_tags: list[str]) -> list[dict]:
-    tags = core.uncategorized_tags(recipe_tags)
-    if not tags:
-        return []
-    return [{
-        "code": "uncategorized_tags",
-        "message": "Tags ohne Kategorie (Facet „Sonstige“): " + ", ".join(tags),
-        "tags": tags,
-    }]
+        print(
+            f"  {r['slug']:<22} {r['title']}"
+            + (f"   [{extra}]" if extra else "")
+        )
 
 
 def _print_tag_warnings(warnings: list[dict]) -> None:
@@ -101,32 +107,25 @@ def _print_tag_warnings(warnings: list[dict]) -> None:
 # --- Commands ---------------------------------------------------------------
 
 def cmd_list(args):
-    try:
-        recipes = sorted(
-            core.search(tags=_collect_tags(args.tag), max_time=args.max_time),
-            key=lambda r: r.title.lower(),
-        )
-    except ValueError as error:
-        sys.exit(str(error))
+    recipes = _remote(args, "catalog.list", {
+        "tags": _collect_tags(args.tag),
+        "max_time": args.max_time,
+    })
     _print_list(recipes, args.json)
 
 
 def cmd_search(args):
-    try:
-        recipes = sorted(
-            core.search(
-                query=args.query, match=args.match,
-                tags=_collect_tags(args.tag), max_time=args.max_time,
-            ),
-            key=lambda r: r.title.lower(),
-        )
-    except ValueError as error:
-        sys.exit(str(error))
+    recipes = _remote(args, "catalog.search", {
+        "query": args.query,
+        "match": args.match,
+        "tags": _collect_tags(args.tag),
+        "max_time": args.max_time,
+    })
     _print_list(recipes, args.json)
 
 
 def cmd_tags(args):
-    groups = core.tag_groups(only_used=not args.all)
+    groups = _remote(args, "tags.list", {"all": args.all})
     if args.json:
         _dump(groups)
         return
@@ -139,7 +138,23 @@ def cmd_tags(args):
 
 
 def cmd_home(args):
+    from . import core
+
     info = core.storage_info()
+    server_url = client.resolve_server_url(getattr(args, "server", None))
+    info["server_url"] = server_url
+    try:
+        service = client.health(server_url, retries=0)
+    except client.ClientError as error:
+        info["server_reachable"] = False
+        info["service_status"] = "unreachable"
+        info["service_error"] = str(error)
+    else:
+        info["server_reachable"] = True
+        info["service_status"] = str(service.get("status", "running"))
+        info["server_data_path"] = service.get("data_path")
+        info["server_version"] = service.get("version")
+        info["server_revision"] = service.get("revision")
     if args.json:
         _dump(info)
         return
@@ -155,81 +170,121 @@ def cmd_home(args):
         print(f"  Settings: {info['settings_path']}")
     if info["source"] == "legacy":
         print(f"  Neuer Plattformstandard: {info['platform_default']}")
+    print(f"  Server: {server_url}")
+    print(
+        "  Dienst: "
+        + ("erreichbar" if info["server_reachable"] else "nicht erreichbar")
+    )
+    if info["server_reachable"] and info.get("server_data_path"):
+        print(f"  Server-Daten: {info['server_data_path']}")
 
 
 def cmd_show(args):
-    r = core.get(args.slug)
-    if r is None:
-        sys.exit(f"Kein Rezept mit Slug '{args.slug}'.")
+    recipe = _remote(args, "recipe.show", {"slug": args.slug})
     if args.json:
-        d = r.to_dict()
-        d["content"] = r.content()
-        _dump(d)
+        _dump(recipe)
     else:
-        print(r.content().rstrip())
+        print(recipe["content"].rstrip())
 
 
 def cmd_new(args):
     tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
-    warnings = _tag_warnings(tags)
-    try:
-        r = core.add_recipe(args.title, tags=tags,
-                            duration_min=args.duration, servings=args.servings)
-    except ValueError as e:
-        sys.exit(str(e))
+    recipe = _remote(args, "recipe.create", {
+        "title": args.title,
+        "tags": tags,
+        "duration_min": args.duration,
+        "servings": args.servings,
+    })
     editor_result = None
     if args.edit:
-        try:
-            editor_result = _open_editor(r.path, quiet=args.json)
-        except ValueError as error:
-            sys.exit(str(error))
+        editor_result = _edit_remote(args, recipe["slug"])
     if args.json:
-        result = r.to_dict()
-        if warnings:
-            result["warnings"] = warnings
+        result = dict(recipe)
         if editor_result is not None:
             result["editor"] = editor_result
         _dump(result)
     else:
-        print(f"Angelegt: {r.slug}  ->  {r.path}")
-        _print_tag_warnings(warnings)
-def cmd_edit(args):
-    r = core.get(args.slug)
-    if r is None:
-        sys.exit(f"Kein Rezept mit Slug '{args.slug}'.")
+        print(f"Angelegt: {recipe['slug']}")
+        _print_tag_warnings(recipe.get("warnings", []))
+
+
+def _edit_remote(args, slug: str) -> dict:
+    recipe = _remote(args, "recipe.show", {"slug": slug})
+    handle = tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", suffix=".md", prefix=f"gusto-{slug}-",
+        delete=False,
+    )
+    temporary = Path(handle.name)
     try:
-        result = _open_editor(r.path, quiet=args.json)
-    except ValueError as error:
-        sys.exit(str(error))
-    result["slug"] = r.slug
+        with handle:
+            handle.write(recipe["content"])
+        editor_result = _open_editor(temporary, quiet=args.json)
+        try:
+            content = temporary.read_text(encoding="utf-8")
+        except OSError as error:
+            raise client.ClientError(
+                f"Bearbeiteter Rezepttext konnte nicht gelesen werden: {error}"
+            ) from error
+        _remote(
+            args, "recipe.content.set", {"slug": slug, "content": content},
+        )
+    finally:
+        temporary.unlink(missing_ok=True)
+    editor_result["slug"] = slug
+    return editor_result
+
+
+def cmd_edit(args):
+    result = _edit_remote(args, args.slug)
     if args.json:
         _dump(result)
 
 
-def cmd_cooked(args):
-    try:
-        core.log_cooked(args.slug, when=args.date)
-    except ValueError as e:
-        sys.exit(str(e))
-    when = args.date or date.today().isoformat()
-    if args.json:
-        _dump({"slug": args.slug, "date": when, "ok": True})
+def cmd_content_set(args):
+    if args.stdin:
+        content = sys.stdin.read()
     else:
-        print(f"Notiert: '{args.slug}' am {when} gekocht.")
+        try:
+            content = Path(args.file).expanduser().read_text(encoding="utf-8")
+        except OSError as error:
+            raise client.ClientError(
+                f"Rezeptdatei '{args.file}' konnte nicht gelesen werden: {error}"
+            ) from error
+    recipe = _remote(
+        args, "recipe.content.set", {"slug": args.slug, "content": content},
+    )
+    if args.json:
+        _dump(recipe)
+    else:
+        print(f"Inhalt aktualisiert: {args.slug}")
+
+
+def cmd_cooked(args):
+    result = _remote(
+        args, "recipe.cooked", {"slug": args.slug, "date": args.date},
+    )
+    if args.json:
+        _dump(result)
+    else:
+        print(f"Notiert: '{args.slug}' am {result['date']} gekocht.")
 
 
 def cmd_log(args):
-    try:
-        entries = core.load_log(days=args.days)
-    except ValueError as error:
-        sys.exit(str(error))
+    entries = _remote(args, "log.list", {"days": args.days})
     if args.json:
         _dump(entries)
         return
     if not entries:
         print("Logbuch ist leer.")
         return
-    references = core.recipe_references()
+    references = {
+        recipe["slug"]: {"title": recipe["title"], "archived": False}
+        for recipe in _remote(args, "catalog.list", {})
+    }
+    references.update({
+        recipe["slug"]: {"title": recipe["title"], "archived": True}
+        for recipe in _remote(args, "archive.list", {})
+    })
     for e in reversed(entries):  # newest first
         reference = references.get(e["slug"])
         title = reference["title"] if reference else e["slug"]
@@ -238,12 +293,11 @@ def cmd_log(args):
 
 
 def cmd_suggest(args):
-    try:
-        candidates = core.suggest(days=args.days, limit=args.limit)
-    except ValueError as error:
-        sys.exit(str(error))
+    candidates = _remote(
+        args, "suggest.list", {"days": args.days, "limit": args.limit},
+    )
     if args.json:
-        _dump([r.to_dict() for r in candidates])
+        _dump(candidates)
         return
     if not candidates:
         if args.limit == 0:
@@ -253,11 +307,15 @@ def cmd_suggest(args):
         return
     print(f"Vorschlaege (nicht in den letzten {args.days} Tagen gekocht):")
     for r in candidates:
-        print(f"  {r.title:<26} (zuletzt: {r.last_cooked or 'noch nie'})")
+        print(f"  {r['title']:<26} (zuletzt: {r.get('last_cooked') or 'noch nie'})")
 
 
 def cmd_check(args):
-    res = core.check()
+    if args.offline:
+        from . import core
+        res = core.check()
+    else:
+        res = _remote(args, "check.run")
     if args.json:
         _dump(res)
     else:
@@ -321,76 +379,59 @@ def cmd_set(args):
     tags = None
     if args.tags is not None:
         tags = [t.strip() for t in args.tags.split(",") if t.strip()]
-    warnings = _tag_warnings(tags) if tags is not None else []
-    try:
-        r = core.update_recipe(args.slug, title=args.title, tags=tags,
-                               duration_min=args.duration, servings=args.servings,
-                               clear_duration=args.clear_duration,
-                               clear_servings=args.clear_servings)
-    except ValueError as e:
-        sys.exit(str(e))
+    recipe = _remote(args, "recipe.update", {
+        "slug": args.slug,
+        "title": args.title,
+        "tags": tags,
+        "duration_min": args.duration,
+        "servings": args.servings,
+        "clear_duration": args.clear_duration,
+        "clear_servings": args.clear_servings,
+    })
     if args.json:
-        result = r.to_dict()
-        if warnings:
-            result["warnings"] = warnings
-        _dump(result)
+        _dump(recipe)
     else:
-        print(f"Aktualisiert: {r.slug}")
-        _print_tag_warnings(warnings)
+        print(f"Aktualisiert: {recipe['slug']}")
+        _print_tag_warnings(recipe.get("warnings", []))
 
 
 def cmd_delete(args):
-    try:
-        archived = core.archive_recipe(args.slug)
-    except ValueError as e:
-        sys.exit(str(e))
+    archived = _remote(args, "recipe.archive", {"slug": args.slug})
     if args.json:
-        _dump({
-            "slug": archived.slug,
-            "archived": True,
-            "archived_at": archived.archived_at,
-        })
+        _dump(archived)
     else:
-        print(f"Archiviert: {archived.slug}")
+        print(f"Archiviert: {archived['slug']}")
 
 
 def cmd_archive_list(args):
-    try:
-        entries = core.load_archive()
-    except ValueError as error:
-        sys.exit(str(error))
+    entries = _remote(args, "archive.list")
     if args.json:
-        _dump([entry.to_dict() for entry in entries])
+        _dump(entries)
         return
     if not entries:
         print("Das Rezeptarchiv ist leer.")
         return
     for entry in entries:
-        print(f"  {entry.slug:<22} {entry.title}   [{entry.archived_at}]")
+        print(
+            f"  {entry['slug']:<22} {entry['title']}   "
+            f"[{entry['archived_at']}]"
+        )
 
 
 def cmd_archive_show(args):
-    try:
-        entry = core.get_archived(args.slug)
-    except ValueError as error:
-        sys.exit(str(error))
-    if entry is None:
-        sys.exit(f"Kein archiviertes Rezept mit Slug '{args.slug}'.")
+    entry = _remote(args, "archive.show", {"slug": args.slug})
     if args.json:
-        _dump(entry.to_dict(include_content=True))
+        _dump(entry)
     else:
-        print(entry.content().rstrip())
+        print(entry["content"].rstrip())
 
 
 def cmd_archive_restore(args):
-    try:
-        recipe = core.restore_archived_recipe(args.slug)
-    except ValueError as error:
-        sys.exit(str(error))
+    result = _remote(args, "archive.restore", {"slug": args.slug})
     if args.json:
-        _dump({"restored": True, "recipe": recipe.to_dict()})
+        _dump(result)
     else:
-        print(f"Wiederhergestellt: {recipe.slug}")
+        print(f"Wiederhergestellt: {result['recipe']['slug']}")
 
 
 def cmd_archive_purge(args):
@@ -399,92 +440,83 @@ def cmd_archive_purge(args):
             "Endgültiges Löschen braucht --yes. Der Archiveintrag kann danach "
             "nicht wiederhergestellt werden."
         )
-    try:
-        entry = core.purge_archived_recipe(args.slug)
-    except ValueError as error:
-        sys.exit(str(error))
+    result = _remote(
+        args, "archive.purge", {"slug": args.slug, "yes": True},
+    )
     if args.json:
-        _dump({"slug": entry.slug, "purged": True})
+        _dump(result)
     else:
-        print(f"Endgültig gelöscht: {entry.slug}")
+        print(f"Endgültig gelöscht: {result['slug']}")
 
 
 # --- Recipe images ----------------------------------------------------------
 
-def _image_dict(image, cover_id: str | None) -> dict:
-    data = image.to_dict()
-    data["is_cover"] = image.id == cover_id
-    return data
-
-
 def cmd_image_list(args):
-    try:
-        images, cover_id = core.list_recipe_images(args.slug)
-    except ValueError as error:
-        sys.exit(str(error))
+    result = _remote(args, "image.list", {"slug": args.slug})
     if args.json:
-        _dump({"cover_image_id": cover_id,
-               "images": [_image_dict(image, cover_id) for image in images]})
+        _dump(result)
         return
+    images = result["images"]
+    cover_id = result["cover_image_id"]
     if not images:
         print("Keine Bilder bei diesem Rezept.")
         return
     for image in images:
-        marker = " [Top-Bild]" if image.id == cover_id else ""
-        caption = f" — {image.caption}" if image.caption else ""
-        print(f"  {image.id}  {image.role}{marker}{caption}")
+        marker = " [Top-Bild]" if image["id"] == cover_id else ""
+        caption = f" — {image['caption']}" if image.get("caption") else ""
+        print(f"  {image['id']}  {image['role']}{marker}{caption}")
 
 
 def cmd_image_add(args):
-    try:
-        image = core.add_recipe_image(
-            args.slug, args.path, role=args.role, caption=args.caption,
-            cover=args.cover,
-        )
-        _, cover_id = core.list_recipe_images(args.slug)
-    except ValueError as error:
-        sys.exit(str(error))
+    image = _remote(
+        args,
+        "image.add",
+        {
+            "slug": args.slug,
+            "role": args.role,
+            "caption": args.caption,
+            "cover": args.cover,
+        },
+        attachments=[client.encode_attachment("image", args.path)],
+    )
     if args.json:
-        _dump(_image_dict(image, cover_id))
+        _dump(image)
     else:
-        marker = " (Top-Bild)" if image.id == cover_id else ""
-        print(f"Bild hinzugefuegt: {image.id}{marker}")
+        marker = " (Top-Bild)" if image.get("is_cover") else ""
+        print(f"Bild hinzugefuegt: {image['id']}{marker}")
 
 
 def cmd_image_set(args):
     if args.role is None and args.caption is None:
         sys.exit("Gib --role und/oder --caption an.")
-    try:
-        image = core.update_recipe_image(
-            args.slug, args.id, role=args.role, caption=args.caption,
-        )
-        _, cover_id = core.list_recipe_images(args.slug)
-    except ValueError as error:
-        sys.exit(str(error))
+    image = _remote(args, "image.set", {
+        "slug": args.slug,
+        "id": args.id,
+        "role": args.role,
+        "caption": args.caption,
+    })
     if args.json:
-        _dump(_image_dict(image, cover_id))
+        _dump(image)
     else:
-        print(f"Bild aktualisiert: {image.id}")
+        print(f"Bild aktualisiert: {image['id']}")
 
 
 def cmd_image_cover(args):
-    try:
-        image = core.set_recipe_cover(args.slug, args.id)
-    except ValueError as error:
-        sys.exit(str(error))
+    result = _remote(
+        args, "image.cover", {"slug": args.slug, "id": args.id},
+    )
     if args.json:
-        _dump({"slug": args.slug, "cover_image_id": image.id})
+        _dump(result)
     else:
-        print(f"Top-Bild gesetzt: {image.id}")
+        print(f"Top-Bild gesetzt: {result['cover_image_id']}")
 
 
 def cmd_image_remove(args):
-    try:
-        cover_id = core.remove_recipe_image(args.slug, args.id)
-    except ValueError as error:
-        sys.exit(str(error))
+    result = _remote(
+        args, "image.remove", {"slug": args.slug, "id": args.id},
+    )
     if args.json:
-        _dump({"id": args.id, "removed": True, "cover_image_id": cover_id})
+        _dump(result)
     else:
         print(f"Bild entfernt: {args.id}")
 
@@ -492,111 +524,119 @@ def cmd_image_remove(args):
 # --- Preferred products -----------------------------------------------------
 
 def cmd_favorites_list(args):
-    needs = core.favorites_load()
+    needs = _remote(args, "favorites.list")
     if args.json:
-        _dump([need.to_dict() for need in needs])
+        _dump(needs)
         return
     if not needs:
         print("Noch keine Lieblingsprodukte hinterlegt.")
         return
     for need in needs:
-        count = len(need.products)
+        count = len(need["products"])
         noun = "Produkt" if count == 1 else "Produkte"
-        print(f"  {need.id}  {need.name}  ({count} {noun})")
+        print(f"  {need['id']}  {need['name']}  ({count} {noun})")
 
 
 def cmd_favorites_show(args):
-    need = core.favorite_get_need(args.need)
-    if need is None:
-        sys.exit(f"Kein Einkaufsbedarf mit id oder Name '{args.need}'.")
+    need = _remote(args, "favorites.show", {"need": args.need})
     if args.json:
-        _dump(need.to_dict())
+        _dump(need)
         return
-    print(need.name)
-    if need.aliases:
-        print("  Aliasse: " + ", ".join(need.aliases))
-    for position, product in enumerate(need.products, 1):
-        details = " · ".join(value for value in [product.brand, product.store] if value)
-        print(f"  {position}. {product.name}" + (f"  [{details}]" if details else ""))
+    print(need["name"])
+    if need["aliases"]:
+        print("  Aliasse: " + ", ".join(need["aliases"]))
+    for position, product in enumerate(need["products"], 1):
+        details = " · ".join(
+            value for value in [product["brand"], product.get("store")] if value
+        )
+        print(
+            f"  {position}. {product['name']}"
+            + (f"  [{details}]" if details else "")
+        )
 
 
 def cmd_favorites_match(args):
-    need = core.favorite_match(args.text)
+    need = _remote(args, "favorites.match", {"text": args.text})
     if args.json:
-        _dump(need.to_dict() if need is not None else None)
+        _dump(need)
     elif need is None:
         print("Keine Zuordnung gefunden.")
     else:
-        print(f"{args.text} -> {need.name}")
+        print(f"{args.text} -> {need['name']}")
 
 
 def cmd_favorites_add(args):
-    try:
-        need = core.favorite_add_need(args.name, aliases=args.alias)
-    except ValueError as error:
-        sys.exit(str(error))
+    need = _remote(
+        args, "favorites.add", {"name": args.name, "aliases": args.alias},
+    )
     if args.json:
-        _dump(need.to_dict())
+        _dump(need)
     else:
-        print(f"Einkaufsbedarf angelegt: {need.name} ({need.id})")
+        print(f"Einkaufsbedarf angelegt: {need['name']} ({need['id']})")
 
 
 def cmd_favorites_set(args):
-    try:
-        need = core.favorite_update_need(args.need, args.name)
-    except ValueError as error:
-        sys.exit(str(error))
+    need = _remote(
+        args, "favorites.set", {"need": args.need, "name": args.name},
+    )
     if args.json:
-        _dump(need.to_dict())
+        _dump(need)
     else:
-        print(f"Einkaufsbedarf aktualisiert: {need.name}")
+        print(f"Einkaufsbedarf aktualisiert: {need['name']}")
 
 
 def cmd_favorites_remove(args):
-    try:
-        need = core.favorite_remove_need(args.need)
-    except ValueError as error:
-        sys.exit(str(error))
+    result = _remote(args, "favorites.remove", {"need": args.need})
     if args.json:
-        _dump({"id": need.id, "removed": True})
+        _dump(result)
     else:
-        print(f"Einkaufsbedarf entfernt: {need.name}")
+        print(f"Einkaufsbedarf entfernt: {args.need}")
 
 
 def cmd_favorites_alias_add(args):
-    try:
-        need = core.favorite_add_alias(args.need, args.alias)
-    except ValueError as error:
-        sys.exit(str(error))
+    need = _remote(
+        args, "favorites.alias.add", {"need": args.need, "alias": args.alias},
+    )
     if args.json:
-        _dump(need.to_dict())
+        _dump(need)
     else:
-        print(f"Alias bei '{need.name}' hinterlegt: {args.alias}")
+        print(f"Alias bei '{need['name']}' hinterlegt: {args.alias}")
 
 
 def cmd_favorites_alias_remove(args):
-    try:
-        need = core.favorite_remove_alias(args.need, args.alias)
-    except ValueError as error:
-        sys.exit(str(error))
+    need = _remote(
+        args, "favorites.alias.remove",
+        {"need": args.need, "alias": args.alias},
+    )
     if args.json:
-        _dump(need.to_dict())
+        _dump(need)
     else:
-        print(f"Alias bei '{need.name}' entfernt: {args.alias}")
+        print(f"Alias bei '{need['name']}' entfernt: {args.alias}")
 
 
 def cmd_favorites_product_add(args):
-    try:
-        product = core.favorite_add_product(
-            args.need, args.name, brand=args.brand or "", store=args.store or "",
-            note=args.note or "", image=args.image,
-        )
-    except ValueError as error:
-        sys.exit(str(error))
+    attachments = (
+        [client.encode_attachment("image", args.image)] if args.image else None
+    )
+    product = _remote(
+        args,
+        "favorites.product.add",
+        {
+            "need": args.need,
+            "name": args.name,
+            "brand": args.brand or "",
+            "store": args.store or "",
+            "note": args.note or "",
+        },
+        attachments=attachments,
+    )
     if args.json:
-        _dump(product.to_dict())
+        _dump(product)
     else:
-        print(f"Lieblingsprodukt hinzugefuegt: {product.name} ({product.id})")
+        print(
+            f"Lieblingsprodukt hinzugefuegt: "
+            f"{product['name']} ({product['id']})"
+        )
 
 
 def cmd_favorites_product_set(args):
@@ -604,61 +644,70 @@ def cmd_favorites_product_set(args):
                [args.name, args.brand, args.store, args.note, args.image]) \
             and not args.remove_image:
         sys.exit("Gib mindestens eine Aenderung an.")
-    try:
-        product = core.favorite_update_product(
-            args.need, args.id, name=args.name, brand=args.brand,
-            store=args.store, note=args.note, image=args.image,
-            remove_image=args.remove_image,
-        )
-    except ValueError as error:
-        sys.exit(str(error))
+    attachments = (
+        [client.encode_attachment("image", args.image)] if args.image else None
+    )
+    product = _remote(
+        args,
+        "favorites.product.set",
+        {
+            "need": args.need,
+            "id": args.id,
+            "name": args.name,
+            "brand": args.brand,
+            "store": args.store,
+            "note": args.note,
+            "remove_image": args.remove_image,
+        },
+        attachments=attachments,
+    )
     if args.json:
-        _dump(product.to_dict())
+        _dump(product)
     else:
-        print(f"Lieblingsprodukt aktualisiert: {product.name}")
+        print(f"Lieblingsprodukt aktualisiert: {product['name']}")
 
 
 def cmd_favorites_product_move(args):
-    try:
-        need = core.favorite_move_product(args.need, args.id, args.position)
-    except ValueError as error:
-        sys.exit(str(error))
+    need = _remote(args, "favorites.product.move", {
+        "need": args.need,
+        "id": args.id,
+        "position": args.position,
+    })
     if args.json:
-        _dump(need.to_dict())
+        _dump(need)
     else:
-        print(f"Reihenfolge bei '{need.name}' aktualisiert.")
+        print(f"Reihenfolge bei '{need['name']}' aktualisiert.")
 
 
 def cmd_favorites_product_remove(args):
-    try:
-        need = core.favorite_remove_product(args.need, args.id)
-    except ValueError as error:
-        sys.exit(str(error))
+    need = _remote(
+        args, "favorites.product.remove", {"need": args.need, "id": args.id},
+    )
     if args.json:
-        _dump(need.to_dict())
+        _dump(need)
     else:
-        print(f"Lieblingsprodukt bei '{need.name}' entfernt.")
+        print(f"Lieblingsprodukt bei '{need['name']}' entfernt.")
 
 
 # --- Shopping list ----------------------------------------------------------
 
-def _print_shopping_item(item, as_json: bool, *, prefix: str = "") -> None:
+def _print_shopping_item(item: dict, as_json: bool, *, prefix: str = "") -> None:
     if as_json:
-        _dump(item.to_dict())
+        _dump(item)
         return
-    marker = "[x]" if item.checked else "[ ]"
-    line = f"{marker} {item.id}  {item.text}"
-    if item.quantity:
-        line += f"  ({item.quantity})"
-    if item.source:
-        line += f"  (aus {item.source})"
+    marker = "[x]" if item["checked"] else "[ ]"
+    line = f"{marker} {item['id']}  {item['text']}"
+    if item.get("quantity"):
+        line += f"  ({item['quantity']})"
+    if item.get("source"):
+        line += f"  (aus {item['source']})"
     print(prefix + line)
 
 
 def cmd_shopping_list(args):
-    items = core.shopping_list(include_done=not args.pending)
+    items = _remote(args, "shopping.list", {"pending": args.pending})
     if args.json:
-        _dump([i.to_dict() for i in items])
+        _dump(items)
         return
     if not items:
         print("Einkaufsliste ist leer.")
@@ -668,87 +717,73 @@ def cmd_shopping_list(args):
 
 
 def cmd_shopping_add(args):
-    try:
-        item = core.shopping_add(
-            args.text, quantity=args.quantity or "", source=args.source,
-        )
-    except ValueError as e:
-        sys.exit(str(e))
+    item = _remote(args, "shopping.add", {
+        "text": args.text,
+        "quantity": args.quantity or "",
+        "source": args.source,
+    })
     if args.json:
-        _dump(item.to_dict())
+        _dump(item)
     else:
         _print_shopping_item(item, False, prefix="Hinzugefuegt: ")
 
 
 def cmd_shopping_add_many(args):
-    try:
-        items = core.shopping_add_many(args.texts)
-    except ValueError as e:
-        sys.exit(str(e))
+    items = _remote(args, "shopping.add_many", {"texts": args.texts})
     if args.json:
-        _dump([item.to_dict() for item in items])
+        _dump(items)
     else:
         print(f"{len(items)} Einkaufsposten hinzugefuegt.")
 
 
 def cmd_shopping_add_recipe(args):
-    try:
-        items = core.shopping_add_recipe(args.slug)
-    except ValueError as e:
-        sys.exit(str(e))
+    items = _remote(args, "shopping.add_recipe", {"slug": args.slug})
     if args.json:
-        _dump([i.to_dict() for i in items])
+        _dump(items)
     else:
         print(f"{len(items)} Zutat(en) aus '{args.slug}' hinzugefuegt.")
 
 
 def cmd_shopping_check(args):
-    try:
-        item = core.shopping_toggle(args.id, checked=True)
-    except ValueError as e:
-        sys.exit(str(e))
+    item = _remote(args, "shopping.check", {"id": args.id})
     if args.json:
-        _dump(item.to_dict())
+        _dump(item)
     else:
         _print_shopping_item(item, False, prefix="Abgehakt: ")
 
 
 def cmd_shopping_uncheck(args):
-    try:
-        item = core.shopping_toggle(args.id, checked=False)
-    except ValueError as e:
-        sys.exit(str(e))
+    item = _remote(args, "shopping.uncheck", {"id": args.id})
     if args.json:
-        _dump(item.to_dict())
+        _dump(item)
     else:
         _print_shopping_item(item, False, prefix="Wieder offen: ")
 
 
 def cmd_shopping_remove(args):
-    try:
-        core.shopping_remove(args.id)
-    except ValueError as e:
-        sys.exit(str(e))
+    result = _remote(args, "shopping.remove", {"id": args.id})
     if args.json:
-        _dump({"id": args.id, "deleted": True})
+        _dump(result)
     else:
         print(f"Entfernt: {args.id}")
 
 
 def cmd_shopping_remove_done(args):
-    count = core.shopping_remove_done()
+    result = _remote(args, "shopping.remove_done")
     if args.json:
-        _dump({"removed": count})
+        _dump(result)
     else:
+        count = result["removed"]
         noun = "erledigter Eintrag" if count == 1 else "erledigte Einträge"
         print(f"{count} {noun} entfernt.")
 
 
 def cmd_shopping_clear(args):
-    count = core.shopping_clear()
+    result = _remote(args, "shopping.clear")
     if args.json:
-        _dump({"removed": count})
+        _dump(result)
     else:
+        count = result["removed"]
         noun = "Eintrag" if count == 1 else "Einträge"
         print(f"{count} {noun} entfernt; die Einkaufsliste ist leer.")
 
@@ -812,14 +847,92 @@ def cmd_serve(args):
     uvicorn.run("gusto.web:app", host=args.host, port=args.port, reload=args.reload)
 
 
+def cmd_service(args):
+    from . import service
+
+    try:
+        result = service.service_action(
+            args.command,
+            app_root=args.app_root,
+            dry_run=args.dry_run,
+        )
+    except (OSError, ValueError, service.ServiceError) as error:
+        raise ValueError(f"Service-Aktion fehlgeschlagen: {error}") from error
+
+    if args.json:
+        _dump(result)
+        return
+    if args.dry_run:
+        print(f"Geplant: Gusto {args.command}")
+        if result.get("command"):
+            print("  " + subprocess.list2cmdline(result["command"]))
+        return
+    labels = {
+        "status": "Status",
+        "start": "Gusto wurde gestartet.",
+        "stop": "Gusto wurde gestoppt.",
+        "restart": "Gusto wurde neu gestartet.",
+    }
+    if args.command == "status":
+        state = "läuft" if result["running"] else "ist gestoppt"
+        print(f"Gusto {state} (Version {result['version']}).")
+    else:
+        print(labels[args.command])
+    if result.get("url"):
+        print(f"  {result['url']}")
+
+
+def cmd_update(args):
+    from . import update
+
+    try:
+        result = update.run_update(
+            app_root=args.app_root,
+            manifest_url=args.manifest_url,
+            check=args.check,
+            dry_run=args.dry_run,
+        )
+    except update.UpdateError as error:
+        if args.json and error.result:
+            _dump(error.result)
+            raise SystemExit(1) from None
+        raise ValueError(f"Update fehlgeschlagen: {error}") from error
+    except (OSError, ValueError) as error:
+        raise ValueError(f"Update fehlgeschlagen: {error}") from error
+
+    if args.json:
+        _dump(result)
+        return
+    status = result["status"]
+    if status == "current":
+        print(f"Gusto ist aktuell (Version {result['current_version']}).")
+    elif status == "update_available":
+        print(
+            f"Update verfügbar: {result['current_version']} → "
+            f"{result['latest_version']}"
+        )
+    elif status == "dry_run":
+        print(
+            f"Geplantes Update: {result['current_version']} → "
+            f"{result['latest_version']}"
+        )
+    elif status == "updated":
+        print(
+            f"Gusto wurde von {result['previous_version']} auf "
+            f"{result['current_version']} aktualisiert."
+        )
+
+
 def _uninstall_choice(
     args,
-    targets: uninstall.UninstallTargets,
+    targets,
     *,
     interactive: bool,
     input_func: Callable[[str], str] = input,
 ) -> bool | None:
     """Return whether to delete data; ``None`` means an interactive cancel."""
+    from . import uninstall
+
     if args.keep_data:
         return False
     if args.delete_data:
@@ -864,6 +977,8 @@ def _uninstall_choice(
 
 
 def cmd_uninstall(args):
+    from . import uninstall
+
     try:
         targets = uninstall.discover_targets()
         interactive = not args.json and sys.stdin.isatty()
@@ -908,6 +1023,8 @@ def _autostart_log_path() -> Path:
     windowless in that case and give it a platform-default place to record the
     later startup error.
     """
+    from . import core
+
     try:
         root = core.project_root()
     except (OSError, ValueError):
@@ -971,9 +1088,18 @@ def build_parser() -> argparse.ArgumentParser:
         description="Markdown-Rezepte – komplett per CLI steuerbar. "
                     "Jedes Kommando versteht --json.",
     )
+    p.add_argument(
+        "--server",
+        help="Gusto-Server-URL (vor GUSTO_URL und Instanz-Settings).",
+    )
     sub = p.add_subparsers(dest="command", required=True)
 
     base = argparse.ArgumentParser(add_help=False)
+    base.add_argument(
+        "--server",
+        default=argparse.SUPPRESS,
+        help="Gusto-Server-URL (vor GUSTO_URL und Instanz-Settings).",
+    )
     base.add_argument("--json", action="store_true",
                       help="Maschinenlesbare Ausgabe (fuer Agents/Skripte).")
 
@@ -1025,6 +1151,23 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("slug")
     sp.set_defaults(func=cmd_edit)
 
+    sp = sub.add_parser(
+        "content", help="Rezeptinhalt agentenfähig über den Server setzen.",
+    )
+    csub = sp.add_subparsers(dest="content_command", required=True)
+    cp = csub.add_parser(
+        "set", parents=[base],
+        help="Vollständigen Markdown-Inhalt aus Datei oder stdin setzen.",
+    )
+    cp.add_argument("slug")
+    source = cp.add_mutually_exclusive_group(required=True)
+    source.add_argument("--file", help="Lokale UTF-8-Markdown-Datei.")
+    source.add_argument(
+        "--stdin", action="store_true",
+        help="Vollständigen Markdown-Inhalt von stdin lesen.",
+    )
+    cp.set_defaults(func=cmd_content_set)
+
     sp = sub.add_parser("cooked", parents=[base], help="Rezept als gekocht eintragen.")
     sp.add_argument("slug")
     sp.add_argument(
@@ -1049,6 +1192,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser(
         "check", parents=[base],
         help="Integrität aller Gusto-Daten prüfen; Fehler liefern Status 1.",
+    )
+    sp.add_argument(
+        "--offline", action="store_true",
+        help="Expliziter Recovery-Check direkt auf der lokalen Dateninstanz.",
     )
     sp.set_defaults(func=cmd_check)
 
@@ -1297,6 +1444,45 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--reload", action="store_true", help="Auto-Reload (Entwicklung).")
     sp.set_defaults(func=cmd_serve)
 
+    for command, help_text in (
+        ("status", "Status des Gusto-User-Dienstes anzeigen."),
+        ("start", "Gusto-User-Dienst starten."),
+        ("stop", "Gusto-User-Dienst stoppen."),
+        ("restart", "Gusto-User-Dienst neu starten."),
+    ):
+        sp = sub.add_parser(command, parents=[base], help=help_text)
+        sp.add_argument(
+            "--app-root", type=Path,
+            help="Verwaltete App-Wurzel explizit wählen.",
+        )
+        sp.add_argument(
+            "--dry-run", action="store_true",
+            help="Geplante Service-Aktion anzeigen, ohne sie auszuführen.",
+        )
+        sp.set_defaults(func=cmd_service, command=command)
+
+    sp = sub.add_parser(
+        "update", parents=[base],
+        help="Gusto auf das neueste verifizierte Release aktualisieren.",
+    )
+    sp.add_argument(
+        "--check", action="store_true",
+        help="Nur prüfen, ob ein Update verfügbar ist.",
+    )
+    sp.add_argument(
+        "--dry-run", action="store_true",
+        help="Update prüfen und planen, aber nichts verändern.",
+    )
+    sp.add_argument(
+        "--app-root", type=Path,
+        help="Verwaltete App-Wurzel explizit wählen.",
+    )
+    sp.add_argument(
+        "--manifest-url",
+        help=argparse.SUPPRESS,
+    )
+    sp.set_defaults(func=cmd_update)
+
     sp = sub.add_parser(
         "uninstall", parents=[base],
         help="Installierte App entfernen; Daten optional behalten oder löschen.",
@@ -1332,6 +1518,12 @@ def main(argv=None) -> None:
     args = build_parser().parse_args(argv)
     try:
         args.func(args)
+    except (client.ClientError, ValueError) as error:
+        if args.json:
+            _dump({"ok": False, "error": str(error)})
+        else:
+            print(str(error), file=sys.stderr)
+        raise SystemExit(1) from None
     except SystemExit as error:
         if args.json and isinstance(error.code, str):
             _dump({"ok": False, "error": error.code})

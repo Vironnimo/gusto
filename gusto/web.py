@@ -21,12 +21,14 @@ from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageOps, UnidentifiedImageError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import core
+from . import api, core
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="Gusto")
+app.include_router(api.router)
 app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE / "templates"))
+templates.env.globals["gusto_change_state"] = core.change_state
 
 MAX_WEB_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_WEB_IMAGE_EDGE = 1920

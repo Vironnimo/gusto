@@ -2,17 +2,22 @@
 from __future__ import annotations
 
 import base64
+import atexit
+import importlib
 import io
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib import request
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -20,6 +25,17 @@ HOME = Path(tempfile.mkdtemp(prefix="gusto-cli-test-"))
 ENV = {**os.environ, "GUSTO_HOME": os.fspath(HOME)}
 sys.path.insert(0, os.fspath(ROOT))
 checks = 0
+SERVER = None
+
+
+def free_port():
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        return listener.getsockname()[1]
+
+
+PORT = free_port()
+SERVER_URL = f"http://127.0.0.1:{PORT}"
 
 
 def check(condition, message):
@@ -28,9 +44,13 @@ def check(condition, message):
     checks += 1
 
 
-def run(*arguments, expect=0):
+def run(*arguments, expect=0, input_text=None):
     result = subprocess.run(
-        [sys.executable, "-m", "gusto", *arguments], cwd=ROOT, env=ENV,
+        [
+            sys.executable, "-m", "gusto", *arguments,
+            "--server", SERVER_URL,
+        ],
+        cwd=ROOT, env=ENV, input=input_text,
         text=True, encoding="utf-8", capture_output=True,
     )
     check(result.returncode == expect,
@@ -49,6 +69,135 @@ def as_json_error(*arguments):
     check(payload.get("ok") is False and isinstance(payload.get("error"), str),
           "JSON command errors must use the documented error object")
     return payload
+
+
+def stop_server():
+    global SERVER
+    if SERVER is None or SERVER.poll() is not None:
+        return
+    SERVER.terminate()
+    try:
+        SERVER.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        SERVER.kill()
+        SERVER.wait(timeout=10)
+
+
+def start_server():
+    global SERVER
+    SERVER = subprocess.Popen(
+        [
+            sys.executable, "-m", "gusto", "serve",
+            "--host", "127.0.0.1", "--port", str(PORT),
+        ],
+        cwd=ROOT, env=ENV,
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8",
+    )
+    atexit.register(stop_server)
+    deadline = time.monotonic() + 15
+    last_error = None
+    while time.monotonic() < deadline:
+        if SERVER.poll() is not None:
+            diagnostics = SERVER.stderr.read() if SERVER.stderr else ""
+            raise AssertionError(
+                f"isolated Gusto server exited with {SERVER.returncode}: {diagnostics}"
+            )
+        try:
+            with request.urlopen(
+                f"{SERVER_URL}/api/v1/health", timeout=0.5,
+            ) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            if isinstance(payload, dict):
+                return
+        except Exception as error:
+            last_error = error
+            time.sleep(0.05)
+    stop_server()
+    raise AssertionError(f"isolated Gusto server did not become healthy: {last_error}")
+
+
+def store_snapshot():
+    return {
+        os.fspath(path.relative_to(HOME)): path.read_bytes()
+        for path in HOME.rglob("*")
+        if path.is_file()
+    }
+
+
+def check_client_contract():
+    from gusto import client
+
+    settings = HOME / "client-settings.json"
+    settings.write_text(
+        json.dumps({
+            "data_dir": os.fspath(HOME),
+            "server_url": "http://settings.example:8123/",
+        }),
+        encoding="utf-8",
+    )
+    check(
+        client.resolve_server_url(
+            "http://explicit.example:9000/",
+            environ={"GUSTO_URL": "http://environment.example:8001"},
+            settings_path=settings,
+        ) == "http://explicit.example:9000",
+        "--server must have the highest discovery priority",
+    )
+    check(
+        client.resolve_server_url(
+            environ={"GUSTO_URL": "http://environment.example:8001"},
+            settings_path=settings,
+        ) == "http://environment.example:8001",
+        "GUSTO_URL must override instance settings",
+    )
+    check(
+        client.resolve_server_url(environ={}, settings_path=settings)
+        == "http://settings.example:8123",
+        "instance settings must provide the server URL",
+    )
+    image = HOME / "attachment.bin"
+    image.write_bytes(b"\x00gusto\xff")
+    attachment = client.encode_attachment("image", image)
+    check(
+        attachment == {
+            "name": "image",
+            "filename": "attachment.bin",
+            "content_base64": base64.b64encode(b"\x00gusto\xff").decode("ascii"),
+        },
+        "attachments must use the versioned Base64 envelope",
+    )
+    captured = []
+
+    def fake_request(method, url, *, payload=None, timeout=None):
+        captured.append((method, url, payload, timeout))
+        return {"ok": True, "result": {"slug": "test"}}
+
+    with patch.object(client, "_request_json", side_effect=fake_request):
+        result = client.command(
+            "recipe.show", {"slug": "test"},
+            attachments=[attachment], server_url="http://gusto.local:9000",
+        )
+    check(result == {"slug": "test"}
+          and captured[0][0:2] == (
+              "POST", "http://gusto.local:9000/api/v1/command",
+          )
+          and captured[0][2] == {
+              "operation": "recipe.show",
+              "arguments": {"slug": "test"},
+              "attachments": [attachment],
+          }, "client command must send and unwrap the fixed API envelope")
+    with patch.object(
+        client, "_request_json",
+        return_value={"ok": False, "error": "remote failure"},
+    ):
+        try:
+            client.command("catalog.list", server_url="http://gusto.local")
+        except client.ClientError as error:
+            check(str(error) == "remote failure",
+                  "remote command errors must retain their API message")
+        else:
+            raise AssertionError("remote command failure was not raised")
 
 
 def check_serve_json_contract():
@@ -121,10 +270,86 @@ def check_serve_dependency_preflight():
           "serve must not report startup before dependency validation succeeds")
 
 
+def check_lifecycle_contract():
+    from gusto import cli, service, update
+
+    status_result = {
+        "ok": True,
+        "action": "status",
+        "status": "running",
+        "running": True,
+        "version": "1.2.3",
+        "url": "http://127.0.0.1:8000",
+        "command": None,
+    }
+    output = io.StringIO()
+    with patch.object(service, "service_action", return_value=status_result):
+        with patch.object(
+            cli.client, "command",
+            side_effect=AssertionError("lifecycle command used the server API"),
+        ):
+            with redirect_stdout(output):
+                cli.main(["status", "--json"])
+    check(json.loads(output.getvalue()) == status_result,
+          "status must be a local JSON-capable lifecycle command")
+
+    update_result = {
+        "ok": True,
+        "status": "update_available",
+        "current_version": "1.2.3",
+        "latest_version": "1.3.0",
+        "update_available": True,
+        "manifest_url": "https://example.invalid/release.json",
+    }
+    output = io.StringIO()
+    with patch.object(update, "run_update", return_value=update_result) as run_update:
+        with redirect_stdout(output):
+            cli.main([
+                "update", "--check", "--json",
+                "--manifest-url", "https://example.invalid/release.json",
+            ])
+    check(json.loads(output.getvalue()) == update_result
+          and run_update.call_args.kwargs["check"] is True,
+          "update --check must stay local and machine-readable")
+
+    failure_result = {
+        "ok": False,
+        "status": "update_failed",
+        "error": "activation failed",
+        "rollback": True,
+        "current_version": "1.2.3",
+        "attempted_version": "1.3.0",
+    }
+    output = io.StringIO()
+    failure = update.UpdateError("activation failed", result=failure_result)
+    with patch.object(update, "run_update", side_effect=failure):
+        try:
+            with redirect_stdout(output):
+                cli.main(["update", "--json"])
+        except SystemExit as error:
+            exit_code = error.code
+        else:
+            exit_code = 0
+    check(exit_code == 1 and json.loads(output.getvalue()) == failure_result,
+          "update rollback failures must preserve their structured result")
+
+
 def main():
+    check_client_contract()
+    importlib.import_module("gusto.cli")
+    check("gusto.core" not in sys.modules,
+          "importing the normal CLI client must not import local persistence")
+    check_lifecycle_contract()
+    start_server()
     home = as_json("home")
     check(Path(home["path"]) == HOME and home["source"] == "environment",
           "home --json must explain the active GUSTO_HOME data directory")
+    check(home["server_url"] == SERVER_URL and home["server_reachable"] is True,
+          "home --json must report server discovery and reachability separately")
+    check(Path(home["server_data_path"]) == HOME
+          and isinstance(home["server_revision"], int)
+          and home["server_version"],
+          "home --json must identify the reachable server-owned store/version")
     check_serve_json_contract()
     check_serve_dependency_preflight()
     invalid_port = run("serve", "--port", "70000", expect=2)
@@ -250,9 +475,28 @@ def main():
         "suggest", "--days", "-1",
     )["error"], "suggest must reject a negative day range")
 
-    (HOME / "recipes" / f"{slug}.md").write_text(
+    recipe_source = HOME / "updated-recipe.md"
+    recipe_source.write_text(
         "# Neue Suppe\n\n## Zutaten\n\n- Wasser\n- Salz\n", encoding="utf-8",
     )
+    content_result = as_json(
+        "content", "set", slug, "--file", os.fspath(recipe_source),
+    )
+    check(content_result["slug"] == slug,
+          "content set --file must transfer Markdown through the API")
+    stdin_content = "# Neue Suppe\n\n## Zutaten\n\n- Wasser\n- Salz\n"
+    stdin_result = json.loads(run(
+        "content", "set", slug, "--stdin", "--json",
+        input_text=stdin_content,
+    ).stdout)
+    check(stdin_result["slug"] == slug,
+          "content set --stdin must support headless agents")
+    conflicting_content = run(
+        "content", "set", slug, "--stdin", "--file", os.fspath(recipe_source),
+        expect=2,
+    )
+    check("not allowed with argument" in conflicting_content.stderr,
+          "content set must reject simultaneous stdin and file input")
     sourced = as_json(
         "shopping", "add", "Eine Prise Salz", "--source", slug,
     )
@@ -385,8 +629,12 @@ def main():
           and consistency["ok"] is True
           and not consistency["missing_files"],
           "check --json must expose consistency state")
-    (HOME / "recipes" / f"{slug}.md").write_text(
+    drifting_source = HOME / "drifting-recipe.md"
+    drifting_source.write_text(
         "# Abweichender Titel\n", encoding="utf-8",
+    )
+    (HOME / "recipes" / f"{slug}.md").write_text(
+        drifting_source.read_text(encoding="utf-8"), encoding="utf-8",
     )
     broken_check = run("check", "--json", expect=1)
     check(not broken_check.stderr
@@ -434,6 +682,20 @@ def main():
     check(purged == {"slug": slug, "purged": True}
           and as_json("archive", "list") == [],
           "archive purge --yes must permanently remove the snapshot")
+
+    snapshot = store_snapshot()
+    stop_server()
+    unavailable = as_json_error("new", "Darf nicht angelegt werden")
+    check("nicht erreichbar" in unavailable["error"],
+          "a domain command must fail cleanly while the server is stopped")
+    check(store_snapshot() == snapshot,
+          "a failed remote mutation must not change the local store")
+    offline = as_json("check", "--offline")
+    check("recipe_count" in offline,
+          "the explicitly marked offline check must not need the server")
+    stopped_home = as_json("home")
+    check(stopped_home["server_reachable"] is False,
+          "home must stay local and report a stopped service")
 
     refused_uninstall = as_json_error("uninstall", "--keep-data")
     check("Projekt-Checkout" in refused_uninstall["error"],

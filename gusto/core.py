@@ -1,7 +1,8 @@
 """Core logic of the recipe system.
 
-ALL logic lives here. The CLI (gusto/cli.py) and the web UI (gusto/web.py)
-are only thin shells around this module. No feature exists in only one surface.
+All domain logic lives here. The server API and web routes adapt this module;
+the normal CLI is an HTTP client of that server. No feature exists in only one
+surface.
 
 Data model:
   recipes/<slug>.md   pure Markdown content of a recipe (NO frontmatter)
@@ -42,6 +43,8 @@ _AUTO_SETTINGS = object()
 _LOCK_TIMEOUT_SECONDS = 30.0
 _THREAD_LOCKS: dict[str, threading.Lock] = {}
 _THREAD_LOCKS_GUARD = threading.Lock()
+_MUTATION_CONTEXT = threading.local()
+_CHANGE_HISTORY_LIMIT = 256
 
 
 def default_data_root(platform_name: str | None = None,
@@ -188,6 +191,10 @@ def favorites_path() -> Path:
     return data_dir() / "favorites.json"
 
 
+def changes_path() -> Path:
+    return data_dir() / "changes.json"
+
+
 def images_dir() -> Path:
     return project_root() / "images"
 
@@ -237,12 +244,35 @@ def _thread_lock(path: Path) -> threading.Lock:
 def _acquire_file_lock(path: Path):
     """Acquire one byte as an advisory lock on Windows or POSIX."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.touch(exist_ok=True)
-    handle = path.open("r+b", buffering=0)
-    handle.seek(0, os.SEEK_END)
-    if handle.tell() == 0:
-        handle.write(b"\0")
     deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
+    try:
+        descriptor = os.open(
+            path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600,
+        )
+    except FileExistsError:
+        # The process which atomically created a new lock file writes its one
+        # lockable byte before exposing the handle to mutation code. Wait out
+        # that tiny initialization window instead of racing a second write on
+        # Windows (which sporadically raises PermissionError).
+        while True:
+            try:
+                if path.stat().st_size >= 1:
+                    break
+            except FileNotFoundError:
+                pass
+            if time.monotonic() >= deadline:
+                raise ValueError(
+                    f"Gusto-Sperrdatei konnte nicht initialisiert werden: {path}"
+                )
+            time.sleep(0.01)
+        handle = path.open("r+b", buffering=0)
+    else:
+        try:
+            os.write(descriptor, b"\0")
+        except Exception:
+            os.close(descriptor)
+            raise
+        handle = os.fdopen(descriptor, "r+b", buffering=0)
 
     while True:
         try:
@@ -309,15 +339,169 @@ def _mutation_locks(*resources: str):
             lock.release()
 
 
-def _locked_mutation(*resources: str):
+def _locked_mutation(*resources: str, event_resources=None):
     """Decorate one complete read-modify-write Core transaction."""
     def decorate(function):
         @wraps(function)
         def locked(*args, **kwargs):
-            with _mutation_locks(*resources):
-                return function(*args, **kwargs)
+            return _execute_locked_mutation(
+                resources, lambda: function(*args, **kwargs),
+                event_resources=event_resources,
+            )
         return locked
     return decorate
+
+
+def _execute_locked_mutation(resources, function, *, event_resources=None):
+    """Run one dynamic mutation and emit its event after business locks."""
+    with _mutation_locks(*resources):
+        previous = getattr(_MUTATION_CONTEXT, "changed", None)
+        _MUTATION_CONTEXT.changed = False
+        try:
+            result = function()
+            changed = _MUTATION_CONTEXT.changed
+        finally:
+            if previous is None:
+                try:
+                    del _MUTATION_CONTEXT.changed
+                except AttributeError:
+                    pass
+            else:
+                _MUTATION_CONTEXT.changed = previous
+    if changed:
+        _record_change(event_resources or resources)
+    return result
+
+
+def _mark_mutation() -> None:
+    """Remember that the active Core transaction changed persisted state."""
+    if hasattr(_MUTATION_CONTEXT, "changed"):
+        _MUTATION_CONTEXT.changed = True
+
+
+def _load_change_journal() -> dict:
+    path = changes_path()
+    if not path.exists():
+        return {
+            "revision": 0,
+            "resources": [],
+            "events": [],
+            "compacted_revision": 0,
+            "compacted_resources": [],
+        }
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"Ungültiges Gusto-Änderungsjournal: {error}") from error
+    if not isinstance(state, dict):
+        raise ValueError("Ungültiges Gusto-Änderungsjournal: JSON-Objekt erwartet.")
+    revision = state.get("revision")
+    resources = state.get("resources")
+    events = state.get("events", [])
+    compacted_revision = state.get("compacted_revision", 0)
+    compacted_resources = state.get("compacted_resources", [])
+    if (isinstance(revision, bool) or not isinstance(revision, int)
+            or revision < 0 or not isinstance(resources, list)
+            or not all(isinstance(item, str) for item in resources)
+            or not isinstance(events, list)
+            or isinstance(compacted_revision, bool)
+            or not isinstance(compacted_revision, int)
+            or compacted_revision < 0
+            or not isinstance(compacted_resources, list)
+            or not all(isinstance(item, str) for item in compacted_resources)):
+        raise ValueError("Ungültiges Gusto-Änderungsjournal.")
+    # Safely migrate a journal written before compacted resources were
+    # persisted. A broad refresh is preferable to silently missing a change.
+    retained_revisions = [
+        event.get("revision") for event in events
+        if isinstance(event, dict) and isinstance(event.get("revision"), int)
+    ]
+    if compacted_revision == 0 and revision:
+        first_retained = min(retained_revisions, default=revision + 1)
+        if first_retained > 1:
+            compacted_revision = first_retained - 1
+            compacted_resources = [
+                "catalog", "favorites", "log", "shopping",
+            ]
+    return {
+        "revision": revision,
+        "resources": list(resources),
+        "events": list(events),
+        "compacted_revision": compacted_revision,
+        "compacted_resources": list(compacted_resources),
+    }
+
+
+def change_state() -> dict:
+    """Return the latest persisted change revision and affected resources."""
+    state = _load_change_journal()
+    return {
+        "revision": state["revision"],
+        "resources": state["resources"],
+    }
+
+
+def change_events(after_revision: int = 0) -> list[dict]:
+    """Return retained change events newer than ``after_revision``."""
+    if (isinstance(after_revision, bool) or not isinstance(after_revision, int)
+            or after_revision < 0):
+        raise ValueError("Die Änderungsrevision muss eine nichtnegative ganze Zahl sein.")
+    state = _load_change_journal()
+    events = []
+    cursor = after_revision
+    if after_revision < state["compacted_revision"]:
+        events.append({
+            "revision": state["compacted_revision"],
+            "resources": list(state["compacted_resources"]),
+        })
+        cursor = state["compacted_revision"]
+    for event in state["events"]:
+        if (isinstance(event, dict)
+                and isinstance(event.get("revision"), int)
+                and event["revision"] > cursor
+                and isinstance(event.get("resources"), list)):
+            events.append({
+                "revision": event["revision"],
+                "resources": list(event["resources"]),
+            })
+    if not events and state["revision"] > after_revision:
+        events.append({
+            "revision": state["revision"],
+            "resources": list(state["resources"]),
+        })
+    return events
+
+
+def _record_change(resources) -> dict:
+    """Persist one monotone change event under its own short lock."""
+    normalized = sorted({
+        resource for resource in resources
+        if resource in {"catalog", "log", "favorites", "shopping"}
+    })
+    if not normalized:
+        return change_state()
+    with _mutation_locks("events"):
+        state = _load_change_journal()
+        event = {
+            "revision": state["revision"] + 1,
+            "resources": normalized,
+        }
+        combined = [*state["events"], event]
+        dropped = combined[:-_CHANGE_HISTORY_LIMIT]
+        events = combined[-_CHANGE_HISTORY_LIMIT:]
+        compacted_revision = state["compacted_revision"]
+        compacted_resources = set(state["compacted_resources"])
+        if dropped:
+            compacted_revision = dropped[-1]["revision"]
+            for dropped_event in dropped:
+                compacted_resources.update(dropped_event["resources"])
+        _write_json(changes_path(), {
+            **event,
+            "events": events,
+            "compacted_revision": compacted_revision,
+            "compacted_resources": sorted(compacted_resources),
+        }, track_mutation=False)
+    return event
 
 
 # --- Data model -------------------------------------------------------------
@@ -546,25 +730,16 @@ def recipe_references() -> dict[str, dict]:
     return references
 
 
-def _write_json(path: Path, data) -> None:
-    """Write atomically through a unique temporary file beside the target."""
+def _write_json(path: Path, data, *, track_mutation: bool = True) -> bool:
+    """Write changed JSON atomically; return whether the file was replaced."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp",
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(data, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-        temporary.replace(path)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def _write_text(path: Path, content: str) -> None:
-    """Write UTF-8 text atomically through a temporary sibling."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    content = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    if path.is_file():
+        try:
+            if path.read_text(encoding="utf-8") == content:
+                return False
+        except OSError:
+            pass
     descriptor, temporary_name = tempfile.mkstemp(
         dir=path.parent, prefix=f".{path.name}.", suffix=".tmp",
     )
@@ -575,6 +750,32 @@ def _write_text(path: Path, content: str) -> None:
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
+    if track_mutation:
+        _mark_mutation()
+    return True
+
+
+def _write_text(path: Path, content: str) -> bool:
+    """Write changed UTF-8 text atomically; return whether it was replaced."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file():
+        try:
+            if path.read_text(encoding="utf-8") == content:
+                return False
+        except OSError:
+            pass
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    _mark_mutation()
+    return True
 
 
 # --- Create -----------------------------------------------------------------
@@ -773,7 +974,7 @@ def load_log(days: int | None = None) -> list[dict]:
     return sorted(entries, key=lambda e: e["date"])
 
 
-@_locked_mutation("catalog")
+@_locked_mutation("catalog", "log")
 def log_cooked(slug: str, when: str | None = None) -> None:
     """Record a valid ISO calendar date no later than today."""
     recipes = load_recipes()
@@ -983,7 +1184,7 @@ def restore_archived_recipe(slug: str) -> Recipe:
     return entry.recipe
 
 
-@_locked_mutation("catalog", "shopping")
+@_locked_mutation("catalog", "shopping", event_resources=("catalog",))
 def purge_archived_recipe(slug: str) -> ArchivedRecipe:
     """Permanently remove one archived recipe snapshot."""
     entry = get_archived(slug)
@@ -1001,6 +1202,7 @@ def purge_archived_recipe(slug: str) -> ArchivedRecipe:
             "Entferne diese Einträge vor dem endgültigen Löschen."
         )
     shutil.rmtree(archive_recipe_dir(slug))
+    _mark_mutation()
     return entry
 
 
@@ -1870,10 +2072,13 @@ def shopping_add(text: str, quantity: str = "", source: str | None = None) -> Sh
     an existing recipe and makes the item participate in that recipe's active
     import guard."""
     resources = ("shopping",) if source is None else ("catalog", "shopping")
-    with _mutation_locks(*resources):
+    def add():
         if source is not None and get(source) is None:
             raise ValueError(f"Kein Rezept mit Slug '{source}'.")
         return _shopping_append([(_shopping_text(text), quantity)], source=source)[0]
+    return _execute_locked_mutation(
+        resources, add, event_resources=("shopping",),
+    )
 
 
 @_locked_mutation("shopping")
@@ -1885,7 +2090,7 @@ def shopping_add_many(texts: list[str]) -> list[ShoppingItem]:
     return _shopping_append(entries)
 
 
-@_locked_mutation("catalog", "shopping")
+@_locked_mutation("catalog", "shopping", event_resources=("shopping",))
 def shopping_add_recipe(slug: str) -> list[ShoppingItem]:
     """Put all ingredients of a recipe (parse_ingredients on its .md) onto the
     list, source=slug. Returns the newly added items. ValueError if the recipe

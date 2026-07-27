@@ -8,7 +8,7 @@
 //                favorite media: cache-first (filenames change on replacement)
 //                other GET:    cache-first (static)
 
-const CACHE = "gusto-v9";
+const CACHE = "gusto-v10";
 
 const APP_SHELL = [
   "/shopping",

@@ -12,10 +12,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import core
+from . import service
 
 
 SETTINGS_FILENAME = "gusto.settings.json"
-LINUX_SERVICE_PATH = Path("/etc/systemd/system/gusto.service")
 
 
 class UninstallError(RuntimeError):
@@ -29,6 +29,9 @@ class UninstallTargets:
     command_directory: Path
     settings: Path
     platform: str
+    managed: bool = False
+    linux_command_link: Path | None = None
+    windows_start_menu: Path | None = None
 
 
 def discover_targets(
@@ -44,18 +47,36 @@ def discover_targets(
     if not (platform_name.startswith("win") or platform_name.startswith("linux")):
         raise UninstallError("Deinstallation wird nur unter Windows und Linux unterstützt.")
 
-    application = Path(prefix or sys.prefix).expanduser().resolve()
+    runtime = Path(prefix or sys.prefix).expanduser().resolve()
     base = Path(base_prefix or sys.base_prefix).expanduser().resolve()
     package = Path(package_file or __file__).expanduser().resolve()
     package_root = package.parent.parent
-    settings = application / SETTINGS_FILENAME
+    application = runtime
+    managed = False
+    for candidate in (runtime, *runtime.parents):
+        if ((candidate / service.STATE_FILENAME).is_file()
+                and (candidate / service.CURRENT_FILENAME).is_file()
+                and runtime.is_relative_to(candidate / "versions")):
+            paths = service.managed_paths(candidate)
+            current = service.read_current(paths)
+            if Path(str(current["runtime"])).resolve() != runtime:
+                raise UninstallError(
+                    "Gusto läuft nicht aus der aktiven verwalteten Version."
+                )
+            application = candidate
+            managed = True
+            break
+    settings = (
+        application / service.STATE_FILENAME if managed
+        else application / SETTINGS_FILENAME
+    )
 
     if (package_root / "pyproject.toml").is_file():
         raise UninstallError(
             "Ein Projekt-Checkout wird nicht mit 'gusto uninstall' gelöscht. "
             "Der Befehl ist nur für eine installierte Gusto-Runtime gedacht."
         )
-    if application == base or not package.is_relative_to(application):
+    if runtime == base or not package.is_relative_to(runtime):
         raise UninstallError(
             "Gusto läuft nicht aus einer eigenständigen verwalteten Installation."
         )
@@ -64,15 +85,20 @@ def discover_targets(
             f"Die Installationsmarkierung fehlt: {settings}. "
             "Aus Sicherheitsgründen wird nichts gelöscht."
         )
-    if not (application / "pyvenv.cfg").is_file():
+    if not (runtime / "pyvenv.cfg").is_file():
         raise UninstallError(
-            f"'{application}' ist keine eindeutig erkennbare virtuelle Umgebung. "
+            f"'{runtime}' ist keine eindeutig erkennbare virtuelle Umgebung. "
             "Aus Sicherheitsgründen wird nichts gelöscht."
         )
 
     if platform_name.startswith("win"):
-        command_directory = application / "Scripts"
-        command = command_directory / "gusto.exe"
+        command_directory = (
+            application / "bin" if managed else application / "Scripts"
+        )
+        command = (
+            command_directory / "gusto.cmd" if managed
+            else command_directory / "gusto.exe"
+        )
     else:
         command_directory = application / "bin"
         command = command_directory / "gusto"
@@ -83,12 +109,27 @@ def discover_targets(
         )
 
     data = Path(data_root or core.project_root()).expanduser().resolve()
+    linux_link = (
+        (Path.home() / ".local" / "bin" / "gusto")
+        if managed and platform_name.startswith("linux") else None
+    )
+    windows_start_menu = None
+    if managed and platform_name.startswith("win"):
+        appdata = Path(os.environ.get("APPDATA") or
+                       Path.home() / "AppData" / "Roaming")
+        windows_start_menu = (
+            appdata / "Microsoft" / "Windows" / "Start Menu" /
+            "Programs" / "Gusto.url"
+        ).resolve()
     return UninstallTargets(
         application=application,
         data=data,
         command_directory=command_directory,
         settings=settings,
         platform=platform_name,
+        managed=managed,
+        linux_command_link=linux_link,
+        windows_start_menu=windows_start_menu,
     )
 
 
@@ -226,33 +267,33 @@ Write-Output "removed"
 
 def remove_linux_autostart(
     *,
-    interactive: bool,
-    service_path: Path = LINUX_SERVICE_PATH,
+    interactive: bool = False,
+    service_path: Path | None = None,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-    effective_uid: Callable[[], int] | None = None,
 ) -> bool:
-    """Disable and remove the optional system-wide Gusto systemd unit."""
+    """Disable and remove Gusto's systemd user unit without sudo."""
+    service_path = service_path or service.default_linux_unit_path()
     if not service_path.exists():
         return False
     systemctl = shutil.which("systemctl")
     if not systemctl:
         raise UninstallError("systemctl für die Autostart-Bereinigung fehlt.")
 
-    elevated: list[str] = []
-    uid = (effective_uid or os.geteuid)()
-    if uid != 0:
-        sudo = shutil.which("sudo")
-        if not sudo:
-            raise UninstallError("sudo für die systemd-Bereinigung fehlt.")
-        elevated = [sudo] + ([] if interactive else ["-n"])
-
     commands = [
-        [*elevated, systemctl, "disable", "--now", "gusto.service"],
-        [*elevated, os.fspath(shutil.which("rm") or "/bin/rm"),
-         "-f", "--", os.fspath(service_path)],
-        [*elevated, systemctl, "daemon-reload"],
+        [systemctl, "--user", "disable", "--now", "gusto.service"],
+        [systemctl, "--user", "daemon-reload"],
     ]
-    for command in commands:
+    result = runner(
+        commands[0], text=True, encoding="utf-8", errors="replace",
+        **({} if interactive else {"capture_output": True}),
+    )
+    if result.returncode:
+        raise UninstallError(
+            "Linux-Autostart konnte nicht entfernt werden: "
+            + _completed_error(result)
+        )
+    service_path.unlink(missing_ok=True)
+    for command in commands[1:]:
         options = {"text": True, "encoding": "utf-8", "errors": "replace"}
         if not interactive:
             options["capture_output"] = True
@@ -262,6 +303,38 @@ def remove_linux_autostart(
                 "Linux-Autostart konnte nicht entfernt werden: "
                 + _completed_error(result)
             )
+    return True
+
+
+def remove_windows_registration(targets: UninstallTargets) -> bool:
+    """Remove the exact HKCU Installed Apps record and Start Menu URL."""
+    if not targets.platform.startswith("win"):
+        return False
+    import winreg
+    removed = False
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Gusto"
+    try:
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+        removed = True
+    except FileNotFoundError:
+        pass
+    if targets.windows_start_menu is not None:
+        existed = targets.windows_start_menu.exists()
+        targets.windows_start_menu.unlink(missing_ok=True)
+        removed = removed or existed
+    return removed
+
+
+def remove_linux_command_link(targets: UninstallTargets) -> bool:
+    link = targets.linux_command_link
+    if link is None or not link.is_symlink():
+        return False
+    try:
+        if link.resolve() != (targets.application / "bin" / "gusto").resolve():
+            return False
+    except OSError:
+        return False
+    link.unlink()
     return True
 
 
@@ -421,6 +494,8 @@ def perform_uninstall(
     interactive: bool,
     autostart_remover: Callable[..., bool] = remove_autostart,
     path_remover: Callable[[Path], bool] = remove_windows_user_path,
+    registration_remover: Callable[[UninstallTargets], bool] = remove_windows_registration,
+    linux_link_remover: Callable[[UninstallTargets], bool] = remove_linux_command_link,
     removal_scheduler: Callable[..., Path] = schedule_removal,
 ) -> dict[str, object]:
     """Clean platform integration and schedule the verified trees for removal."""
@@ -432,6 +507,8 @@ def perform_uninstall(
         "delete_data": delete_data,
         "autostart_removed": False,
         "path_entry_removed": False,
+        "registration_removed": False,
+        "command_link_removed": False,
     }
     if dry_run:
         return result
@@ -443,6 +520,9 @@ def perform_uninstall(
         result["path_entry_removed"] = path_remover(
             targets.command_directory,
         )
+        result["registration_removed"] = registration_remover(targets)
+    else:
+        result["command_link_removed"] = linux_link_remover(targets)
     log_path = removal_scheduler(
         targets, separate_data_target=separate_data,
     )
