@@ -8,7 +8,7 @@ dependencies = []
 [project.optional-dependencies]
 # Managed apps install the server extra; the standalone CLI client stays stdlib-only.
 web = ["fastapi", "uvicorn[standard]", "jinja2", "markdown", "python-multipart", "pillow"]
-test = ["httpx2", "playwright"]
+test = ["httpx2", "playwright", "pyyaml"]
 
 [project.scripts]
 gusto = "gusto.cli:main"

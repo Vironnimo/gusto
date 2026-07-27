@@ -1,0 +1,128 @@
+name: quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  script-tests:
+    name: scripts / ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+        python:
+          - "3.10"
+          - "3.14"
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install test runtime
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[web,test]"
+          python -m pip check
+      - name: Compile Python sources
+        run: python -m compileall -q gusto install.py scripts tests
+      - name: Validate JavaScript syntax
+        run: |
+          node --check gusto/static/app.js
+          node --check gusto/static/shopping-client.js
+          node --check gusto/static/sw.js
+      - name: Validate shell syntax
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          bash -n install.sh
+          bash -n deploy/install-systemd.sh
+      - name: Validate PowerShell syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $files = @("install.ps1", "deploy/install-windows-task.ps1")
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file), [ref]$tokens, [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | Format-List
+              throw "PowerShell syntax failed: $file"
+            }
+          }
+      - name: Run all script checks
+        env:
+          PYTHONUTF8: "1"
+        run: python scripts/run_quality.py scripts
+
+  browser:
+    name: browser + PWA / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install browser test runtime
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[web,test]"
+          python -m pip check
+      - name: Install Chromium and Linux system dependencies
+        if: runner.os == 'Linux'
+        run: python -m playwright install --with-deps chromium
+      - name: Install Chromium
+        if: runner.os == 'Windows'
+        run: python -m playwright install chromium
+      - name: Run browser and offline PWA checks
+        env:
+          PYTHONUTF8: "1"
+        run: python scripts/run_quality.py browser
+      - name: Upload browser diagnostics after failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: browser-diagnostics-${{ matrix.os }}
+          path: |
+            scripts/shots/
+            .testdata/
+            .testdata-pwa/
+          if-no-files-found: warn
+          retention-days: 7

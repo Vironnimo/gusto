@@ -6,73 +6,180 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  windows-contract:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install test and web dependencies
-        run: python -m pip install -e ".[web,test]"
-      - name: Run Windows lifecycle and client gates
-        run: |
-          python tests/test_service.py
-          python tests/test_update.py
-          python tests/test_paths.py
-          python tests/test_autostart.py
-          python tests/test_uninstall.py
-          python tests/test_packaging.py
-          python tests/test_api.py
-          python tests/test_cli.py
-
-  build-and-release:
-    needs: windows-contract
+  validate-tag:
+    name: validate release tag
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Check out the tagged revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          python-version: "3.12"
-      - name: Verify tag matches package version
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+      - name: Verify tag and package version
         shell: bash
         run: |
           version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           test "$GITHUB_REF_NAME" = "v$version"
-      - name: Install test and web dependencies
-        run: python -m pip install -e ".[web,test]"
-      - name: Run non-browser quality gates
+
+  quality:
+    name: complete Linux and Windows quality gates
+    needs: validate-tag
+    permissions:
+      contents: read
+    uses: ./.github/workflows/quality.yml
+
+  build:
+    name: build the release once
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the tagged revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install build runtime
         run: |
-          python tests/test_service.py
-          python tests/test_update.py
-          python tests/test_paths.py
-          python tests/test_autostart.py
-          python tests/test_uninstall.py
-          python tests/test_packaging.py
-          python tests/test_api.py
-          python tests/test_recipes.py
-          python tests/test_shopping.py
-          python tests/test_favorites.py
-          python tests/test_merge.py
-          python tests/test_concurrency.py
-          python tests/test_cli.py
-      - name: Install Chromium
-        run: python -m playwright install --with-deps chromium
-      - name: Run browser and PWA quality gates
-        run: |
-          python scripts/browser_check.py
-          python scripts/pwa_check.py
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[web,test]"
+          python -m pip check
       - name: Build verified release assets
         run: python scripts/build_release.py
-      - name: Publish release assets
-        uses: softprops/action-gh-release@v2
+      - name: Verify the release manifest and checksum
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("dist")
+          manifest = json.loads(
+              (root / "gusto-release.json").read_text(encoding="utf-8")
+          )
+          archive = root / manifest["archive"]
+          actual = hashlib.sha256(archive.read_bytes()).hexdigest()
+          assert actual == manifest["sha256"]
+          checksum = (root / manifest["checksum"]).read_text(
+              encoding="utf-8"
+          ).split()[0]
+          assert checksum == actual
+          PY
+      - name: Upload immutable workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          files: |
+          name: gusto-release-assets
+          path: |
             dist/gusto-release.zip
             dist/gusto-release.zip.sha256
             dist/gusto-release.json
             dist/install.ps1
             dist/install.sh
+          if-no-files-found: error
+          retention-days: 7
+
+  smoke-install:
+    name: install smoke / ${{ matrix.os }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            port: 18765
+          - os: windows-latest
+            port: 18766
+    steps:
+      - name: Check out smoke-test helpers
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Download the exact release artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: gusto-release-assets
+          path: dist
+      - name: Smoke-test one-shot installation and lifecycle
+        env:
+          PYTHONUTF8: "1"
+        run: >-
+          python scripts/ci_smoke_install.py
+          --release-dir dist
+          --work-dir "${{ runner.temp }}/gusto-ci-smoke"
+          --port ${{ matrix.port }}
+      - name: Upload installation diagnostics after failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: install-diagnostics-${{ matrix.os }}
+          path: ${{ runner.temp }}/gusto-ci-smoke/logs/
+          if-no-files-found: warn
+          retention-days: 7
+
+  publish:
+    name: attest and publish the tested assets
+    needs:
+      - build
+      - smoke-install
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Download the tested release artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: gusto-release-assets
+          path: dist
+      - name: Attest build provenance
+        uses: actions/attest@36051bcae73b7c2a8a6945a48cbf80953c6baa35 # v4
+        with:
+          subject-path: |
+            dist/gusto-release.zip
+            dist/gusto-release.zip.sha256
+            dist/gusto-release.json
+            dist/install.ps1
+            dist/install.sh
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/gusto-release.zip \
+            dist/gusto-release.zip.sha256 \
+            dist/gusto-release.json \
+            dist/install.ps1 \
+            dist/install.sh \
+            --verify-tag \
+            --generate-notes \
+            --latest
