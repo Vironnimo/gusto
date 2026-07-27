@@ -25,6 +25,7 @@ sys.path.insert(0, os.fspath(ROOT))
 
 import install as gusto_installer  # noqa: E402
 import gusto  # noqa: E402
+from gusto import cli as gusto_cli  # noqa: E402
 
 
 manifest = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -160,6 +161,14 @@ assert optional_dependencies is not None
 web_dependencies = re.search(r"^web\s*=.*$", optional_dependencies.group(1), re.MULTILINE)
 assert web_dependencies is not None
 normalized = web_dependencies.group(0).lower()
+declared_web_requirements = set(re.findall(r'"([^"]+)"', normalized))
+preflight_requirements = {
+    requirement.lower() for requirement, _ in gusto_cli._WEB_DEPENDENCIES
+}
+
+assert preflight_requirements == declared_web_requirements, (
+    "The serve preflight and the declared web extra must cover the same requirements."
+)
 
 assert '"python-multipart"' in normalized, (
     "The web extra must install python-multipart because the application uses "

@@ -7,6 +7,7 @@ for the terminal. User-facing output and --help texts stay German.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import subprocess
@@ -752,11 +753,49 @@ def cmd_shopping_clear(args):
         print(f"{count} {noun} entfernt; die Einkaufsliste ist leer.")
 
 
+_WEB_DEPENDENCIES = (
+    ("fastapi", ("fastapi",)),
+    ("uvicorn[standard]", ("uvicorn",)),
+    ("jinja2", ("jinja2",)),
+    ("markdown", ("markdown",)),
+    ("python-multipart", ("python_multipart", "multipart.multipart")),
+    ("pillow", ("PIL.Image",)),
+)
+
+
+def _missing_web_dependencies() -> list[str]:
+    missing = []
+    for requirement, module_names in _WEB_DEPENDENCIES:
+        for module_name in module_names:
+            try:
+                importlib.import_module(module_name)
+                break
+            except ImportError:
+                continue
+        else:
+            missing.append(requirement)
+    return missing
+
+
+def _web_dependency_error(missing: list[str]) -> str:
+    return (
+        "Web-Abhängigkeiten fehlen oder sind nicht importierbar: "
+        f"{', '.join(missing)}. Installiere Gusto mit Web-Unterstützung. "
+        'Projekt-Checkout: python -m pip install -e ".[web]". '
+        "Release-Paket: python install.py (ohne --cli-only)."
+    )
+
+
+def _load_web_runtime():
+    missing = _missing_web_dependencies()
+    if missing:
+        sys.exit(_web_dependency_error(missing))
+    importlib.import_module("gusto.web")
+    return importlib.import_module("uvicorn")
+
+
 def cmd_serve(args):
-    try:
-        import uvicorn
-    except ImportError:
-        sys.exit("Web-Abhaengigkeiten fehlen. Installiere sie mit:  pip install -e .[web]")
+    uvicorn = _load_web_runtime()
     local_host = "127.0.0.1" if args.host in {"0.0.0.0", "::"} else args.host
     url = f"http://{local_host}:{args.port}"
     if args.json:

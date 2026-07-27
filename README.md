@@ -110,6 +110,11 @@ gusto serve --port 9000     # different port
 ```
 
 Then open `http://<machine>:8000` in the browser.
+Before reporting a successful start, `serve` validates every optional web
+dependency. If a CLI-only installation is used, rerun `python install.py`
+without `--cli-only`; in a development checkout use
+`python -m pip install -e ".[web]"`. With `--json`, a missing dependency is a
+structured command error and no `starting` object or traceback is emitted.
 
 ## CLI
 
@@ -150,9 +155,9 @@ gusto uninstall                     # interactive: app only or app + data
 Every command takes `--json` for machine-readable output. Expected command
 failures then return `{ "ok": false, "error": "..." }` on stdout with exit
 code 1. `check --json` returns the full diagnostics with `ok: false` and exit 1
-instead; `edit --json` reports the completed editor process, and `serve --json`
-emits a startup object before serving. Parser/usage errors remain on stderr
-with exit code 2.
+instead; `edit --json` reports the completed editor process. `serve --json`
+validates the web runtime first and emits a startup object only when that
+validation succeeds. Parser/usage errors remain on stderr with exit code 2.
 
 `cooked --date` accepts only a valid `YYYY-MM-DD` no later than today.
 `--max-time`, `log --days`, and `suggest --days` must be positive;

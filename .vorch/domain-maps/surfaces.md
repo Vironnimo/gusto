@@ -24,8 +24,9 @@ expected command failures into `{ "ok": false, "error": "..." }` on stdout
 with exit 1. Parser/usage errors happen before command dispatch and remain plain
 stderr with exit 2. `check --json` deliberately returns its complete diagnostics
 with `ok:false` and exit 1 for hard errors. `edit --json` reports the editor
-result after it exits; `serve --json` emits a startup object before entering
-the long-running server.
+result after it exits. `serve --json` validates every optional web dependency
+first; missing packages are structured command errors, while a valid runtime
+emits a startup object before entering the long-running server.
 
 `gusto home` reports the active store root, its resolution source, and the
 normal platform default. It also reports the instance `gusto.settings.json`
@@ -114,9 +115,10 @@ visible catalog filters.
   default. The checkout selects `gusto-dev`, while installed settings select the
   production store. Without settings, an existing legacy checkout remains a
   compatibility fallback.
-- `gusto serve` imports Uvicorn only when invoked and starts `gusto.web:app`.
-  Both platform deployment helpers run the installed module from the normal
-  per-user application directory.
+- `gusto serve` imports and validates every optional web dependency plus
+  `gusto.web` before reporting startup, then starts `gusto.web:app` through
+  Uvicorn. Both platform deployment helpers run the installed module from the
+  normal per-user application directory.
 - `install.py` installs from either the wheel beside it in a release bundle or
   a complete source checkout. It creates a virtual environment only when the
   selected runtime has no Python executable, so upgrades reuse rather than

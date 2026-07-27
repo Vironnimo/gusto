@@ -8,10 +8,11 @@ import os
 import subprocess
 import sys
 import tempfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -57,24 +58,67 @@ def check_serve_json_contract():
     fake_uvicorn = SimpleNamespace(
         run=lambda *args, **kwargs: calls.append((args, kwargs)),
     )
-    original = sys.modules.get("uvicorn")
-    sys.modules["uvicorn"] = fake_uvicorn
     output = io.StringIO()
-    try:
+    with patch.object(cli, "_load_web_runtime", return_value=fake_uvicorn):
         with redirect_stdout(output):
             cli.cmd_serve(SimpleNamespace(
-                host="0.0.0.0", port=8765, reload=False, json=True,
+                host="0.0.0.0", port=8765, reload=True, json=True,
             ))
-    finally:
-        if original is None:
-            sys.modules.pop("uvicorn", None)
-        else:
-            sys.modules["uvicorn"] = original
     payload = json.loads(output.getvalue())
     check(payload["status"] == "starting"
           and payload["url"] == "http://127.0.0.1:8765"
-          and calls[0][1]["port"] == 8765,
-          "serve --json must emit a parseable startup object before serving")
+          and payload["reload"] is True
+          and calls[0][1]["port"] == 8765
+          and calls[0][1]["reload"] is True,
+          "serve --json must preserve reload and emit startup before serving")
+
+
+def check_serve_dependency_preflight():
+    from gusto import cli
+
+    imported = []
+
+    def fake_import(module_name):
+        imported.append(module_name)
+        if module_name in {"markdown", "PIL.Image"}:
+            raise ModuleNotFoundError(
+                f"No module named '{module_name}'", name=module_name,
+            )
+        return SimpleNamespace()
+
+    with patch.object(cli.importlib, "import_module", side_effect=fake_import):
+        missing = cli._missing_web_dependencies()
+
+    check(missing == ["markdown", "pillow"],
+          "serve preflight must report every unavailable web dependency")
+    check(imported == [
+        "fastapi", "uvicorn", "jinja2", "markdown",
+        "python_multipart", "PIL.Image",
+    ], "serve preflight must validate every declared web dependency")
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with patch.object(
+        cli, "_missing_web_dependencies", return_value=["markdown", "pillow"],
+    ):
+        try:
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                cli.main(["serve", "--json"])
+        except SystemExit as error:
+            exit_code = error.code
+        else:
+            exit_code = 0
+
+    payload = json.loads(stdout.getvalue())
+    check(exit_code == 1 and stderr.getvalue() == "",
+          "missing web dependencies must be a clean JSON command failure")
+    check(payload.get("ok") is False
+          and "markdown, pillow" in payload.get("error", "")
+          and 'python -m pip install -e ".[web]"' in payload["error"]
+          and "python install.py (ohne --cli-only)" in payload["error"],
+          "serve dependency errors must list packages and both install paths")
+    check(payload.get("status") is None,
+          "serve must not report startup before dependency validation succeeds")
 
 
 def main():
@@ -82,6 +126,7 @@ def main():
     check(Path(home["path"]) == HOME and home["source"] == "environment",
           "home --json must explain the active GUSTO_HOME data directory")
     check_serve_json_contract()
+    check_serve_dependency_preflight()
     invalid_port = run("serve", "--port", "70000", expect=2)
     check("zwischen 1 und 65535" in invalid_port.stderr,
           "serve must reject ports outside the TCP range")

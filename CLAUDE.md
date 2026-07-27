@@ -70,9 +70,11 @@ python -m gusto <command>      # CLI during development
 ```
 
 All commands understand `--json` (machine-readable, for agents). `edit --json`
-returns the editor result after the editor exits; `serve --json` emits one
-startup object before the long-running server takes over. Expected command
-failures write `{ "ok": false, "error": "..." }` to stdout and exit 1.
+returns the editor result after the editor exits. `serve --json` first validates
+every optional web dependency; missing packages are expected command failures,
+otherwise it emits one startup object before the long-running server takes
+over. Expected command failures write `{ "ok": false, "error": "..." }` to
+stdout and exit 1.
 `check --json` instead returns its full diagnostics with `ok: false` and exit 1
 on hard integrity errors. Argparse usage errors remain plain stderr with exit 2. Each runtime
 uses its adjacent `gusto.settings.json`: the checkout selects the platform data

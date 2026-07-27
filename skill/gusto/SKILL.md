@@ -15,8 +15,10 @@ With `--json`, expected command failures are also JSON on stdout:
 `{"ok": false, "error": "..."}` with exit code 1. Argument/usage errors remain
 plain stderr with exit code 2. `check --json` is the deliberate exception: hard
 integrity errors return the full diagnostics object with `ok:false` and exit 1.
-`edit --json` waits for the editor and reports its result; `serve --json` emits
-one startup object before the long-running server takes over.
+`edit --json` waits for the editor and reports its result. `serve --json` first
+validates every optional web dependency; missing packages use the expected
+error object, otherwise it emits one startup object before the long-running
+server takes over.
 
 ## Invocation
 
