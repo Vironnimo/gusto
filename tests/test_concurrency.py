@@ -99,7 +99,7 @@ def main() -> None:
     sys.path.insert(0, os.fspath(ROOT))
     from gusto import core
 
-    check(str(core.project_root()).startswith(tempfile.gettempdir()),
+    check(core.project_root().is_relative_to(Path(tempfile.gettempdir()).resolve()),
           "GUSTO_HOME does not point into the temp directory -- abort.")
 
     core.add_recipe("Meal", slug="meal")

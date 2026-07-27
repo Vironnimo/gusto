@@ -9,6 +9,7 @@ under recipes/ and data/ would be modified -- which is forbidden.
 import os
 import sys
 import tempfile
+from pathlib import Path
 
 # --- Hermetic: GUSTO_HOME to a throwaway directory, BEFORE the import -------
 os.environ["GUSTO_HOME"] = tempfile.mkdtemp(prefix="gusto-test-")
@@ -51,7 +52,7 @@ def expect_valueerror(fn, *args, **kwargs):
 
 def main():
     # Safety net: we really work inside the temp directory.
-    check(str(core.project_root()).startswith(tempfile.gettempdir()),
+    check(core.project_root().is_relative_to(Path(tempfile.gettempdir()).resolve()),
           "GUSTO_HOME does not point into the temp directory -- abort.")
 
     # --- parse_ingredients --------------------------------------------------
