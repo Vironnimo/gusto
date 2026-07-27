@@ -97,11 +97,11 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
           and service.read_current(paths)["version"] == "1.1.0",
           "verified update must atomically select the new runtime")
     check(orchestration[:3] == [
-        ("install", "1.1.0", data, "http://127.0.0.1:8000"),
+        ("install", "1.1.0", data.resolve(), "http://127.0.0.1:8000"),
         ("stop",), ("activate", "1.1.0"),
     ], "runtime must be prepared before the short service switch")
     check(health_expectations == [{
-        "expected_version": "1.1.0", "expected_data_path": data,
+        "expected_version": "1.1.0", "expected_data_path": data.resolve(),
     }], "activation health must bind version and data store")
     check(old.exists() and paths.version("1.1.0").exists(),
           "current and previous versions must remain side by side")
