@@ -171,7 +171,7 @@ Quality gates:
   files, images, covers, interrupted moves, collisions, shopping sources,
   favorite data, and historical log references. Time/day ranges must be
   positive, ports stay within 1–65535, and `edit`/`serve` now honor `--json`.
-- 2026-07-27: Gusto 0.2.0 centralizes normal browser and CLI behavior on one
+- 2026-07-27: Gusto 0.1.5 centralizes normal browser and CLI behavior on one
   anonymous LAN service/API. CLI business commands have no local fallback;
   explicit recovery/lifecycle commands remain local. Persisted change
   revisions and SSE keep online browser pages current while shopping PWA

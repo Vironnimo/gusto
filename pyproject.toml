@@ -1,6 +1,6 @@
 [project]
 name = "gusto"
-version = "0.2.0"
+version = "0.1.5"
 description = "Markdown-basiertes Rezept-System, steuerbar per CLI und Web – agent-freundlich."
 requires-python = ">=3.10"
 dependencies = []
