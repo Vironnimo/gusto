@@ -43,8 +43,12 @@ commands (`serve`, `home`, service control, update/uninstall, and
 
 `scripts/build_release.py` creates stable public assets:
 `gusto-release.zip`, its SHA-256 file, and `gusto-release.json`.
-`.github/workflows/release.yml` verifies version tags and publishes those
-assets after the full script/browser/PWA quality gates. Public
+`.github/workflows/quality.yml` is the reusable PR/main/release gate: all script
+checks run on Windows and Linux with Python 3.10 and the current feature
+release, while real Chromium browser/PWA checks run on both operating systems.
+`.github/workflows/release.yml` verifies version tags, builds the release once,
+smoke-installs that exact artifact on fresh Windows and Linux runners, creates
+build-provenance attestations, and only then publishes the assets. Public
 `install.ps1`/`install.sh` bootstraps install the application
 only; agent skills are delivered separately. Managed application roots use
 versioned side-by-side runtimes and a current pointer under
@@ -60,6 +64,8 @@ data through `GUSTO_HOME`.
 
 Tests are standalone Python scripts rather than a pytest suite. Browser and PWA
 checks start isolated servers and drive real Chromium through Playwright.
+`python scripts/run_quality.py scripts|browser|all` is the shared
+cross-platform entry point used locally and by CI.
 
 Quality gates:
 
@@ -76,6 +82,7 @@ Quality gates:
 - `python tests/test_autostart.py`
 - `python tests/test_uninstall.py`
 - `python tests/test_paths.py`
+- `python tests/test_ci.py`
 - `python scripts/browser_check.py`
 - `python scripts/pwa_check.py`
 
@@ -175,6 +182,11 @@ Quality gates:
   assets, switches side-by-side, and rolls back unhealthy activation.
   Installer reruns are repair-only; app installation never installs the agent
   skill.
+- 2026-07-27: Reusable CI runs every script contract on Windows/Linux at Python
+  3.10 and 3.14 plus real Chromium/PWA suites on both systems. Tagged releases
+  build once, smoke-install the exact artifact on both systems, retain failure
+  diagnostics, attest provenance, and grant write authority only to the final
+  publish job.
 
 ## Domain Maps
 

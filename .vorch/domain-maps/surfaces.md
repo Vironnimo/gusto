@@ -92,9 +92,18 @@ formats.
 - `scripts/build_release.py` builds `gusto-release.zip`,
   `gusto-release.zip.sha256`, and `gusto-release.json`. The archive carries the
   wheel and bootstrap/lifecycle payload; it contains no user data.
-- `.github/workflows/release.yml` verifies tag/version agreement, runs
-  script, browser, and PWA gates, builds the assets, and publishes their stable
-  filenames.
+- `.github/workflows/quality.yml` is reusable by normal PR/main CI and tagged
+  releases. It runs all standalone script contracts on Windows/Linux at the
+  supported minimum and current Python, plus real Chromium/PWA suites on both
+  operating systems. `scripts/run_quality.py` is the shared local/CI entry
+  point.
+- `.github/workflows/release.yml` waits for that complete workflow, builds the
+  release once, and passes the immutable artifact to Windows/Linux install
+  smoke jobs. `scripts/ci_smoke_install.py` verifies bootstrap, user service,
+  health, UI/PWA shell, remote CLI, restart, update check, and uninstall before
+  the final job attests and publishes the same bytes. External actions are
+  commit-pinned with weekly Dependabot updates; only the publish job has
+  write/OIDC/attestation permissions.
 - Public root `install.ps1` and `install.sh` download the latest manifest,
   archive, and checksum, verify SHA-256 and safe ZIP extraction, then run the
   bundled `install.py`. They install the app only; agent-skill delivery is a
@@ -152,6 +161,9 @@ formats.
 - Release installation/update trusts neither ZIP paths nor a downloaded
   archive until manifest/checksum/hash checks pass. Keep previous verified
   runtime available until the new one passes health.
+- Never let the release workflow rebuild per operating system or publish an
+  untested copy. Both smoke jobs and the attestation/publish job must consume
+  the single artifact emitted by the gated build job.
 - A first install may claim only an absent/empty app root; state/current
   mismatches and foreign non-empty roots are rejected. App and data trees may
   never be equal or nested because app-only uninstall must preserve data.

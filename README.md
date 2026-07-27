@@ -210,6 +210,8 @@ install.sh          public Linux bootstrap
 gusto.settings.json development instance data selection
 deploy/             platform user-autostart compatibility helpers
 scripts/build_release.py  build public release assets + manifest/checksum
+scripts/run_quality.py    one cross-platform entry point for every quality gate
+scripts/ci_smoke_install.py  release install/lifecycle smoke test
 scripts/            end-to-end tests of the web UI (Playwright)
 skill/gusto/        self-contained agent operating guide
 ```
@@ -259,6 +261,10 @@ to the temporary log path returned by the command.
 ## Tests
 
 ```bash
+python scripts/run_quality.py scripts  # every standalone contract/core test
+python scripts/run_quality.py browser  # Chromium UI + offline PWA
+python scripts/run_quality.py all      # complete local quality gate
+
 python scripts/browser_check.py    # starts a server against throwaway data and
                                    # clicks through the web UI in a real browser
 python scripts/pwa_check.py        # offline / sync / service worker
@@ -274,16 +280,31 @@ python tests/test_autostart.py     # windowless Windows launcher and exit codes
 python tests/test_uninstall.py     # safe app/data removal lifecycle
 python tests/test_packaging.py     # fresh-install dependency declaration
 python tests/test_paths.py         # Windows/Linux data-directory contract
+python tests/test_ci.py            # CI matrix, permissions and release gates
 ```
+
+`.github/workflows/quality.yml` runs automatically for pull requests and pushes
+to `main`. The script suite covers Python 3.10 (the supported minimum) and the
+current Python release on both Ubuntu and Windows. Real Chromium browser and PWA
+checks also run on both operating systems. External actions are pinned to exact
+commits and receive weekly Dependabot update PRs; failed browser jobs retain
+their throwaway data and screenshots for seven days.
 
 ## Publishing a release
 
 Keep `pyproject.toml` and `gusto/__init__.py` on the same version, then push the
-matching `v<version>` tag. The release workflow runs Linux, Windows, browser,
-and PWA gates before publishing the stable manifest, archive, checksum, and
-both one-shot scripts. The public installation URLs become usable after the
-first successful tagged release; publishing the tag is intentionally not part
-of a local install/build.
+matching `v<version>` tag. The release workflow first reuses the complete normal
+CI, then builds the release once. That exact immutable workflow artifact is
+installed on fresh Ubuntu and Windows runners. The smoke test verifies the
+one-shot bootstrap, per-user service, health contract, browser UI/PWA shell,
+remote CLI mutation, restart, `gusto update --check`, and data-preserving
+uninstall. Only after both installations pass does the final job create build
+provenance attestations and publish the stable manifest, archive, checksum, and
+one-shot scripts. Write, OIDC, and attestation permissions exist only in that
+final job.
+
+The public installation URLs become usable after the first successful tagged
+release; publishing the tag is intentionally not part of a local install/build.
 
 ## Roadmap
 

@@ -237,7 +237,13 @@ Full round-trip in the skill
 - `install.ps1`, `install.sh` — public Windows/Linux one-shot bootstraps
 - `gusto.settings.json` — development instance data selection (`gusto-dev`)
 - `scripts/build_release.py` — builds stable release ZIP, checksum and manifest
-- `.github/workflows/release.yml` — verifies tags and publishes public assets
+- `.github/workflows/quality.yml` — reusable Linux/Windows, minimum/current
+  Python, Chromium, and offline-PWA gates for PRs, `main`, and releases
+- `.github/workflows/release.yml` — builds once, smoke-installs the exact
+  artifact on Linux/Windows, attests it, then publishes public assets
+- `scripts/run_quality.py` — cross-platform entry point for all local gates
+- `scripts/ci_smoke_install.py` — release installation/service/lifecycle smoke
+  test used only on fresh GitHub-hosted runners
 - `deploy/install-systemd.sh`, `deploy/install-windows-task.ps1` — compatibility adapters
 - `skill/gusto/` — self-contained generic skill (`SKILL.md` and
   `references/cli.md`, `references/installation.md`) for operating and
