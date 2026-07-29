@@ -18,10 +18,12 @@ Before doing anything else in every Session, read `.vorch/PROJECT.md` and `.vorc
    not a nice-to-have. The actual goal: you ask an agent "what should I cook
    today?" / "what do I do with these ingredients?", and the agent uses the CLI
    to answer.
-2. **One source of truth, several thin shells.** All logic lives in
-   `gusto/core.py`. The CLI (`gusto/cli.py`) and web (`gusto/web.py`) are only
-   shells around it. **Never** build a feature only in the web UI — always in
-   core + CLI first. Every CLI command understands `--json`.
+2. **One running service, several thin clients.** All domain logic lives in
+   `gusto/core.py` behind the anonymous versioned API in `gusto/api.py`. The web
+   UI and normal CLI commands talk to that same running service; the CLI never
+   silently falls back to local Core/filesystem access. **Never** build a
+   feature only in the web UI — add it to Core, API and CLI. Every CLI command
+   understands `--json`.
 3. **Recipes are pure Markdown files. NO frontmatter.** Metadata lives
    separately in `data/recipes.json`, linked via the `slug` (= filename).
 4. **NO MCP. Ever.** Explicit, final decision by the user. Do not propose it, do
@@ -38,9 +40,9 @@ Before doing anything else in every Session, read `.vorch/PROJECT.md` and `.vorc
 7. **Show it live, don't just describe it.** When something runs, start the
    server yourself and give a clickable link — don't just explain how to start it.
 8. **Keep every agent guide and the skill in sync.** The usage documentation
-   deliberately lives in the agent guides and under `skill/gusto/`. When the CLI
-   or its behavior changes, update **every copy** immediately — none of the
-   agent-facing references may go stale.
+   deliberately lives in the agent guides and under `skill/gusto/`. When the
+   CLI, service or installation behavior changes, update **every copy**
+   immediately — none of the agent-facing references may go stale.
 
 ## Data model
 
@@ -56,10 +58,11 @@ Before doing anything else in every Session, read `.vorch/PROJECT.md` and `.vorc
 | `data/log.json` | Cooking log: `[{ "date": "YYYY-MM-DD", "slug": ... }]`. |
 
 `gusto new` writes both the .md AND the index entry. `gusto set --title` updates
-the metadata title and Markdown H1 together. If a .md is created by
-hand, add the entry in `data/recipes.json` and run `gusto check`. When saving
-from the web, the first line of the .md is always rewritten as `# {title}` (the
-title is its own form field, not in the body).
+the metadata title and Markdown H1 together. Normal clients never edit these
+files directly: use `gusto content set` for headless body replacement and
+`gusto edit` for an interactive editor round-trip. When saving, the first line
+is always rewritten as `# {title}` (the title is its own field, not in the
+body).
 
 Per recipe, tags stay a **flat list**; their category lives centrally in
 `data/categories.json` (so recipe tags stay clean). Tag filters are **facets**:
@@ -71,45 +74,50 @@ immediately. Then sort the tag into `categories.json`.
 ## Usage
 
 ```bash
-python scripts/build_release.py # transferable ZIP incl. skill; no repo access
-python install.py              # install release/source into the user app dir
-python install.py --cli-only   # the pure CLI needs no dependencies
-# Windows (new console after install): gusto serve
-# Linux:   ~/.local/opt/gusto/bin/gusto serve
-python -m gusto <command>      # CLI during development
+# Windows PowerShell, no admin:
+irm https://github.com/Vironnimo/gusto/releases/latest/download/install.ps1 | iex
+# Linux, no root:
+curl -fsSL https://github.com/Vironnimo/gusto/releases/latest/download/install.sh | bash
+
+gusto status                   # installed user service
+gusto update                   # normal update path
+python -m gusto serve          # explicit development service
 ```
 
-**Instance safety for agents:** Normal household tasks use the installed
-`gusto` command; `python -m gusto` from the checkout intentionally selects the
-separate `gusto-dev` store. At the first Gusto operation in each task, run the
-exact chosen invocation with `home --json`. Before any mutation, verify `path`,
-`source`, `platform_default`, and `settings_path`, then reuse that same
-invocation for all dependent commands and direct file paths. If the target is
-unexpected or ambiguous, do not write. Never fall back from a missing installed
-command to `python -m gusto`.
+Installation is per-user, registers login autostart, starts the service
+immediately and verifies `/api/v1/health`. Windows uses a limited current-user
+Scheduled Task; Linux uses `systemd --user`. It needs no admin rights and does
+not run before login. Re-running the installer is not an update; only explicit
+repair mode may replace an existing installation. Windows lifecycle commands
+refuse to take over or remove an unrelated Scheduled Task named `Gusto`.
 
-All commands understand `--json` (machine-readable, for agents). `edit --json`
-returns the editor result after the editor exits. `serve --json` first validates
-every optional web dependency; missing packages are expected command failures,
-otherwise it emits one startup object before the long-running server takes
-over. Expected command failures write `{ "ok": false, "error": "..." }` to
-stdout and exit 1.
-`check --json` instead returns its full diagnostics with `ok: false` and exit 1
-on hard integrity errors. Argparse usage errors remain plain stderr with exit 2. Each runtime
-uses its adjacent `gusto.settings.json`: the checkout selects the platform data
-sibling `gusto-dev`, while the installer writes the production data path beside
-the installed app. `GUSTO_HOME` overrides settings for isolated tests or an
-explicit portable store. `gusto home --json` reports the active path, source,
-platform default, and settings file.
+**Instance safety for agents:** normal household tasks use the installed
+`gusto` command and the running server. At the first Gusto operation in each
+task, run the exact chosen invocation with `home --json`. Before mutation,
+verify `server_url`, `server_reachable`, `path`, `source`,
+`platform_default`, and `settings_path`, then reuse that invocation. If the
+server or target is unexpected, do not write. Never fall back from a missing or
+unreachable installed service to `python -m gusto` or direct file access.
+
+All commands understand `--json`. Normal domain commands go through
+`POST /api/v1/command`; `--server URL`, then `GUSTO_URL`, then instance settings
+select the server. Expected command failures write
+`{ "ok": false, "error": "..." }` to stdout and exit 1. `check --json` returns
+full diagnostics; `check --offline` is the explicit local recovery exception.
+`edit` downloads a temporary copy and uploads it after the editor exits;
+headless agents use `content set --file` or `content set --stdin`. Lifecycle
+commands (`serve`, `home`, `status`, `start`, `stop`, `restart`, `update`,
+`uninstall`) remain local.
 
 ```
 gusto list   [--tag T ...] [--max-time N]    Positive cap; unknown durations fail it
 gusto search "<terms>" [--match any|all] [--tag T ...] [--max-time N]  Full-text
 gusto tags   [--all]                          Show tag categories (facets)
-gusto home                                    Show active data directory
+gusto home                                    Show server/service/data selection
 gusto show   <slug>                          Print a recipe (--json: incl. content)
 gusto new    "<Title>" [--tags a,b] [--duration N] [--servings N]  Warns on unsorted tags
 gusto edit   <slug>                          Open the .md in the editor
+gusto content set <slug> (--file PATH|--stdin)  Replace Markdown through the server
 gusto cooked <slug> [--date YYYY-MM-DD]      Record a valid, non-future date
 gusto log    [--days N]                       Show the log; N is positive
 gusto set    <slug> [--title ...] [--tags a,b] [--duration N|--clear-duration] [--servings N|--clear-servings]  Title also rewrites H1
@@ -118,8 +126,10 @@ gusto archive list|show <slug>
 gusto archive restore <slug>
 gusto archive purge <slug> --yes              Permanently delete one snapshot
 gusto suggest [--days N] [--limit N]          Positive days; nonnegative limit
-gusto check                                   Full integrity check; hard errors exit 1
-gusto serve  [--host H] [--port 1..65535]     Start the web UI (LAN)
+gusto check [--offline]                       Server check; explicit local recovery
+gusto serve  [--host H] [--port 1..65535]     Foreground recovery/development server
+gusto status|start|stop|restart                Control installed user service
+gusto update [--check]                         Verified normal update path
 gusto uninstall [--keep-data|--delete-data --yes] [--dry-run]  Remove installed app
 
 gusto image list <slug>                       Show cover and gallery images
@@ -149,15 +159,14 @@ gusto shopping remove-done                    Remove all checked entries
 gusto shopping clear                          Empty the complete visible list
 ```
 
-**Parallel agent calls:** Read-only commands may always run in parallel. Gusto
-serializes mutations that share the catalog, favorites, or shopping source of
-truth, so independent adds, image imports, and checkbox updates do not lose
-data. Prefer one `shopping add-many` call for a known group. Keep dependent or
-order-sensitive calls sequential (`new` before `image add`, `favorites add`
-before `product-add`, and `product-move` / `image cover` / `shopping clear` /
-`shopping remove-done` relative to mutations they order or remove). Direct
-Markdown/category edits and the interactive `edit` command are outside these
-Core locks and must not race another write to the same files.
+**Parallel agent calls:** read-only commands may always run in parallel. The
+server serializes mutations that share the catalog, favorites, or shopping
+source of truth, so independent adds, image uploads, and checkbox updates do
+not lose data. Prefer one `shopping add-many` call for a known group. Keep
+dependent or order-sensitive calls sequential (`new` before `image add`,
+`favorites add` before `product-add`, and reordering/removal relative to the
+mutations it affects). Never bypass the service with direct Markdown or JSON
+edits. `edit` and `content set` also write through the server.
 
 Explicit `shopping check`/`uncheck` and repeated removal of the same tombstone
 are idempotent without advancing `updated_at`. `shopping add-recipe` rejects an
@@ -228,18 +237,29 @@ Full round-trip in the skill
 ## Important files
 
 - `gusto/core.py` — all logic (load/save, search, log, suggestions)
-- `gusto/cli.py` — the CLI
-- `gusto/web.py` — FastAPI app (server-rendered, Jinja2)
+- `gusto/api.py` — anonymous versioned command API + change-event stream
+- `gusto/client.py` — standard-library HTTP client
+- `gusto/cli.py` — remote domain CLI + local lifecycle/recovery commands
+- `gusto/web.py` — FastAPI host (server-rendered UI + API)
+- `gusto/service.py` — current-user autostart/service lifecycle
+- `gusto/update.py` — verified side-by-side updates and rollback
 - `gusto/templates/`, `gusto/static/` — UI + CSS/JS
 - `scripts/browser_check.py` — end-to-end browser test (Playwright)
-- `install.py` — cross-platform Windows/Linux installation
+- `install.py` — managed installation implementation
+- `install.ps1`, `install.sh` — public Windows/Linux one-shot bootstraps
 - `gusto.settings.json` — development instance data selection (`gusto-dev`)
-- `scripts/build_release.py` — builds the transferable wheel + installer + skill ZIP
-- `deploy/install-systemd.sh`, `deploy/install-windows-task.ps1` — optional platform autostart
+- `scripts/build_release.py` — builds stable release ZIP, checksum and manifest
+- `.github/workflows/quality.yml` — reusable Linux/Windows, minimum/current
+  Python, Chromium, and offline-PWA gates for PRs, `main`, and releases
+- `.github/workflows/release.yml` — builds once, smoke-installs the exact
+  artifact on Linux/Windows, attests it, then publishes public assets
+- `scripts/run_quality.py` — cross-platform entry point for all local gates
+- `scripts/ci_smoke_install.py` — release installation/service/lifecycle smoke
+  test used only on fresh GitHub-hosted runners
+- `deploy/install-systemd.sh`, `deploy/install-windows-task.ps1` — compatibility adapters
 - `skill/gusto/` — self-contained generic skill (`SKILL.md` and
-  `references/cli.md`) for operating the system via the CLI; it is shipped in
-  every release ZIP and mirrors "Usage" / "Typical tasks" in the agent guides
-  — **keep every copy in sync** (principle 8).
+  `references/cli.md`, `references/installation.md`) for operating and
+  installing the app; the app installer itself never installs the skill.
 
 ## Commits
 
@@ -253,16 +273,16 @@ Full round-trip in the skill
 
 ## Tech / pitfalls
 
-- Python (stdlib-only core/CLI). Web: FastAPI + uvicorn + Jinja2 + markdown +
+- Python (stdlib-only core/CLI client). Server: FastAPI + uvicorn + Jinja2 + markdown +
   `python-multipart` (forms) + Pillow (photo normalization). Tests: Playwright.
 - Starlette ≥1.3: the signature is `TemplateResponse(request, "name.html", {...})`
   — `request` MUST be the first argument.
 - Windows console (cp1252): stdout/stderr in CLI/tests are switched to UTF-8, otherwise
   characters like "✓" break.
-- Every source or installed runtime owns instance settings for its data path.
-  Relative names resolve beside the platform data default. The checkout uses
-  `gusto-dev`; installed production uses the normal platform data directory;
-  `GUSTO_HOME` always wins explicitly.
+- The installed service owns the production data store. Normal CLI commands
+  resolve `--server` → `GUSTO_URL` → `server_url` settings → loopback and never
+  fall back to local Core. The checkout's foreground server uses `gusto-dev`;
+  `GUSTO_HOME` remains an explicit server/test override.
 - Windows installs add Gusto's command directory to the user `PATH`; already
   open consoles must be reopened before `gusto` resolves directly.
 
@@ -275,7 +295,10 @@ staggered fade-in. UI and data fields are German.
 
 ## Status & roadmap
 
-**Done:** data model, core, CLI, web UI (list/search incl. **live search** while
+**Done:** managed per-user Windows/Linux installation with login autostart,
+anonymous LAN command API, remote CLI without local fallback, live browser
+change events, verified `gusto update` with side-by-side rollback, plus data
+model, core, CLI, web UI (list/search incl. **live search** while
 typing, **tag facets**: multi-select grouped by category, OR within / AND across
 categories — `data/categories.json`, `gusto tags`), recipe view,
 create/edit/reversible archive/restore/purge, "cooked today", suggestions, log,
