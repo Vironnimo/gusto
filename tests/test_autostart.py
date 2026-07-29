@@ -34,6 +34,8 @@ check("-AtLogOn" in windows and "-RunLevel Limited" in windows,
       "Windows adapter must be a limited current-user logon task")
 check("-RestartCount 5" in windows and "Start-ScheduledTask" in windows,
       "Windows adapter must restart failures and start immediately")
+check("fremde geplante Aufgabe namens Gusto" in windows,
+      "Windows adapter must refuse a foreign task-name collision")
 
 with tempfile.TemporaryDirectory(prefix="gusto-autostart-") as temporary:
     root = Path(temporary)

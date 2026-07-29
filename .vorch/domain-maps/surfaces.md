@@ -116,7 +116,9 @@ formats.
   current-user logon Scheduled Task, current-user Installed Apps entry, Start
   Menu URL, and exact user PATH entry. Linux writes and enables a
   `systemd --user` unit. Both start immediately and must pass `/api/v1/health`;
-  neither runs before login.
+  neither runs before login. Every Windows lifecycle path verifies the fixed
+  Gusto task description before it stops, replaces, starts, or removes an
+  existing task named `Gusto`; a foreign name collision is an error.
 - A normal installer rerun is rejected. `--repair` re-registers/restarts an
   existing managed state and may reconstruct a damaged runtime only from a
   payload of the same active version. `gusto update` is the normal update path:
@@ -167,6 +169,9 @@ formats.
 - A first install may claim only an absent/empty app root; state/current
   mismatches and foreign non-empty roots are rejected. App and data trees may
   never be equal or nested because app-only uninstall must preserve data.
+- A Windows task-name match alone does not prove ownership. Keep the
+  description check aligned across managed registration, service control,
+  update/repair, uninstall, and the compatibility adapter.
 - Run `tests/test_api.py` for API/journal changes, `tests/test_cli.py` for CLI,
   `tests/test_service.py` and `tests/test_update.py` for lifecycle,
   `tests/test_packaging.py` for assets, `scripts/browser_check.py` for visible

@@ -238,6 +238,9 @@ if ($null -eq $task) {
     Write-Output "absent"
     exit 0
 }
+if ($task.Description -ne "Gusto Rezeptserver beim Anmelden starten") {
+    throw "Eine fremde geplante Aufgabe namens Gusto wird nicht entfernt."
+}
 if ($task.State -eq "Running") {
     Stop-ScheduledTask -TaskName "Gusto"
     $deadline = [DateTime]::UtcNow.AddSeconds(15)

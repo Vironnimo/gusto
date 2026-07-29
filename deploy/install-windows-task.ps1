@@ -25,6 +25,9 @@ $settings = New-ScheduledTaskSettingsSet -RestartCount 5 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit (New-TimeSpan -Days 0)
 $old = Get-ScheduledTask -TaskName "Gusto" -ErrorAction SilentlyContinue
+if ($null -ne $old -and $old.Description -ne "Gusto Rezeptserver beim Anmelden starten") {
+    throw "Eine fremde geplante Aufgabe namens Gusto blockiert die Installation."
+}
 if ($null -ne $old -and $old.State -eq "Running") {
     Stop-ScheduledTask -TaskName "Gusto"
 }

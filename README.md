@@ -32,6 +32,10 @@ The installer downloads the latest public release, creates a versioned managed
 runtime, registers Gusto for the current user, enables login autostart, starts
 the service immediately and verifies its health.
 
+On Windows, Gusto never takes over or removes an unrelated Scheduled Task that
+happens to be named `Gusto`; such a name collision is reported and must be
+resolved by the user.
+
 ### Windows (PowerShell)
 
 ```powershell

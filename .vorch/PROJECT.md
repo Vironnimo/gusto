@@ -187,6 +187,10 @@ Quality gates:
   build once, smoke-install the exact artifact on both systems, retain failure
   diagnostics, attest provenance, and grant write authority only to the final
   publish job.
+- 2026-07-29: Gusto 0.1.6 refuses to stop, replace, start, or remove a Windows
+  Scheduled Task that is merely named `Gusto` unless its fixed description
+  identifies it as Gusto-owned. Install, repair/update, service control,
+  uninstall, and the compatibility adapter share this collision guard.
 
 ## Domain Maps
 

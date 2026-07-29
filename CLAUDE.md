@@ -77,7 +77,8 @@ Installation is per-user, registers login autostart, starts the service
 immediately and verifies `/api/v1/health`. Windows uses a limited current-user
 Scheduled Task; Linux uses `systemd --user`. It needs no admin rights and does
 not run before login. Re-running the installer is not an update; only explicit
-repair mode may replace an existing installation.
+repair mode may replace an existing installation. Windows lifecycle commands
+refuse to take over or remove an unrelated Scheduled Task named `Gusto`.
 
 **Instance safety for agents:** normal household tasks use the installed
 `gusto` command and the running server. At the first Gusto operation in each

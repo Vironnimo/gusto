@@ -110,6 +110,23 @@ with tempfile.TemporaryDirectory(prefix="gusto-uninstall-") as temporary:
     check(result["application_path"] == os.fspath(app.resolve())
           and result["data_path"] == os.fspath(data.resolve()),
           "machine result must distinguish app and preserved data")
+    windows_commands = []
+    original_which = uninstall.shutil.which
+    try:
+        uninstall.shutil.which = lambda name: "powershell.exe"
+        removed = uninstall.remove_windows_autostart(
+            runner=lambda command, **kwargs: windows_commands.append(command)
+            or subprocess.CompletedProcess(
+                command, 0, stdout="absent\n", stderr=""
+            ),
+        )
+    finally:
+        uninstall.shutil.which = original_which
+    check(
+        not removed and "fremde geplante Aufgabe namens Gusto"
+        in windows_commands[0][-1],
+        "Windows uninstall must refuse a foreign task-name collision",
+    )
 
     # systemd removal must be user-scoped and remove only the fixture unit.
     unit = root / ".config" / "systemd" / "user" / "gusto.service"

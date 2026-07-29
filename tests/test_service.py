@@ -103,6 +103,8 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
           "Windows must use Current-User AtLogOn with failure restart")
     check("Highest" not in script and "Administrator" not in script,
           "Windows task must not request elevation")
+    check("fremde geplante Aufgabe namens Gusto" in script,
+          "Windows task registration must refuse a foreign task-name collision")
     with patch.object(service, "register_windows_app", return_value={}):
         service.install_user_service(
             paths, state, platform_name="win32", runner=runner,
@@ -184,6 +186,12 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
         "Windows restart must observe old health down before starting "
         "and verifying the selected runtime",
     )
+    status_command = service.service_action(
+        "status", app_root=paths.app_root, platform_name="win32",
+        dry_run=True,
+    )["command"]
+    check("fremde geplante Aufgabe namens Gusto" in status_command[-1],
+          "Windows service controls must refuse a foreign task-name collision")
 
     for bad in ("1", "1.2", "../1.2.3", "01.2.3"):
         try:

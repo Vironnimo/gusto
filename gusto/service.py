@@ -423,6 +423,9 @@ $settings = New-ScheduledTaskSettingsSet `
   -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 1) `
   -ExecutionTimeLimit (New-TimeSpan -Days 0)
 $old = Get-ScheduledTask -TaskName "Gusto" -ErrorAction SilentlyContinue
+if ($null -ne $old -and $old.Description -ne "Gusto Rezeptserver beim Anmelden starten") {
+  throw "Eine fremde geplante Aufgabe namens Gusto blockiert die Installation."
+}
 if ($null -ne $old -and $old.State -eq "Running") {
   Stop-ScheduledTask -TaskName "Gusto"
   $deadline = [DateTime]::UtcNow.AddSeconds(15)
@@ -506,6 +509,9 @@ def remove_user_service(
         script = r'''
 $task = Get-ScheduledTask -TaskName "Gusto" -ErrorAction SilentlyContinue
 if ($null -eq $task) { Write-Output "absent"; exit 0 }
+if ($task.Description -ne "Gusto Rezeptserver beim Anmelden starten") {
+  throw "Eine fremde geplante Aufgabe namens Gusto wird nicht entfernt."
+}
 if ($task.State -eq "Running") {
   Stop-ScheduledTask -TaskName "Gusto"
   $deadline = [DateTime]::UtcNow.AddSeconds(15)
@@ -573,8 +579,14 @@ def service_action(
     platform_name = platform_name or sys.platform
     if platform_name.startswith("win"):
         powershell = shutil.which("powershell.exe") or "powershell.exe"
+        ownership_check = (
+            "if($null -ne $t -and $t.Description -ne "
+            "'Gusto Rezeptserver beim Anmelden starten'){"
+            "throw 'Eine fremde geplante Aufgabe namens Gusto blockiert die Service-Steuerung.'};"
+        )
         stop_script = (
             "$t=Get-ScheduledTask -TaskName 'Gusto' -ErrorAction SilentlyContinue;"
+            + ownership_check +
             "if($null -ne $t -and $t.State -eq 'Running'){"
             "Stop-ScheduledTask -TaskName 'Gusto';"
             "$d=[DateTime]::UtcNow.AddSeconds(15);"
@@ -586,9 +598,12 @@ def service_action(
         verbs = {
             "status": (
                 "$t=Get-ScheduledTask -TaskName 'Gusto' -ErrorAction SilentlyContinue;"
-                "if($null -eq $t){'absent'}else{$t.State}"
+                + ownership_check + "if($null -eq $t){'absent'}else{$t.State}"
             ),
-            "start": "Start-ScheduledTask -TaskName 'Gusto'",
+            "start": (
+                "$t=Get-ScheduledTask -TaskName 'Gusto' -ErrorAction SilentlyContinue;"
+                + ownership_check + "Start-ScheduledTask -TaskName 'Gusto'"
+            ),
             "stop": stop_script,
             "restart": stop_script,
         }

@@ -14,6 +14,9 @@ remove the skill as part of these commands.
   directly to the public internet.
 - Windows starts it with a limited Scheduled Task at current-user logon. Linux
   starts it with `systemd --user`. Neither starts before login.
+- Windows install, repair, update, service control, and uninstall refuse to
+  take over or remove an unrelated Scheduled Task that is merely named
+  `Gusto`; the user must resolve such a collision explicitly.
 
 ## One-shot first installation
 
