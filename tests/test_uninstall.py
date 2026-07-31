@@ -151,10 +151,14 @@ with tempfile.TemporaryDirectory(prefix="gusto-uninstall-") as temporary:
     removal_command = removal_commands[0][0]
     removal_options = removal_commands[0][1]
     helper = Path(removal_command[removal_command.index("-File") + 1])
-    check(removal_log.parent == Path(tempfile.gettempdir()).resolve()
+    application_arg = Path(
+        removal_command[removal_command.index("-Application") + 1]
+    )
+    data_arg = Path(removal_command[removal_command.index("-Data") + 1])
+    check(removal_log.parent.resolve() == Path(tempfile.gettempdir()).resolve()
           and helper.suffix == ".ps1"
-          and os.fspath(app.resolve()) in removal_command
-          and os.fspath(data.resolve()) in removal_command
+          and application_arg.resolve() == app.resolve()
+          and data_arg.resolve() == data.resolve()
           and removal_options["creationflags"]
           == getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
           "Windows self-removal must use external PowerShell and include the full "
