@@ -17,6 +17,8 @@ SCRIPT_CHECKS = (
     "tests/test_merge.py",
     "tests/test_concurrency.py",
     "tests/test_cli.py",
+    "tests/test_agent_contract.py",
+    "tests/test_skill_install.py",
     "tests/test_service.py",
     "tests/test_update.py",
     "tests/test_autostart.py",

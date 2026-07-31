@@ -7,7 +7,7 @@ Telegram-Darstellung). Ziel: die Einkaufsliste erscheint im Telegram-Chat als
 schreibt sofort nach Gusto zurück. Zielgruppe u. a. ältere Menschen: **mehr als
 „antippen" darf nicht nötig sein** (kein Tippen, kein Installieren).
 
-> **Update (gebaut):** Die „andere App" ist jetzt **vBot**, und der Agent steuert sie direkt über das `channel_send`-Tool. Item-Tipps (`chk:<id>`) haken visuell in vBots Checklist-Extension ab (kein Gusto-Schreib pro Tap); ein **„Fertig"-Button** (`run:done`) weckt den Agenten mit dem aktuellen Tastatur-Stand, der dann Gusto in einem Rutsch synchronisiert — danach schließt vBot die Tastatur. Das „bei jedem `callback_query` die CLI aufrufen"-Modell unten ist der ursprüngliche Entwurf; die operative Anleitung steht im Skill (`skill/gusto/SKILL.md`).
+> **Update (gebaut):** Die „andere App" ist jetzt **vBot**, und der Agent steuert sie direkt über das `channel_send`-Tool. Item-Tipps (`chk:<id>`) haken visuell in vBots Checklist-Extension ab (kein Gusto-Schreib pro Tap); ein **„Fertig"-Button** (`run:done`) weckt den Agenten mit dem aktuellen Tastatur-Stand, der dann Gusto in einem Rutsch synchronisiert — danach schließt vBot die Tastatur. Das „bei jedem `callback_query` die CLI aufrufen"-Modell unten ist der ursprüngliche Entwurf; die operative Anleitung steht im gezielt geladenen Skill-Referenzblatt (`skill/gusto/references/telegram.md`).
 
 ## Arbeitsteilung
 

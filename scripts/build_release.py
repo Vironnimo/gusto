@@ -82,8 +82,9 @@ def build_release(output_dir: Path) -> Path:
             "Linux:   ./install.sh\n\n"
             "Der normale Updateweg ist anschließend: gusto update\n"
             "Die Nutzdaten bleiben getrennt von den versionierten Runtimes.\n"
-            "Der Ordner skill/gusto wird nur mitgeliefert; der App-Installer "
-            "installiert keine Agent-Skills.\n",
+            "Der passende Agent-Skill ist im Release und in der Runtime "
+            "enthalten. vBot-Installation: gusto install-skill vbot\n"
+            "Der App-Installer verändert Agent-Hosts nicht automatisch.\n",
             encoding="utf-8",
         )
 

@@ -99,6 +99,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
             "/deploy/install-windows-task.ps1", "/skill/gusto/SKILL.md",
             "/skill/gusto/references/cli.md",
             "/skill/gusto/references/installation.md",
+            "/skill/gusto/references/telegram.md",
         ):
             check(any(name.endswith(suffix) for name in names),
                   f"release payload missing {suffix}")
@@ -115,12 +116,68 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
         packaged = set(wheel.namelist())
     for required in (
         "gusto/api.py", "gusto/client.py", "gusto/service.py",
-        "gusto/update.py", "gusto/uninstall.py", "gusto/templates/base.html",
+        "gusto/update.py", "gusto/uninstall.py", "gusto/skill_install.py",
+        "gusto/templates/base.html",
         "gusto/static/app.js", "gusto/static/shopping-client.js",
         "gusto/static/sw.js", "gusto/static/manifest.webmanifest",
         "gusto/static/icons/icon-192.png", "gusto/static/icons/icon-512.png",
     ):
         check(required in packaged, f"wheel runtime asset missing: {required}")
+    for required in (
+        "share/gusto/skill/gusto/SKILL.md",
+        "share/gusto/skill/gusto/references/cli.md",
+        "share/gusto/skill/gusto/references/installation.md",
+        "share/gusto/skill/gusto/references/telegram.md",
+    ):
+        check(any(name.endswith(required) for name in packaged),
+              f"wheel agent-skill asset missing: {required}")
+
+    # Exercise the exact built wheel in a clean runtime. This proves that the
+    # local command does not accidentally depend on the source checkout copy.
+    skill_runtime = output / "skill runtime"
+    venv.EnvBuilder(with_pip=True).create(skill_runtime)
+    skill_python = service.runtime_python(skill_runtime)
+    installed_skill_runtime = subprocess.run(
+        [os.fspath(skill_python), "-m", "pip", "install", "--no-deps",
+         os.fspath(wheel_path)],
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    check(installed_skill_runtime.returncode == 0,
+          installed_skill_runtime.stdout + installed_skill_runtime.stderr)
+    fake_home = output / "skill user"
+    (fake_home / ".vbot").mkdir(parents=True)
+    skill_environment = {
+        **os.environ,
+        "HOME": os.fspath(fake_home),
+        "USERPROFILE": os.fspath(fake_home),
+    }
+    first_skill_install = subprocess.run(
+        [os.fspath(skill_python), "-m", "gusto", "install-skill", "vbot", "--json"],
+        capture_output=True, text=True, encoding="utf-8", env=skill_environment,
+    )
+    first_skill_result = (
+        json.loads(first_skill_install.stdout)
+        if first_skill_install.returncode == 0 else {}
+    )
+    installed_skill_file = fake_home / ".vbot/skills/gusto/SKILL.md"
+    check(first_skill_install.returncode == 0
+          and first_skill_result.get("status") == "installed"
+          and first_skill_result.get("overwritten") is False
+          and installed_skill_file.is_file(),
+          first_skill_install.stdout + first_skill_install.stderr)
+    installed_skill_file.write_text("stale", encoding="utf-8")
+    second_skill_install = subprocess.run(
+        [os.fspath(skill_python), "-m", "gusto", "install-skill", "vbot", "--json"],
+        capture_output=True, text=True, encoding="utf-8", env=skill_environment,
+    )
+    second_skill_result = (
+        json.loads(second_skill_install.stdout)
+        if second_skill_install.returncode == 0 else {}
+    )
+    check(second_skill_install.returncode == 0
+          and second_skill_result.get("overwritten") is True
+          and installed_skill_file.read_text(encoding="utf-8") != "stale",
+          second_skill_install.stdout + second_skill_install.stderr)
 
     if sys.platform.startswith("win"):
         powershell_exe = (

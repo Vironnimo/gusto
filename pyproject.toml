@@ -1,6 +1,6 @@
 [project]
 name = "gusto"
-version = "0.1.6"
+version = "0.1.7"
 description = "Markdown-basiertes Rezept-System, steuerbar per CLI und Web – agent-freundlich."
 requires-python = ">=3.10"
 dependencies = []
@@ -30,4 +30,12 @@ gusto = [
     "static/*.js",
     "static/*.webmanifest",
     "static/icons/*.png",
+]
+
+[tool.setuptools.data-files]
+"share/gusto/skill/gusto" = ["skill/gusto/SKILL.md"]
+"share/gusto/skill/gusto/references" = [
+    "skill/gusto/references/cli.md",
+    "skill/gusto/references/installation.md",
+    "skill/gusto/references/telegram.md",
 ]

@@ -9,13 +9,15 @@ requested development or isolated testing. Normal domain commands are HTTP
 clients of the selected running service. Every command accepts `--json` for
 machine-readable output.
 
-At the first Gusto operation in a task, run the exact chosen invocation with
-`home --json`. Before writing, verify `server_url`, `server_reachable`,
-`server_data_path`, `path`, `source`, `platform_default`, and `settings_path`,
-then reuse the same executable and server selection. A checkout server normally
-selects `gusto-dev`; the installed service selects the household store. If the
-server is unreachable or ambiguous, do not mutate it. Never fall back to local
-Core or direct data-file access.
+At the first Gusto **domain** operation in a task, run the exact chosen
+invocation with `home --json`. Before writing, verify `server_url`,
+`server_reachable`, `server_data_path`, `path`, `source`, `platform_default`,
+and `settings_path` when present, then reuse the same executable and server
+selection. A checkout server normally selects `gusto-dev`; the installed
+service selects the household store. If the server is unreachable or ambiguous,
+do not mutate it. Never fall back to local Core or direct data-file access.
+App installation and the local `install-skill`, service, update, uninstall, and
+explicit offline-recovery commands do not use this domain-instance handshake.
 
 Select a non-default server with global `--server http://host:port`; otherwise
 resolution is `GUSTO_URL`, then `server_url` in instance settings, then
@@ -100,6 +102,32 @@ parser remain plain stderr and exit `2`.
   all owned images. Log and shopping records stay in their own stores and
   resolve the archived slug. JSON returns `slug`, `archived:true`, and
   `archived_at`.
+
+### Tag-category management (`categories`)
+
+These commands mutate the server-owned facet definition; never edit
+`data/categories.json` directly.
+
+- `categories list [--json]` — every category in display order, including
+  empty categories and all configured tags.
+- `categories add <key> "<label>" [--position N] [--json]` — create an empty
+  category, appended by default or inserted at the one-based position. Keys use
+  lowercase `a-z`, digits, `_`, or `-`; `other` is reserved for Sonstige.
+- `categories set <key> [--label TEXT] [--position N] [--json]` — change the
+  visible label and/or one-based category position. At least one flag is needed.
+- `categories remove <key> [--json]` — remove the category definition without
+  changing recipe tags. Used tags from it become uncategorized/Sonstige and are
+  returned as `now_uncategorized`.
+- `categories assign <key> <tag> ... [--json]` — assign one or more tags to
+  exactly this category. Existing assignments are moved; repeated/case variants
+  in one request are idempotently deduplicated.
+- `categories unassign <tag> ... [--json]` — remove assignments. Used tags then
+  appear in Sonstige.
+- `categories tag-move <key> <tag> <position> [--json]` — move a tag to a
+  one-based position within its current category.
+
+All mutations hold the catalog lock and publish a catalog change event, so CLI
+and browser clients see the same facet order and assignment.
 
 ### Recipe archive (`archive`)
 
@@ -203,10 +231,11 @@ server; direct live-store edits are not a supported client path.
 
 ### Installed application lifecycle
 
-- `status|start|stop|restart [--dry-run] [--json]` — inspect or control the
+- `status|start|stop|restart [--app-root PATH] [--dry-run] [--json]` — inspect or control the
   current-user background service locally. `start` and `restart` return only
-  after the health endpoint becomes ready.
-- `update [--check] [--dry-run] [--json]` — compare against the public release
+  after the health endpoint becomes ready. `--app-root` explicitly selects a
+  managed installation for diagnosis or recovery.
+- `update [--check] [--app-root PATH] [--dry-run] [--json]` — compare against the public release
   manifest; normally download, verify its SHA-256 consistency, install side-by-side,
   switch the version pointer, restart and health-check. A failed health check
   rolls back to the previous version. `--check` never changes the installation.
@@ -225,7 +254,35 @@ server; direct live-store edits are not a supported client path.
 For public install commands, repair behavior, exact per-user paths and update
 semantics, read `installation.md`.
 
+### Local agent-skill delivery
+
+- `install-skill vbot [--dry-run] [--json]` — install the active Gusto
+  version's bundled skill to `~/.vbot/skills/gusto`. The existing Gusto skill is
+  fully replaced, not merged. The command requires an existing `~/.vbot`,
+  creates `skills/` if needed, uses staging/rollback, and never contacts the
+  Gusto service. `--dry-run` does not create directories or change files.
+- App update refreshes the bundled source in the active runtime; rerun
+  `install-skill vbot` to refresh the separately installed vBot copy.
+- App uninstall does not remove the separately installed vBot skill.
+
 ## JSON shapes
+
+`home --json` (remote fields are additive only when reachable):
+
+```json
+{
+  "path": "C:\\Users\\Ada\\AppData\\Local\\Gusto",
+  "source": "settings",
+  "platform_default": "C:\\Users\\Ada\\AppData\\Local\\Gusto",
+  "settings_path": "C:\\...\\gusto.settings.json",
+  "server_url": "http://127.0.0.1:8000",
+  "server_reachable": true,
+  "service_status": "ready",
+  "server_data_path": "C:\\Users\\Ada\\AppData\\Local\\Gusto",
+  "server_version": "0.1.7",
+  "server_revision": 42
+}
+```
 
 Recipe (returned by `list`, `search`, `new`, `set` — array or single object):
 
@@ -274,6 +331,37 @@ wrapper shapes documented under the archive commands above.
 ```json
 [ { "key": "cuisine", "label": "Küche", "tags": ["italienisch", "indisch"] } ]
 ```
+
+`categories list|add|set|assign|tag-move --json` use the same category object
+(list returns an array):
+
+```json
+{"key":"diet","label":"Ernährung","tags":["vegetarisch","vegan"]}
+```
+
+Removal and unassignment:
+
+```json
+{"key":"diet","label":"Ernährung","tags":["vegetarisch","vegan"],"removed":true,"now_uncategorized":["vegan"]}
+{"unassigned":["vegan"]}
+```
+
+`install-skill vbot --json`:
+
+```json
+{
+  "status": "installed",
+  "host": "vbot",
+  "gusto_version": "0.1.7",
+  "source": "C:\\...\\share\\gusto\\skill\\gusto",
+  "destination": "C:\\Users\\Ada\\.vbot\\skills\\gusto",
+  "overwritten": true,
+  "files": ["SKILL.md", "references/cli.md", "references/installation.md", "references/telegram.md"]
+}
+```
+
+With `--dry-run`, only `status` changes to `dry_run`; the reported
+`overwritten` value describes the current target.
 
 `check --json`:
 
@@ -343,9 +431,8 @@ Shopping-list item:
 `id` is 32-hex, stable and unique. `list`/`list --pending` return a **flat JSON
 array** (no `{items}` wrapper); `check`/`uncheck`/`add` return a single item;
 `add-recipe` an array; `remove-done` and `clear` return `{ "removed": N }`.
-Rendering the list as a tappable **Telegram checklist** (inline-keyboard +
-`callback_query` in the client app) is documented in the `Shopping list as a
-Telegram checklist` workflow in `../SKILL.md`.
+Rendering the list as a tappable **Telegram checklist** is documented in
+`telegram.md`.
 
 Shopping need returned by `favorites list|show|match`:
 
@@ -385,8 +472,8 @@ prints one such object or `null`; it does not create an alias automatically.
     vegetarian.
 - A new tag still stores fine but shows up in `check` as `uncategorized_tags`
   and remains filterable in `Sonstige`. `new` and `set --tags` surface this
-  through `warnings`; report it rather than bypassing the service to edit the
-  category file.
+  through `warnings`. Inspect `categories list`, then resolve a known mapping
+  with `categories assign`; never bypass the service to edit the category file.
 
 ## Server and storage contract
 
@@ -409,7 +496,8 @@ production store, and `GUSTO_HOME` is an explicit server/test override.
 | `data/favorites.json` | `{ needs: [ … ] }` with exact aliases and ranked products. |
 | `data/changes.json` | Persisted bounded revision journal for browser/PWA change events. |
 
-Use CLI/API operations for every normal read or write. `gusto check --offline`
+Use CLI/API operations, including `categories ...`, for every normal read or
+write. `gusto check --offline`
 is the only deliberate direct-Core client operation and exists for diagnosis
 while the service is stopped.
 

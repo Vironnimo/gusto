@@ -64,10 +64,17 @@ The HTTP API is intentionally anonymous on the trusted home LAN. There are no
 tokens to distribute to the CLI or browser. Do not expose port 8000 directly
 to the public internet.
 
-The application installer installs only Gusto. It never installs or configures
-an agent skill. The repository still contains the standalone operating guide
-under `skill/gusto/` for agent hosts that receive skills by their normal
-mechanism.
+Every managed runtime carries the matching Gusto agent skill. Registration in
+an agent host remains explicit; for an existing default vBot installation:
+
+```bash
+gusto install-skill vbot --dry-run --json
+gusto install-skill vbot --json
+```
+
+This installs to `~/.vbot/skills/gusto` and fully replaces an existing Gusto
+skill. The app installer does not modify vBot automatically. After `gusto
+update`, rerun `install-skill` to refresh vBot from the new active runtime.
 
 Application and data stay separate:
 
@@ -127,6 +134,9 @@ gusto list                          # all recipes
 gusto list --max-time 30            # only recipes with a known duration <= 30
 gusto home                          # server, service and active data directory
 gusto search "linsen kokos"         # full-text incl. ingredients in the body
+gusto tags --all                    # all tag facets and configured tags
+gusto categories assign diet vegan # classify a tag through the service
+gusto categories add season "Saison" # create another ordered facet
 gusto show spaghetti-carbonara
 gusto new "Title" --tags a,b --duration 25 --servings 2
 gusto content set <slug> --file recipe.md # replace body through the server
@@ -155,6 +165,7 @@ gusto shopping add-many "Milch" "Brot" "6 Eier"  # one atomic group
 gusto shopping remove-done         # remove every checked item
 gusto shopping clear               # empty the complete visible list
 gusto update                        # verified release update + rollback on failure
+gusto install-skill vbot            # install/replace ~/.vbot/skills/gusto
 gusto status                        # current-user service status
 gusto uninstall                     # interactive: app only or app + data
 ```
@@ -173,8 +184,11 @@ validation succeeds. Parser/usage errors remain on stderr with exit code 2.
 `--max-time`, `log --days`, and `suggest --days` must be positive;
 `suggest --limit` is nonnegative and `0` returns no candidates. `set` requires
 at least one change. `new` and `set --tags` warn when tags have no named facet;
-they remain stored under `Sonstige`. `--max-time` excludes recipes whose
-duration is unknown. `shopping add --source` accepts only an existing recipe,
+they remain stored under `Sonstige` until an agent resolves them with
+`categories assign`. Category definition, ordering, assignment and removal all
+go through `gusto categories ...`, never direct JSON edits. `--max-time`
+excludes recipes whose duration is unknown. `shopping add --source` accepts
+only an existing recipe,
 and the sourced item participates in the same duplicate-import guard as
 `shopping add-recipe`. A rejected recipe import reports the number of visible
 sourced items. `shopping remove-done` removes checked items; `shopping clear`
@@ -196,6 +210,7 @@ images/<slug>/      recipe images copied into and owned by Gusto
 archive/<slug>/     reversible recipe snapshots (Markdown + metadata + images)
 images/_favorites/  preferred-product images copied into and owned by Gusto
 data/recipes.json   metadata of all recipes
+data/categories.json tag categories, assignment and display order
 data/favorites.json shared shopping needs, exact aliases, ranked products
 data/log.json       cooking log
 gusto/core.py      all the logic
@@ -205,6 +220,7 @@ gusto/cli.py       thin remote CLI plus local lifecycle commands
 gusto/service.py   current-user service registration and control
 gusto/update.py    verified side-by-side update with rollback
 gusto/uninstall.py safe managed-runtime removal lifecycle
+gusto/skill_install.py local version-matched agent-skill delivery
 gusto/web.py       the FastAPI web app and API host
 gusto/templates/   Jinja2 templates
 gusto/static/      CSS + JS
@@ -278,6 +294,7 @@ python tests/test_favorites.py     # aliases, rankings, product cards/images
 python tests/test_merge.py         # full-state sync merge rule
 python tests/test_recipes.py       # recipe/search/log/suggestion core logic
 python tests/test_cli.py           # remote CLI and local recovery commands
+python tests/test_skill_install.py # vBot skill install and full replacement
 python tests/test_service.py       # per-user service lifecycle
 python tests/test_update.py        # verified update and rollback
 python tests/test_autostart.py     # windowless Windows launcher and exit codes

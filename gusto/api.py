@@ -59,6 +59,7 @@ def _not_found_error(error: ValueError) -> int:
         "Kein Einkauf-Item ",
         "Kein Bild ",
         "Kein Lieblingsprodukt ",
+        "Keine Tag-Kategorie ",
     )
     return 404 if message.startswith(prefixes) else 400
 
@@ -243,6 +244,69 @@ def _catalog_search(arguments: dict, _attachments: dict) -> list[dict]:
 def _tags_list(arguments: dict, _attachments: dict) -> list[dict]:
     values = _arguments(arguments, allowed={"all"})
     return core.tag_groups(only_used=not _boolean(values, "all"))
+
+
+def _categories_list(arguments: dict, _attachments: dict) -> list[dict]:
+    _arguments(arguments, allowed=set())
+    return core.tag_groups(only_used=False)
+
+
+def _categories_add(arguments: dict, _attachments: dict) -> dict:
+    values = _arguments(
+        arguments,
+        allowed={"key", "label", "position"},
+        required={"key", "label"},
+    )
+    return core.add_category(
+        _string(values, "key"),
+        _string(values, "label"),
+        _integer(values, "position"),
+    )
+
+
+def _categories_set(arguments: dict, _attachments: dict) -> dict:
+    values = _arguments(
+        arguments,
+        allowed={"key", "label", "position"},
+        required={"key"},
+    )
+    return core.update_category(
+        _string(values, "key"),
+        label=_string(values, "label", optional=True),
+        position=_integer(values, "position"),
+    )
+
+
+def _categories_remove(arguments: dict, _attachments: dict) -> dict:
+    values = _arguments(arguments, allowed={"key"}, required={"key"})
+    return core.remove_category(_string(values, "key"))
+
+
+def _categories_assign(arguments: dict, _attachments: dict) -> dict:
+    values = _arguments(
+        arguments, allowed={"key", "tags"}, required={"key", "tags"},
+    )
+    return core.assign_category_tags(
+        _string(values, "key"), _strings(values, "tags"),
+    )
+
+
+def _categories_unassign(arguments: dict, _attachments: dict) -> dict:
+    values = _arguments(arguments, allowed={"tags"}, required={"tags"})
+    return core.unassign_category_tags(_strings(values, "tags"))
+
+
+def _categories_tag_move(arguments: dict, _attachments: dict) -> dict:
+    values = _arguments(
+        arguments,
+        allowed={"key", "tag", "position"},
+        required={"key", "tag", "position"},
+    )
+    return core.move_category_tag(
+        _string(values, "key"),
+        _string(values, "tag"),
+        _integer(values, "position", optional=False),
+    )
 
 
 def _recipe_show(arguments: dict, _attachments: dict) -> dict:
@@ -649,6 +713,13 @@ _OPERATIONS: dict[str, Callable[[dict, dict], object]] = {
     "catalog.list": _catalog_list,
     "catalog.search": _catalog_search,
     "tags.list": _tags_list,
+    "categories.list": _categories_list,
+    "categories.add": _categories_add,
+    "categories.set": _categories_set,
+    "categories.remove": _categories_remove,
+    "categories.assign": _categories_assign,
+    "categories.unassign": _categories_unassign,
+    "categories.tag.move": _categories_tag_move,
     "recipe.show": _recipe_show,
     "recipe.create": _recipe_create,
     "recipe.content.set": _recipe_content_set,

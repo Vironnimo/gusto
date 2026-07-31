@@ -271,7 +271,7 @@ def check_serve_dependency_preflight():
 
 
 def check_lifecycle_contract():
-    from gusto import cli, service, update
+    from gusto import cli, service, skill_install, update
 
     status_result = {
         "ok": True,
@@ -292,6 +292,43 @@ def check_lifecycle_contract():
                 cli.main(["status", "--json"])
     check(json.loads(output.getvalue()) == status_result,
           "status must be a local JSON-capable lifecycle command")
+
+    skill_result = {
+        "status": "dry_run",
+        "host": "vbot",
+        "gusto_version": "1.2.3",
+        "source": "C:/runtime/share/gusto/skill/gusto",
+        "destination": "C:/Users/test/.vbot/skills/gusto",
+        "overwritten": True,
+        "files": ["SKILL.md"],
+    }
+    output = io.StringIO()
+    with patch.object(
+        skill_install, "install_skill", return_value=skill_result,
+    ) as install_skill:
+        with patch.object(
+            cli.client, "command",
+            side_effect=AssertionError("install-skill used the server API"),
+        ):
+            with redirect_stdout(output):
+                cli.main(["install-skill", "vbot", "--dry-run", "--json"])
+    check(json.loads(output.getvalue()) == skill_result
+          and install_skill.call_args.args == ("vbot",)
+          and install_skill.call_args.kwargs == {"dry_run": True},
+          "install-skill must stay local, explicit and machine-readable")
+
+    output = io.StringIO()
+    unsupported_exit = None
+    with redirect_stdout(output):
+        try:
+            cli.main(["install-skill", "codex", "--json"])
+        except SystemExit as error:
+            unsupported_exit = error.code
+    unsupported = json.loads(output.getvalue())
+    check(unsupported_exit == 1
+          and unsupported["ok"] is False
+          and "Unterstützt: vbot" in unsupported["error"],
+          "unsupported skill hosts must use the normal JSON failure contract")
 
     update_result = {
         "ok": True,
@@ -373,6 +410,41 @@ def main():
     human_warning = run("set", slug, "--tags", "vegan,schnell")
     check("Warnung: Tags ohne Kategorie" in human_warning.stdout,
           "human set output must warn about tags without a named facet")
+
+    diet = as_json("categories", "add", "diet", "Ernährung")
+    trait = as_json("categories", "add", "trait", "Merkmal")
+    check(diet["key"] == "diet" and trait["key"] == "trait",
+          "categories add must create server-owned facets")
+    as_json("categories", "assign", "diet", "vegan")
+    assigned = as_json(
+        "categories", "assign", "trait", "schnell", "einfach", "SCHNELL",
+    )
+    check(assigned["tags"] == ["schnell", "einfach"],
+          "categories assign must resolve warnings without duplicate tags")
+    moved_tag = as_json("categories", "tag-move", "trait", "einfach", "1")
+    check(moved_tag["tags"] == ["einfach", "schnell"],
+          "categories tag-move must expose deterministic display order")
+    moved_category = as_json(
+        "categories", "set", "trait", "--label", "Eigenschaft",
+        "--position", "1",
+    )
+    check(moved_category["label"] == "Eigenschaft"
+          and as_json("categories", "list")[0]["key"] == "trait",
+          "categories set/list must expose label and facet order")
+    unassigned = as_json("categories", "unassign", "schnell")
+    check(unassigned == {"unassigned": ["schnell"]},
+          "categories unassign must explicitly move a tag to Sonstige")
+    as_json("categories", "assign", "trait", "schnell")
+    check(as_json("check")["uncategorized_tags"] == [],
+          "an agent must be able to resolve every uncategorized-tag warning")
+    removed_category = as_json("categories", "remove", "diet")
+    check(removed_category["now_uncategorized"] == ["vegan"],
+          "categories remove must report used tags moved to Sonstige")
+    as_json("categories", "add", "diet", "Ernährung")
+    as_json("categories", "assign", "diet", "vegan")
+    check("Keine Tag-Kategorie" in as_json_error(
+        "categories", "assign", "missing", "saisonal",
+    )["error"], "category mutations must return structured unknown-key errors")
     list_help = run("list", "--help")
     check("ohne Dauerangabe werden ausgeschlossen"
           in " ".join(list_help.stdout.split()),
@@ -394,8 +466,8 @@ def main():
           "set --json must return updated metadata")
     check(as_json("show", slug)["content"].startswith("# Neue Suppe\n"),
           "set --title must keep the Markdown H1 synchronized")
-    check(changed["warnings"][0]["code"] == "uncategorized_tags",
-          "set --tags --json must identify tags without a named facet")
+    check("warnings" not in changed,
+          "set --tags must stop warning after an agent assigns every facet")
     cleared = as_json("set", slug, "--clear-duration", "--clear-servings")
     check(cleared["duration_min"] is None and cleared["servings"] is None,
           "set must be able to remove optional duration and servings")

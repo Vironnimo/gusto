@@ -213,6 +213,37 @@ def main():
         command("tags.list", {"all": True})[0]["label"] == "Ernährung",
         "tags.list must return Core facet groups",
     )
+    category = command("categories.add", {
+        "key": "season", "label": "Jahreszeit", "position": 1,
+    })
+    check(category == {
+        "key": "season", "label": "Jahreszeit", "tags": [],
+    }, "categories.add must return the created category")
+    category = command("categories.set", {
+        "key": "season", "label": "Saison", "position": 2,
+    })
+    check(category["label"] == "Saison"
+          and command("categories.list")[1]["key"] == "season",
+          "categories.set must update label and display position")
+    category = command("categories.assign", {
+        "key": "season", "tags": ["saisonal", "regional"],
+    })
+    check(category["tags"] == ["saisonal", "regional"],
+          "categories.assign must expose the resulting ordered tags")
+    category = command("categories.tag.move", {
+        "key": "season", "tag": "regional", "position": 1,
+    })
+    check(category["tags"] == ["regional", "saisonal"],
+          "categories.tag.move must preserve explicit tag order")
+    check(command("categories.unassign", {"tags": ["regional"]})
+          == {"unassigned": ["regional"]},
+          "categories.unassign must report tags moved to Sonstige")
+    removed_category = command("categories.remove", {"key": "season"})
+    check(removed_category["removed"] is True,
+          "categories.remove must report the removed category")
+    command("categories.set", {"key": "missing", "label": "Fehlt"}, status=404)
+    command("categories.add", {"key": "bad", "label": "X", "extra": True},
+            status=400)
     shown = command("recipe.show", {"slug": soup["slug"]})
     check(
         shown["content"].startswith("# Kartoffelsuppe"),

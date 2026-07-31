@@ -40,13 +40,13 @@ The slug joins Markdown, metadata, image storage, log entries, shopping sources,
 
 `gusto/core.py` exposes catalog reads and mutations, archive list/show/restore/
 purge, active-or-archived reference lookup, search and facet grouping,
-cooking-log and suggestion operations, image management, and the consistency
-check. Callers receive `Recipe`, `ArchivedRecipe`, and `RecipeImage` objects or
-JSON-ready dictionaries produced from them.
+category definition/order/assignment mutations, cooking-log and suggestion
+operations, image management, and the consistency check. Callers receive
+`Recipe`, `ArchivedRecipe`, and `RecipeImage` objects or JSON-ready dictionaries.
 
 The API command registry exposes these capabilities to the CLI through `gusto
 list|search|tags|show|new|edit|content set|cooked|log|suggest|check|set|delete`,
-`gusto archive
+`gusto categories list|add|set|remove|assign|unassign|tag-move`, `gusto archive
 list|show|restore|purge`, and `gusto image ...`. `delete` is the compatibility
 verb for reversible archiving; only `archive purge --yes` means destruction.
 `edit` and `content set` write bodies through `recipe.content.set`; normal CLI
@@ -56,7 +56,10 @@ form actions in `gusto/web.py` use the same Core.
 `new` and a tag-changing `set` preserve tags that have no named facet but warn
 immediately in both CLI presentation modes. JSON adds a `warnings` array with
 the stable `uncategorized_tags` code and affected tags; those tags continue to
-share the runtime `Sonstige` facet until `categories.json` assigns them.
+share the runtime `Sonstige` facet until `categories assign` maps them through
+the service. Category mutations validate keys/labels/tags, keep each tag in at
+most one category, preserve explicit display order, hold the catalog lock, and
+publish catalog change events.
 
 Recipe titles must be non-empty. Core always makes the first Markdown H1 match
 the metadata title when creating or setting a title, including when the same
@@ -84,6 +87,8 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
 - Every catalog mutation holds the cross-process catalog lock across its full
   read-modify-write transaction. This includes the cooking log and owned recipe
   images because both also update catalog state.
+- `data/categories.json` is server-owned. Normal clients use `categories ...`;
+  direct edits bypass validation, locking, and change events.
 - Core create/update owns the metadata-title ↔ first-H1 invariant; web forms
   still reconstruct the line, but are not the source of truth for the rule.
 - Images are copied into Gusto storage after extension and header/dimension validation. The first image becomes the cover unless another is explicitly selected.
@@ -109,6 +114,9 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
   on Windows. Direct live-store edits are outside the supported client
   contract.
 - A duration limit excludes recipes whose duration is unknown, not only recipes over the limit.
+- Category key `other` is reserved for the runtime Sonstige facet. Removing or
+  unassigning a mapping never removes recipe tags; used tags become
+  uncategorized and are reported to the caller/check.
 - Suggestions intentionally only exclude recently cooked recipes and order the rest by oldest `last_cooked`; meal intelligence belongs to the calling agent.
 - Removing the selected cover promotes the first remaining image.
 - Archiving moves recipe-owned Markdown, metadata, and the whole image folder

@@ -78,6 +78,51 @@ def main():
           == ["saisonal"],
           "uncategorized tags must be distinct and category matching case-insensitive")
 
+    # Agents can maintain the complete facet assignment through Core instead
+    # of editing categories.json behind the running service.
+    core.update_recipe(quick.slug, tags=["vegan", "saisonal"])
+    season = core.add_category("season", "Jahreszeit", position=2)
+    check(season == {"key": "season", "label": "Jahreszeit", "tags": []}
+          and list(core.load_categories())[1] == "season",
+          "category creation must preserve an explicit display position")
+    season = core.update_category("season", label="Saison", position=1)
+    check(season["label"] == "Saison"
+          and list(core.load_categories())[0] == "season",
+          "category label and position must update in one transaction")
+    season = core.assign_category_tags(
+        "season", ["saisonal", "regional", "SAISONAL"],
+    )
+    check(season["tags"] == ["saisonal", "regional"]
+          and core.uncategorized_tags(["saisonal"]) == [],
+          "assignment must deduplicate input and resolve uncategorized tags")
+    moved = core.move_category_tag("season", "regional", 1)
+    check(moved["tags"] == ["regional", "saisonal"],
+          "tag display order must be agent-controllable")
+    check(core.unassign_category_tags(["REGIONAL", "regional"])
+          == {"unassigned": ["regional"]},
+          "unassign must be case-insensitive and idempotent within one request")
+    removed_category = core.remove_category("season")
+    check(removed_category["removed"] is True
+          and removed_category["now_uncategorized"] == ["saisonal"],
+          "removing a category must report affected used tags")
+    core.add_category("season", "Saison")
+    core.assign_category_tags("season", ["saisonal"])
+    expect_valueerror(core.add_category, "season", "Doppelt")
+    expect_valueerror(core.add_category, "Other", "Reserviert")
+    expect_valueerror(core.update_category, "missing", label="Fehlt")
+    expect_valueerror(core.move_category_tag, "season", "saisonal", 0)
+    expect_valueerror(core._validated_categories, {
+        "one": {"label": "Eins", "tags": ["gleich"]},
+        "two": {"label": "Zwei", "tags": ["GLEICH"]},
+    })
+    expect_valueerror(core._validated_categories, {
+        "one": {"label": "Eins", "tags": []},
+        " one ": {"label": "Doppelt", "tags": []},
+    })
+    preserved = core.assign_category_tags("season", ["SommerTag"])
+    check("SommerTag" in preserved["tags"],
+          "an unused new tag must preserve the spelling supplied by the agent")
+
     updated = core.update_recipe(
         quick.slug, title="Gurkensalat", tags=["vegan"], duration_min=12,
         servings=2, content="# Gurkensalat\n",
@@ -210,7 +255,7 @@ def main():
     core.recipe_file(curry.slug).unlink()
     recipes = core.load_recipes()
     pasta_record = next(recipe for recipe in recipes if recipe.slug == pasta.slug)
-    pasta_record.tags.append("saisonal")
+    pasta_record.tags.append("unbekannt")
     pasta_record.cover_image_id = "missing-cover"
     core.save_recipes(recipes)
     core.recipe_image_path(pasta.slug, finished).unlink()
@@ -220,7 +265,7 @@ def main():
     broken = core.check()
     check(broken["orphaned_files"] == ["orphan"], "orphaned Markdown must be found")
     check(broken["missing_files"] == [curry.slug], "missing Markdown must be found")
-    check(broken["uncategorized_tags"] == ["saisonal"],
+    check(broken["uncategorized_tags"] == ["unbekannt"],
           "uncategorized tags must be found")
     check(broken["missing_image_files"] == [f"{pasta.slug}/{finished.filename}"],
           "missing stored image files must be found")

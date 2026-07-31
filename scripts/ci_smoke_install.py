@@ -264,6 +264,30 @@ def main(argv: list[str] | None = None) -> int:
         if Path(home["server_data_path"]).resolve() != data_dir.resolve():
             raise RuntimeError("CLI und Dienst verwenden nicht denselben Datenpfad.")
 
+        skill_environment = environment.copy()
+        skill_environment["HOME"] = os.fspath(fake_home)
+        skill_environment["USERPROFILE"] = os.fspath(fake_home)
+        (fake_home / ".vbot").mkdir(exist_ok=True)
+        skill_result = as_json(execute(
+            [os.fspath(wrapper), "install-skill", "vbot", "--json"],
+            environment=skill_environment,
+            log_path=command_log,
+        ))
+        installed_skill = fake_home / ".vbot/skills/gusto/SKILL.md"
+        if (skill_result.get("status") != "installed"
+                or skill_result.get("overwritten") is not False
+                or not installed_skill.is_file()):
+            raise RuntimeError("Installierte CLI liefert den vBot-Skill nicht aus.")
+        installed_skill.write_text("stale", encoding="utf-8")
+        replaced_skill = as_json(execute(
+            [os.fspath(wrapper), "install-skill", "vbot", "--json"],
+            environment=skill_environment,
+            log_path=command_log,
+        ))
+        if (replaced_skill.get("overwritten") is not True
+                or installed_skill.read_text(encoding="utf-8") == "stale"):
+            raise RuntimeError("Installierte CLI ersetzt keinen veralteten vBot-Skill.")
+
         created = as_json(execute(
             [os.fspath(wrapper), "new", "CI Smoke Rezept", "--json"],
             environment=environment,

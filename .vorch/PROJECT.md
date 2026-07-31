@@ -36,8 +36,9 @@ Writes to JSON are atomic. Features are implemented in Core, API, and CLI
 before web, and every CLI command accepts `--json`. Complete Core mutations,
 not only their final JSON replacement, hold the matching resource lock. Normal
 domain commands require a reachable server; only explicit lifecycle/recovery
-commands (`serve`, `home`, service control, update/uninstall, and
-`check --offline`) operate locally. MCP is explicitly out of scope.
+commands (`serve`, `home`, service control, update/uninstall,
+`install-skill`, and `check --offline`) operate locally. MCP is explicitly out
+of scope.
 
 ## Development
 
@@ -49,8 +50,9 @@ release, while real Chromium browser/PWA checks run on both operating systems.
 `.github/workflows/release.yml` verifies version tags, builds the release once,
 smoke-installs that exact artifact on fresh Windows and Linux runners, creates
 build-provenance attestations, and only then publishes the assets. Public
-`install.ps1`/`install.sh` bootstraps install the application
-only; agent skills are delivered separately. Managed application roots use
+`install.ps1`/`install.sh` bootstraps install the application and its
+version-matched skill payload. Agent-host registration remains separate and
+explicit through `gusto install-skill vbot`. Managed application roots use
 versioned side-by-side runtimes and a current pointer under
 `%LOCALAPPDATA%\Programs\Gusto` or `~/.local/opt/gusto`; data stays separate
 under `%LOCALAPPDATA%\Gusto` or the XDG user-data directory. Installation is
@@ -77,6 +79,8 @@ Quality gates:
 - `python tests/test_concurrency.py`
 - `python tests/test_recipes.py`
 - `python tests/test_cli.py`
+- `python tests/test_agent_contract.py`
+- `python tests/test_skill_install.py`
 - `python tests/test_service.py`
 - `python tests/test_update.py`
 - `python tests/test_autostart.py`
@@ -137,9 +141,8 @@ Quality gates:
   Permanent data removal is a distinct confirmed choice; a one-shot external
   helper performs self-deletion after the CLI exits.
 - 2026-07-20: Transferable release ZIPs include the complete, validated
-  `skill/gusto/` agent skill alongside the application artifacts. `install.py`
-  remains application-only because skill discovery and installation are owned
-  by the selected agent host.
+  `skill/gusto/` agent skill alongside the application artifacts. Agent-host
+  registration remains an explicit action rather than an installer side effect.
 - 2026-07-21: Agent-visible mutations use cross-process catalog, favorites, and
   shopping transaction locks on Windows and POSIX, preventing lost updates
   from parallel tool calls without globally serializing independent domains.
@@ -180,8 +183,8 @@ Quality gates:
   per-user runtimes, register login autostart, start immediately, and require a
   healthy service without admin rights. `gusto update` verifies public release
   assets, switches side-by-side, and rolls back unhealthy activation.
-  Installer reruns are repair-only; app installation never installs the agent
-  skill.
+  Installer reruns are repair-only; app installation carries the skill payload
+  but never mutates an agent host automatically.
 - 2026-07-27: Reusable CI runs every script contract on Windows/Linux at Python
   3.10 and 3.14 plus real Chromium/PWA suites on both systems. Tagged releases
   build once, smoke-install the exact artifact on both systems, retain failure
@@ -191,6 +194,16 @@ Quality gates:
   Scheduled Task that is merely named `Gusto` unless its fixed description
   identifies it as Gusto-owned. Install, repair/update, service control,
   uninstall, and the compatibility adapter share this collision guard.
+- 2026-07-31: Gusto 0.1.7 installs the canonical Gusto skill payload into every
+  managed runtime. The local JSON-capable `gusto install-skill vbot` command
+  stages and fully replaces `~/.vbot/skills/gusto`; update refreshes the runtime
+  source while host refresh remains explicit. The compact main skill routes
+  exact CLI, installation, and Telegram detail to on-demand references, and a
+  fresh-agent contract test locks all 59 leaf commands to `--json` and docs.
+- 2026-07-31: Tag-category definition, ordering, assignment, unassignment, and
+  removal are catalog mutations behind Core/API/CLI `gusto categories ...`.
+  Agents can resolve `uncategorized_tags` without direct JSON edits; mutations
+  use the catalog lock and publish catalog change events.
 
 ## Domain Maps
 

@@ -137,6 +137,110 @@ def cmd_tags(args):
         print("  " + (", ".join(g["tags"]) if g["tags"] else "—"))
 
 
+def _print_category(category: dict) -> None:
+    print(f"{category['key']} — {category['label']}")
+    print("  " + (", ".join(category["tags"]) if category["tags"] else "—"))
+
+
+def cmd_categories_list(args):
+    categories = _remote(args, "categories.list")
+    if args.json:
+        _dump(categories)
+        return
+    if not categories:
+        print("Keine Tag-Kategorien definiert.")
+        return
+    for category in categories:
+        _print_category(category)
+
+
+def cmd_categories_add(args):
+    category = _remote(args, "categories.add", {
+        "key": args.key,
+        "label": args.label,
+        "position": args.position,
+    })
+    if args.json:
+        _dump(category)
+    else:
+        print("Tag-Kategorie angelegt:")
+        _print_category(category)
+
+
+def cmd_categories_set(args):
+    category = _remote(args, "categories.set", {
+        "key": args.key,
+        "label": args.label,
+        "position": args.position,
+    })
+    if args.json:
+        _dump(category)
+    else:
+        print("Tag-Kategorie aktualisiert:")
+        _print_category(category)
+
+
+def cmd_categories_remove(args):
+    result = _remote(args, "categories.remove", {"key": args.key})
+    if args.json:
+        _dump(result)
+        return
+    print(f"Tag-Kategorie entfernt: {result['key']} — {result['label']}")
+    if result["now_uncategorized"]:
+        print("Jetzt in Sonstige: " + ", ".join(result["now_uncategorized"]))
+
+
+def cmd_categories_assign(args):
+    category = _remote(args, "categories.assign", {
+        "key": args.key,
+        "tags": args.tags,
+    })
+    if args.json:
+        _dump(category)
+    else:
+        print("Tags zugeordnet:")
+        _print_category(category)
+
+
+def cmd_categories_unassign(args):
+    result = _remote(args, "categories.unassign", {"tags": args.tags})
+    if args.json:
+        _dump(result)
+    elif result["unassigned"]:
+        print("Jetzt in Sonstige: " + ", ".join(result["unassigned"]))
+    else:
+        print("Keines der Tags war einer Kategorie zugeordnet.")
+
+
+def cmd_categories_tag_move(args):
+    category = _remote(args, "categories.tag.move", {
+        "key": args.key,
+        "tag": args.tag,
+        "position": args.position,
+    })
+    if args.json:
+        _dump(category)
+    else:
+        print("Tag-Reihenfolge aktualisiert:")
+        _print_category(category)
+
+
+def cmd_install_skill(args):
+    from . import skill_install
+
+    result = skill_install.install_skill(args.host, dry_run=args.dry_run)
+    if args.json:
+        _dump(result)
+        return
+    if args.dry_run:
+        action = "würde ersetzt" if result["overwritten"] else "würde installiert"
+    else:
+        action = "ersetzt" if result["overwritten"] else "installiert"
+    print(f"Gusto-Skill für {result['host']} {action}.")
+    print(f"Quelle: {result['source']}")
+    print(f"Ziel:   {result['destination']}")
+
+
 def cmd_home(args):
     from . import core
 
@@ -1130,6 +1234,77 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--all", action="store_true",
                     help="Alle definierten Kategorien/Tags (nicht nur verwendete).")
     sp.set_defaults(func=cmd_tags)
+
+    sp = sub.add_parser("categories", help="Tag-Kategorien verwalten.")
+    catsub = sp.add_subparsers(dest="categories_command", required=True)
+
+    cap = catsub.add_parser(
+        "list", parents=[base], help="Alle Tag-Kategorien und Tags anzeigen.",
+    )
+    cap.set_defaults(func=cmd_categories_list)
+
+    cap = catsub.add_parser(
+        "add", parents=[base], help="Leere Tag-Kategorie anlegen.",
+    )
+    cap.add_argument("key", help="Stabiler technischer Schlüssel, z.B. season.")
+    cap.add_argument("label", help="Sichtbare Bezeichnung, z.B. Saison.")
+    cap.add_argument("--position", type=int, help="Optionale Position ab 1.")
+    cap.set_defaults(func=cmd_categories_add)
+
+    cap = catsub.add_parser(
+        "set", parents=[base], help="Bezeichnung oder Position ändern.",
+    )
+    cap.add_argument("key")
+    cap.add_argument("--label")
+    cap.add_argument("--position", type=int, help="Position ab 1.")
+    cap.set_defaults(func=cmd_categories_set)
+
+    cap = catsub.add_parser(
+        "remove", parents=[base],
+        help="Kategorie entfernen; ihre verwendeten Tags werden Sonstige.",
+    )
+    cap.add_argument("key")
+    cap.set_defaults(func=cmd_categories_remove)
+
+    cap = catsub.add_parser(
+        "assign", parents=[base],
+        help="Tags genau einer Kategorie zuordnen.",
+    )
+    cap.add_argument("key")
+    cap.add_argument("tags", nargs="+", help="Ein oder mehrere Tag-Namen.")
+    cap.set_defaults(func=cmd_categories_assign)
+
+    cap = catsub.add_parser(
+        "unassign", parents=[base],
+        help="Tags aus ihren Kategorien lösen; verwendete Tags werden Sonstige.",
+    )
+    cap.add_argument("tags", nargs="+", help="Ein oder mehrere Tag-Namen.")
+    cap.set_defaults(func=cmd_categories_unassign)
+
+    cap = catsub.add_parser(
+        "tag-move", parents=[base],
+        help="Tag innerhalb seiner Kategorie auf eine Position verschieben.",
+    )
+    cap.add_argument("key")
+    cap.add_argument("tag")
+    cap.add_argument("position", type=int, help="Position ab 1.")
+    cap.set_defaults(func=cmd_categories_tag_move)
+
+    sp = sub.add_parser(
+        "install-skill",
+        help="Gebündelten Gusto-Agent-Skill lokal installieren.",
+    )
+    sp.add_argument("--json", action="store_true",
+                    help="Maschinenlesbare Ausgabe (fuer Agents/Skripte).")
+    sp.add_argument(
+        "host", metavar="HOST",
+        help="Agent-Host; derzeit wird vbot unterstützt.",
+    )
+    sp.add_argument(
+        "--dry-run", action="store_true",
+        help="Quelle und Ziel prüfen, ohne den Skill zu verändern.",
+    )
+    sp.set_defaults(func=cmd_install_skill)
 
     sp = sub.add_parser("home", parents=[base],
                         help="Aktiven Gusto-Datenordner anzeigen.")

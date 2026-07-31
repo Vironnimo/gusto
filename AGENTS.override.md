@@ -69,7 +69,9 @@ Per recipe, tags stay a **flat list**; their category lives centrally in
 `--tag`/`?tag=` can be repeated, **OR within** a category and **AND across**
 categories. Tags without a category are reported by `gusto check` as
 "unsorted" and share the `Sonstige` facet; `new` and `set --tags` also warn
-immediately. Then sort the tag into `categories.json`.
+immediately. Inspect `gusto categories list --json` and resolve it through
+`gusto categories assign <key> <tag> ... --json`; never edit the live category
+file directly.
 
 ## Usage
 
@@ -81,6 +83,7 @@ curl -fsSL https://github.com/Vironnimo/gusto/releases/latest/download/install.s
 
 gusto status                   # installed user service
 gusto update                   # normal update path
+gusto install-skill vbot       # install/replace ~/.vbot/skills/gusto
 python -m gusto serve          # explicit development service
 ```
 
@@ -107,12 +110,16 @@ full diagnostics; `check --offline` is the explicit local recovery exception.
 `edit` downloads a temporary copy and uploads it after the editor exits;
 headless agents use `content set --file` or `content set --stdin`. Lifecycle
 commands (`serve`, `home`, `status`, `start`, `stop`, `restart`, `update`,
-`uninstall`) remain local.
+`uninstall`, `install-skill`) remain local.
 
 ```
 gusto list   [--tag T ...] [--max-time N]    Positive cap; unknown durations fail it
 gusto search "<terms>" [--match any|all] [--tag T ...] [--max-time N]  Full-text
 gusto tags   [--all]                          Show tag categories (facets)
+gusto categories list|add|set|remove          Manage facet definitions/order
+gusto categories assign <key> <tag> ...       Classify tags through the service
+gusto categories unassign <tag> ...
+gusto categories tag-move <key> <tag> <position>
 gusto home                                    Show server/service/data selection
 gusto show   <slug>                          Print a recipe (--json: incl. content)
 gusto new    "<Title>" [--tags a,b] [--duration N] [--servings N]  Warns on unsorted tags
@@ -130,6 +137,7 @@ gusto check [--offline]                       Server check; explicit local recov
 gusto serve  [--host H] [--port 1..65535]     Foreground recovery/development server
 gusto status|start|stop|restart                Control installed user service
 gusto update [--check]                         Verified normal update path
+gusto install-skill vbot [--dry-run]           Install/replace the bundled vBot skill
 gusto uninstall [--keep-data|--delete-data --yes] [--dry-run]  Remove installed app
 
 gusto image list <slug>                       Show cover and gallery images
@@ -231,8 +239,8 @@ and confirms in chat. "Fertig" saves the checked-state (add `gusto shopping
 remove-done` only if it should also remove bought items). A request to empty
 the entire list maps to one `gusto shopping clear` call. Neither removal has a
 CLI restore.
-Full round-trip in the skill
-(`skill/gusto/SKILL.md`); client history: [docs/telegram-shopping-handoff.md](docs/telegram-shopping-handoff.md).
+Full round-trip in the on-demand skill reference
+(`skill/gusto/references/telegram.md`); client history: [docs/telegram-shopping-handoff.md](docs/telegram-shopping-handoff.md).
 
 ## Important files
 
@@ -243,6 +251,7 @@ Full round-trip in the skill
 - `gusto/web.py` — FastAPI host (server-rendered UI + API)
 - `gusto/service.py` — current-user autostart/service lifecycle
 - `gusto/update.py` — verified side-by-side updates and rollback
+- `gusto/skill_install.py` — local version-matched agent-skill delivery
 - `gusto/templates/`, `gusto/static/` — UI + CSS/JS
 - `scripts/browser_check.py` — end-to-end browser test (Playwright)
 - `install.py` — managed installation implementation
@@ -257,9 +266,9 @@ Full round-trip in the skill
 - `scripts/ci_smoke_install.py` — release installation/service/lifecycle smoke
   test used only on fresh GitHub-hosted runners
 - `deploy/install-systemd.sh`, `deploy/install-windows-task.ps1` — compatibility adapters
-- `skill/gusto/` — self-contained generic skill (`SKILL.md` and
-  `references/cli.md`, `references/installation.md`) for operating and
-  installing the app; the app installer itself never installs the skill.
+- `skill/gusto/` — canonical self-contained skill (`SKILL.md` plus CLI,
+  installation, and Telegram references). Every app runtime carries it;
+  `gusto install-skill vbot` explicitly installs/replaces the vBot copy.
 
 ## Commits
 
@@ -300,7 +309,8 @@ anonymous LAN command API, remote CLI without local fallback, live browser
 change events, verified `gusto update` with side-by-side rollback, plus data
 model, core, CLI, web UI (list/search incl. **live search** while
 typing, **tag facets**: multi-select grouped by category, OR within / AND across
-categories — `data/categories.json`, `gusto tags`), recipe view,
+categories — `data/categories.json`, `gusto tags`, service-backed `gusto
+categories …` management), recipe view,
 create/edit/reversible archive/restore/purge, "cooked today", suggestions, log,
 404 page, optional Linux
 systemd and Windows logon deployment, browser test, and **multiple stored recipe images** with a selected

@@ -563,6 +563,34 @@ try:
                 live_visible = False
             check(live_visible,
                   "live: CLI-created recipe appears without manual reload")
+
+            live_category = subprocess.run(
+                [sys.executable, "-m", "gusto", "categories", "add",
+                 "live", "Live Facette", "--json"],
+                cwd=str(ROOT), env=cli_env, text=True, encoding="utf-8",
+                capture_output=True,
+            )
+            live_assignment = subprocess.run(
+                [sys.executable, "-m", "gusto", "categories", "assign",
+                 "live", "vegetarisch", "--json"],
+                cwd=str(ROOT), env=cli_env, text=True, encoding="utf-8",
+                capture_output=True,
+            ) if live_category.returncode == 0 else None
+            check(live_category.returncode == 0
+                  and live_assignment is not None
+                  and live_assignment.returncode == 0,
+                  "live: CLI category maintenance succeeds through the server")
+            if live_assignment is not None and live_assignment.returncode == 0:
+                try:
+                    live_page.wait_for_selector(
+                        ".taggroup-label:text-is('Live Facette')", timeout=5000)
+                    live_category_visible = True
+                except Exception:
+                    live_category_visible = False
+                check(live_category_visible,
+                      "live: CLI category assignment refreshes open browser facets")
+                live_page.screenshot(
+                    path=str(SHOTS / "14_live_category.png"), full_page=True)
             subprocess.run(
                 [sys.executable, "-m", "gusto", "delete", live_slug, "--json"],
                 cwd=str(ROOT), env=cli_env, text=True, encoding="utf-8",

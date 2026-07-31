@@ -1,8 +1,20 @@
 # Gusto application installation and lifecycle
 
-This reference installs and manages the Gusto **application only**. Agent hosts
-deliver the surrounding skill separately; never copy, install, update, or
-remove the skill as part of these commands.
+The managed Gusto application carries the matching agent-skill payload inside
+each versioned runtime. The app installer does not silently modify an agent
+host. Installing or refreshing the separate vBot copy is the explicit local
+`gusto install-skill vbot` workflow below.
+
+## Contents
+
+- [Requirements and trust boundary](#requirements-and-trust-boundary)
+- [One-shot first installation](#one-shot-first-installation)
+- [Install or refresh the vBot skill](#install-or-refresh-the-vbot-skill)
+- [Normal update](#normal-update)
+- [Explicit repair](#explicit-repair)
+- [Service control and diagnosis](#service-control-and-diagnosis)
+- [Paths](#paths)
+- [Uninstall](#uninstall)
 
 ## Requirements and trust boundary
 
@@ -39,15 +51,37 @@ SHA-256 and safe ZIP paths before running the bundled installer.
 A successful install:
 
 1. creates a versioned per-user runtime and stable `gusto` wrapper;
-2. preserves application and data as separate directories;
-3. registers per-user login autostart;
-4. starts Gusto immediately;
-5. waits for `/api/v1/health`;
-6. returns the local URL.
+2. includes the exact same version's Gusto agent skill in that runtime;
+3. preserves application and data as separate directories;
+4. registers per-user login autostart;
+5. starts Gusto immediately;
+6. waits for `/api/v1/health`;
+7. returns the local URL.
 
 Do not report success when registration, start, or health verification failed.
 Open `http://localhost:8000` locally or `http://<host>:8000` from another LAN
 device after installation.
+
+## Install or refresh the vBot skill
+
+This action is explicit and local. It does not need the Gusto service and does
+not target the recipe data directory.
+
+```bash
+gusto install-skill vbot --dry-run --json
+gusto install-skill vbot --json
+```
+
+The default vBot data directory `~/.vbot` must already exist. Gusto creates its
+`skills/` child if needed and installs to `~/.vbot/skills/gusto`. When that
+Gusto skill already exists, the command replaces its complete directory from a
+staged copy; it does not merge files or retain stale content. JSON reports the
+active Gusto version, source, destination, file list, and whether a previous
+copy was overwritten.
+
+Do not report the skill as installed based only on the app installation. Run
+the explicit command and verify its `status`. If vBot is absent, report the
+clear error rather than creating `~/.vbot` or guessing another host path.
 
 ## Normal update
 
@@ -71,6 +105,10 @@ back and health-checks the prior version; JSON distinguishes `update_failed`
 with `rollback:true` from `rollback_failed`.
 
 Never present re-running the installer as the update path.
+
+An app update refreshes the skill payload in the newly active runtime. It does
+not mutate an already installed vBot copy. Rerun `gusto install-skill vbot
+--json` when the vBot skill should follow the updated Gusto version.
 
 ## Explicit repair
 
@@ -132,6 +170,9 @@ is the foreground recovery/development command.
 The app root contains `versions/`, `current.json`, `install-state.json`, and
 stable wrappers. Normal updates retain the active and previous verified
 versions; user data is not part of a release archive.
+The bundled skill lives below the active runtime's `share/gusto/skill/gusto`;
+normal agents install it through `gusto install-skill`, not by copying this
+internal path themselves.
 
 ## Uninstall
 
@@ -151,3 +192,7 @@ gusto uninstall --delete-data --yes --json
 
 Use `--dry-run` first when exact targets matter. Never infer permission to
 delete data from a request to uninstall the application.
+
+App uninstall does not remove `~/.vbot/skills/gusto`, because that is a
+separately installed agent-host copy. Remove it only through the agent host's
+own lifecycle and only when explicitly requested.

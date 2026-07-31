@@ -10,8 +10,9 @@ and owns managed per-user installation, service, update, and removal lifecycle.
 `gusto/web.py`, templates, and static assets provide the server-rendered UI and
 offline shopping PWA from the same FastAPI process. Domain rules remain in Core.
 
-Local CLI code is restricted to lifecycle/recovery: `home`, foreground `serve`,
-`check --offline`, `status|start|stop|restart`, `update`, and `uninstall`.
+Local CLI code is restricted to lifecycle/recovery/host delivery: `home`,
+foreground `serve`, `install-skill`, `check --offline`,
+`status|start|stop|restart`, `update`, and `uninstall`.
 Normal catalog, log, favorites, image, archive, and shopping commands never
 silently fall back to local Core or files.
 
@@ -88,7 +89,9 @@ formats.
 
 - `pyproject.toml` publishes the `gusto` console script and windowless
   `gusto-autostart` GUI launcher. Templates, CSS/JS, manifest, and PWA icons are
-  package data. The server dependency set is installed by every managed app.
+  package data. The canonical `skill/gusto` files install as Wheel data below
+  `share/gusto/skill/gusto`. The server dependency set is installed by every
+  managed app.
 - `scripts/build_release.py` builds `gusto-release.zip`,
   `gusto-release.zip.sha256`, and `gusto-release.json`. The archive carries the
   wheel and bootstrap/lifecycle payload; it contains no user data.
@@ -100,14 +103,16 @@ formats.
 - `.github/workflows/release.yml` waits for that complete workflow, builds the
   release once, and passes the immutable artifact to Windows/Linux install
   smoke jobs. `scripts/ci_smoke_install.py` verifies bootstrap, user service,
-  health, UI/PWA shell, remote CLI, restart, update check, and uninstall before
-  the final job attests and publishes the same bytes. External actions are
+  health, UI/PWA shell, remote CLI, bundled vBot skill install/overwrite,
+  restart, update check, and uninstall before the final job attests and
+  publishes the same bytes. External actions are
   commit-pinned with weekly Dependabot updates; only the publish job has
   write/OIDC/attestation permissions.
 - Public root `install.ps1` and `install.sh` download the latest manifest,
   archive, and checksum, verify SHA-256 and safe ZIP extraction, then run the
-  bundled `install.py`. They install the app only; agent-skill delivery is a
-  separate host responsibility.
+  bundled `install.py`. They install the version-matched skill payload with the
+  app but never mutate an agent host; `gusto install-skill vbot` explicitly
+  stages and replaces `~/.vbot/skills/gusto` without contacting the service.
 - Managed app roots are `%LOCALAPPDATA%\Programs\Gusto` and
   `~/.local/opt/gusto`. They contain immutable `versions/<semver>` runtimes,
   `current.json`, `install-state.json`, and stable `bin/gusto` wrappers. Data
@@ -129,7 +134,8 @@ formats.
 - `gusto uninstall` removes only a verified managed installation. Default/
   `--keep-data` removes service and app integrations while retaining the store;
   `--delete-data --yes` is the separate destructive path. Windows uses a
-  detached helper for self-removal after the active executable exits.
+  detached helper for self-removal after the active executable exits. A
+  separately installed vBot skill remains owned by the agent host.
 - `gusto serve` remains foreground recovery/development startup. It validates
   the full server runtime before emitting its JSON startup object.
 
@@ -173,6 +179,8 @@ formats.
   description check aligned across managed registration, service control,
   update/repair, uninstall, and the compatibility adapter.
 - Run `tests/test_api.py` for API/journal changes, `tests/test_cli.py` for CLI,
+  `tests/test_agent_contract.py` and `tests/test_skill_install.py` for the
+  fresh-agent and host-delivery contracts,
   `tests/test_service.py` and `tests/test_update.py` for lifecycle,
   `tests/test_packaging.py` for assets, `scripts/browser_check.py` for visible
   live behavior, and `scripts/pwa_check.py` for offline/live shopping behavior.
