@@ -54,7 +54,9 @@ def main():
         dry_run = skill_install.install_skill(
             "vbot", dry_run=True, user_home=home, source=SOURCE,
         )
-        destination = vbot / "skills" / "gusto"
+        # Use the installer's canonical path. Python 3.10 on Windows may resolve
+        # the temporary user profile through its equivalent 8.3 short name.
+        destination = Path(dry_run["destination"])
         check(dry_run["status"] == "dry_run"
               and dry_run["overwritten"] is False
               and dry_run["gusto_version"] == __version__

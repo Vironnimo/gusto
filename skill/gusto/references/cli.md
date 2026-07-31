@@ -279,7 +279,7 @@ semantics, read `installation.md`.
   "server_reachable": true,
   "service_status": "ready",
   "server_data_path": "C:\\Users\\Ada\\AppData\\Local\\Gusto",
-  "server_version": "0.1.7",
+  "server_version": "0.1.8",
   "server_revision": 42
 }
 ```
@@ -352,7 +352,7 @@ Removal and unassignment:
 {
   "status": "installed",
   "host": "vbot",
-  "gusto_version": "0.1.7",
+  "gusto_version": "0.1.8",
   "source": "C:\\...\\share\\gusto\\skill\\gusto",
   "destination": "C:\\Users\\Ada\\.vbot\\skills\\gusto",
   "overwritten": true,
