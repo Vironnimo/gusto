@@ -92,9 +92,10 @@ formats.
   package data. The canonical `skill/gusto` files install as Wheel data below
   `share/gusto/skill/gusto`. The server dependency set is installed by every
   managed app.
-- `scripts/build_release.py` builds `gusto-release.zip`,
-  `gusto-release.zip.sha256`, and `gusto-release.json`. The archive carries the
-  wheel and bootstrap/lifecycle payload; it contains no user data.
+- `scripts/build_release.py` builds a schema-2 `gusto-release.json` plus direct,
+  individually hashed Wheel, installer, bootstrap, and pinned Windows Python
+  assets. There is no outer Gusto release ZIP and no user data in release
+  assets.
 - `.github/workflows/quality.yml` is reusable by normal PR/main CI and tagged
   releases. It runs all standalone script contracts on Windows/Linux at the
   supported minimum and current Python, plus real Chromium/PWA suites on both
@@ -108,15 +109,20 @@ formats.
   publishes the same bytes. External actions are
   commit-pinned with weekly Dependabot updates; only the publish job has
   write/OIDC/attestation permissions.
-- Public root `install.ps1` and `install.sh` download the latest manifest,
-  archive, and checksum, verify SHA-256 and safe ZIP extraction, then run the
-  bundled `install.py`. They install the version-matched skill payload with the
-  app but never mutate an agent host; `gusto install-skill vbot` explicitly
-  stages and replaces `~/.vbot/skills/gusto` without contacting the service.
+- Public root `install.ps1` and `install.sh` download the latest manifest and
+  direct assets, verify each SHA-256, then run the verified `install.py` beside
+  the Wheel. Windows needs no preinstalled Python: PowerShell safely extracts
+  the pinned CPython NuGet `tools/` runtime and Gusto copies it below its app
+  root. Linux uses system Python 3.10+. Both install the version-matched skill
+  payload with the app but never mutate an agent host; `gusto install-skill
+  vbot` explicitly stages and replaces `~/.vbot/skills/gusto` without
+  contacting the service.
 - Managed app roots are `%LOCALAPPDATA%\Programs\Gusto` and
-  `~/.local/opt/gusto`. They contain immutable `versions/<semver>` runtimes,
-  `current.json`, `install-state.json`, and stable `bin/gusto` wrappers. Data
-  remains under `%LOCALAPPDATA%\Gusto` or XDG user data.
+  `~/.local/opt/gusto`. They contain immutable `versions/<semver>` venvs,
+  `current.json`, schema-2 `install-state.json`, and stable `bin/gusto`
+  wrappers. Windows also owns `python/<python-version>`; state records the exact
+  Python kind/version/path/hash. Data remains under `%LOCALAPPDATA%\Gusto` or
+  XDG user data.
 - First install is per-user and no-admin. Windows registers a limited
   current-user logon Scheduled Task, current-user Installed Apps entry, Start
   Menu URL, and exact user PATH entry. Linux writes and enables a
@@ -127,15 +133,20 @@ formats.
 - A normal installer rerun is rejected. `--repair` re-registers/restarts an
   existing managed state and may reconstruct a damaged runtime only from a
   payload of the same active version. `gusto update` is the normal update path:
-  acquire the per-app lock, download and verify, publish from staging
-  side-by-side, stop, switch current pointer, reinstall the user service, and
-  health-check the expected version and data path. Activation failure rolls
-  back the pointer and re-verifies the previous version.
+  acquire the per-app lock, download and verify the direct Wheel, publish a venv
+  from the recorded Python in staging side-by-side, stop, switch current
+  pointer, reinstall the user service, and health-check the expected version
+  and data path. A Windows Python version change is staged and recorded in the
+  same activation; runtimes referenced by the retained previous Gusto version
+  remain for rollback. Activation failure restores pointer and state and
+  re-verifies the previous version.
 - `gusto uninstall` removes only a verified managed installation. Default/
   `--keep-data` removes service and app integrations while retaining the store;
   `--delete-data --yes` is the separate destructive path. Windows uses a
-  detached helper for self-removal after the active executable exits. A
-  separately installed vBot skill remains owned by the agent host.
+  detached PowerShell helper for self-removal after the active executable exits
+  because Windows Python is itself app-owned; Linux uses an external system-
+  Python helper. A separately installed vBot skill remains owned by the agent
+  host.
 - `gusto serve` remains foreground recovery/development startup. It validates
   the full server runtime before emitting its JSON startup object.
 
@@ -166,9 +177,10 @@ formats.
   workarounds that break the settled LAN contract.
 - A browser reload on change must not destroy offline shopping mutations;
   shopping uses its merge path instead.
-- Release installation/update trusts neither ZIP paths nor a downloaded
-  archive until manifest/checksum/hash checks pass. Keep previous verified
-  runtime available until the new one passes health.
+- Release installation/update trusts no downloaded asset until its manifest
+  hash passes. Safely validate the Windows Python package before extraction;
+  keep the previous verified Gusto and referenced Python runtimes until the new
+  version passes health.
 - Never let the release workflow rebuild per operating system or publish an
   untested copy. Both smoke jobs and the attestation/publish job must consume
   the single artifact emitted by the gated build job.

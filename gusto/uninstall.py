@@ -11,11 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import core
 from . import service
-
-
-SETTINGS_FILENAME = "gusto.settings.json"
 
 
 class UninstallError(RuntimeError):
@@ -37,7 +33,6 @@ class UninstallTargets:
 def discover_targets(
     *,
     prefix: str | os.PathLike[str] | None = None,
-    base_prefix: str | os.PathLike[str] | None = None,
     package_file: str | os.PathLike[str] | None = None,
     data_root: str | os.PathLike[str] | None = None,
     platform_name: str | None = None,
@@ -48,11 +43,15 @@ def discover_targets(
         raise UninstallError("Deinstallation wird nur unter Windows und Linux unterstützt.")
 
     runtime = Path(prefix or sys.prefix).expanduser().resolve()
-    base = Path(base_prefix or sys.base_prefix).expanduser().resolve()
     package = Path(package_file or __file__).expanduser().resolve()
     package_root = package.parent.parent
-    application = runtime
-    managed = False
+    if (package_root / "pyproject.toml").is_file():
+        raise UninstallError(
+            "Ein Projekt-Checkout wird nicht mit 'gusto uninstall' gelöscht. "
+            "Der Befehl ist nur für eine installierte Gusto-Runtime gedacht."
+        )
+    application: Path | None = None
+    install_state: dict[str, object] | None = None
     for candidate in (runtime, *runtime.parents):
         if ((candidate / service.STATE_FILENAME).is_file()
                 and (candidate / service.CURRENT_FILENAME).is_file()
@@ -64,19 +63,16 @@ def discover_targets(
                     "Gusto läuft nicht aus der aktiven verwalteten Version."
                 )
             application = candidate
-            managed = True
+            install_state = service.read_state(paths)
             break
-    settings = (
-        application / service.STATE_FILENAME if managed
-        else application / SETTINGS_FILENAME
-    )
 
-    if (package_root / "pyproject.toml").is_file():
+    if application is None or install_state is None:
         raise UninstallError(
-            "Ein Projekt-Checkout wird nicht mit 'gusto uninstall' gelöscht. "
-            "Der Befehl ist nur für eine installierte Gusto-Runtime gedacht."
+            "Gusto läuft nicht aus einer aktuellen verwalteten Installation."
         )
-    if runtime == base or not package.is_relative_to(runtime):
+    settings = application / service.STATE_FILENAME
+
+    if not package.is_relative_to(runtime):
         raise UninstallError(
             "Gusto läuft nicht aus einer eigenständigen verwalteten Installation."
         )
@@ -92,13 +88,8 @@ def discover_targets(
         )
 
     if platform_name.startswith("win"):
-        command_directory = (
-            application / "bin" if managed else application / "Scripts"
-        )
-        command = (
-            command_directory / "gusto.cmd" if managed
-            else command_directory / "gusto.exe"
-        )
+        command_directory = application / "bin"
+        command = command_directory / "gusto.cmd"
     else:
         command_directory = application / "bin"
         command = command_directory / "gusto"
@@ -108,13 +99,15 @@ def discover_targets(
             "Aus Sicherheitsgründen wird nichts gelöscht."
         )
 
-    data = Path(data_root or core.project_root()).expanduser().resolve()
+    data = Path(
+        data_root or str(install_state["data_dir"])
+    ).expanduser().resolve()
     linux_link = (
         (Path.home() / ".local" / "bin" / "gusto")
-        if managed and platform_name.startswith("linux") else None
+        if platform_name.startswith("linux") else None
     )
     windows_start_menu = None
-    if managed and platform_name.startswith("win"):
+    if platform_name.startswith("win"):
         appdata = Path(os.environ.get("APPDATA") or
                        Path.home() / "AppData" / "Roaming")
         windows_start_menu = (
@@ -127,7 +120,7 @@ def discover_targets(
         command_directory=command_directory,
         settings=settings,
         platform=platform_name,
-        managed=managed,
+        managed=True,
         linux_command_link=linux_link,
         windows_start_menu=windows_start_menu,
     )
@@ -188,7 +181,7 @@ def remove_path_entry(current: str, directory: Path) -> tuple[str, bool]:
 
 
 def remove_windows_user_path(directory: Path) -> bool:
-    """Remove only Gusto's Scripts directory from the current user's PATH."""
+    """Remove only Gusto's stable command directory from the user PATH."""
     if not sys.platform.startswith("win"):
         return False
 
@@ -423,21 +416,67 @@ with log_path.open("a", encoding="utf-8") as log:
 '''
 
 
-def write_removal_helper() -> Path:
+_WINDOWS_REMOVAL_HELPER = r'''param(
+    [int]$ParentPid,
+    [string]$Application,
+    [string]$Data,
+    [string]$LogPath,
+    [string]$ScriptPath
+)
+$ErrorActionPreference = "Stop"
+
+function Remove-Tree([string]$Target) {
+    if (-not $Target -or -not (Test-Path -LiteralPath $Target)) { return }
+    $lastError = $null
+    for ($attempt = 0; $attempt -lt 100; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $Target -Recurse -Force -ErrorAction Stop
+            return
+        } catch {
+            $lastError = $_
+            Start-Sleep -Milliseconds 100
+        }
+    }
+    throw $lastError
+}
+
+$logDirectory = [IO.Path]::GetDirectoryName($LogPath)
+New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
+try {
+    if ($ParentPid -gt 0) {
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        while ((Get-Process -Id $ParentPid -ErrorAction SilentlyContinue) `
+                -and [DateTime]::UtcNow -lt $deadline) {
+            Start-Sleep -Milliseconds 100
+        }
+    }
+    Remove-Tree $Application
+    Remove-Tree $Data
+    Add-Content -LiteralPath $LogPath -Encoding UTF8 `
+        -Value "Gusto deinstallation completed."
+} catch {
+    Add-Content -LiteralPath $LogPath -Encoding UTF8 -Value ($_ | Out-String)
+    exit 1
+} finally {
+    Remove-Item -LiteralPath $ScriptPath -Force -ErrorAction SilentlyContinue
+}
+'''
+
+
+def write_removal_helper(platform_name: str) -> Path:
     """Write the one-shot helper outside both application and data roots."""
-    descriptor, name = tempfile.mkstemp(prefix="gusto-uninstall-", suffix=".py")
+    windows = platform_name.startswith("win")
+    descriptor, name = tempfile.mkstemp(
+        prefix="gusto-uninstall-", suffix=".ps1" if windows else ".py",
+    )
     path = Path(name)
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as file:
-        file.write(_REMOVAL_HELPER)
+        file.write(_WINDOWS_REMOVAL_HELPER if windows else _REMOVAL_HELPER)
     return path
 
 
-def _base_interpreter(application: Path, platform_name: str) -> Path:
+def _base_interpreter(application: Path) -> Path:
     executable = Path(getattr(sys, "_base_executable", sys.executable)).resolve()
-    if platform_name.startswith("win"):
-        pythonw = executable.with_name("pythonw.exe")
-        if pythonw.is_file():
-            executable = pythonw
     if executable == application or executable.is_relative_to(application):
         raise UninstallError(
             "Kein unabhängiger Python-Interpreter für die Selbstlöschung gefunden."
@@ -454,19 +493,36 @@ def schedule_removal(
     parent_pid: int | None = None,
     launcher: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
 ) -> Path:
-    """Start a detached helper which deletes the runtime after this CLI exits."""
-    helper = write_removal_helper()
+    """Start an external helper which deletes the app after this CLI exits."""
+    helper = write_removal_helper(targets.platform)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     log_path = Path(tempfile.gettempdir()) / f"gusto-uninstall-{timestamp}.log"
-    interpreter = _base_interpreter(targets.application, targets.platform)
-    command = [
-        os.fspath(interpreter), "-I", os.fspath(helper),
-        str(os.getpid() if parent_pid is None else parent_pid),
-        os.fspath(targets.application),
-        os.fspath(separate_data_target) if separate_data_target else "",
-        os.fspath(log_path),
-        os.fspath(helper),
-    ]
+    actual_parent_pid = os.getpid() if parent_pid is None else parent_pid
+    if targets.platform.startswith("win"):
+        powershell = shutil.which("powershell.exe")
+        if not powershell:
+            helper.unlink(missing_ok=True)
+            raise UninstallError("powershell.exe für die Selbstlöschung fehlt.")
+        command = [
+            powershell,
+            "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+            "-File", os.fspath(helper),
+            "-ParentPid", str(actual_parent_pid),
+            "-Application", os.fspath(targets.application),
+            "-Data", os.fspath(separate_data_target) if separate_data_target else "",
+            "-LogPath", os.fspath(log_path),
+            "-ScriptPath", os.fspath(helper),
+        ]
+    else:
+        interpreter = _base_interpreter(targets.application)
+        command = [
+            os.fspath(interpreter), "-I", os.fspath(helper),
+            str(actual_parent_pid),
+            os.fspath(targets.application),
+            os.fspath(separate_data_target) if separate_data_target else "",
+            os.fspath(log_path),
+            os.fspath(helper),
+        ]
     options: dict[str, object] = {
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
@@ -475,9 +531,11 @@ def schedule_removal(
         "close_fds": True,
     }
     if targets.platform.startswith("win"):
-        options["creationflags"] = (
-            getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
-            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        # PowerShell 5.1 exits before running -File when launched with
+        # DETACHED_PROCESS. CREATE_NO_WINDOW still decouples it from the
+        # caller's console while allowing the one-shot script to execute.
+        options["creationflags"] = getattr(
+            subprocess, "CREATE_NO_WINDOW", 0x08000000,
         )
     else:
         options["start_new_session"] = True

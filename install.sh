@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Public one-shot bootstrap for the Gusto application. The installed
-# application is updated later with `gusto update`, never by rerunning this.
+# Public one-shot bootstrap. Linux uses a suitable system Python; Windows ships
+# an app-private runtime through install.ps1.
 release_base="${GUSTO_RELEASE_BASE:-https://github.com/Vironnimo/gusto/releases/latest/download}"
 python_bin="${PYTHON_BIN:-python3}"
 installer_args=()
@@ -60,7 +60,7 @@ from pathlib import Path
 source, destination = sys.argv[1:]
 parsed = urllib.parse.urlparse(source)
 if parsed.scheme == "https":
-    request = urllib.request.Request(source, headers={"User-Agent": "Gusto-Installer/1"})
+    request = urllib.request.Request(source, headers={"User-Agent": "Gusto-Installer/2"})
     with urllib.request.urlopen(request, timeout=30) as response, open(destination, "wb") as out:
         shutil.copyfileobj(response, out)
 elif parsed.scheme == "file":
@@ -74,69 +74,48 @@ PY
 
 download "$release_base/gusto-release.json" "$manifest"
 readarray -t release_fields < <("$python_bin" - "$manifest" <<'PY'
-import json, sys
+import json, re, sys
 from pathlib import Path
 value = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-if value.get("schema_version") != 1:
+if value.get("schema_version") != 2:
     raise SystemExit("Fehler: unbekanntes Release-Manifest.")
-for key in ("archive", "checksum", "sha256"):
-    item = value.get(key)
-    if not isinstance(item, str) or not item:
-        raise SystemExit(f"Fehler: Manifest-Feld {key!r} fehlt.")
-print(value["archive"])
-print(value["checksum"])
-print(value["sha256"].lower())
+assets = value.get("assets")
+if not isinstance(assets, dict):
+    raise SystemExit("Fehler: Release-Manifest enthält keine Assets.")
+for key in ("wheel", "installer"):
+    asset = assets.get(key)
+    if not isinstance(asset, dict):
+        raise SystemExit(f"Fehler: Manifest-Asset {key!r} fehlt.")
+    name, digest = asset.get("name"), asset.get("sha256")
+    if (not isinstance(name, str) or not name or Path(name).name != name
+            or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", digest)):
+        raise SystemExit(f"Fehler: Manifest-Asset {key!r} ist ungültig.")
+    print(name)
+    print(digest.lower())
 PY
 )
-archive_name="${release_fields[0]}"
-checksum_name="${release_fields[1]}"
-expected="${release_fields[2]}"
-[[ "$archive_name" != */* && "$checksum_name" != */* ]] || {
-  echo "Fehler: Release-Assets müssen einfache Dateinamen sein." >&2
+[[ "${#release_fields[@]}" -eq 4 ]] || {
+  echo "Fehler: Release-Manifest enthält keine gültigen Installer-Assets." >&2
   exit 1
 }
-archive="$temporary/$archive_name"
-checksum="$temporary/$checksum_name"
-download "$release_base/$archive_name" "$archive"
-download "$release_base/$checksum_name" "$checksum"
+wheel_name="${release_fields[0]}"
+wheel_sha="${release_fields[1]}"
+installer_name="${release_fields[2]}"
+installer_sha="${release_fields[3]}"
+wheel="$temporary/$wheel_name"
+installer="$temporary/$installer_name"
+download "$release_base/$wheel_name" "$wheel"
+download "$release_base/$installer_name" "$installer"
 
-"$python_bin" - "$archive" "$checksum" "$expected" <<'PY'
+"$python_bin" - "$wheel" "$wheel_sha" "$installer" "$installer_sha" <<'PY'
 import hashlib, sys
 from pathlib import Path
-archive = Path(sys.argv[1])
-checksum = Path(sys.argv[2])
-expected = sys.argv[3].lower()
-line = checksum.read_text(encoding="utf-8").strip().split()
-if not line or line[0].lower() != expected:
-    raise SystemExit("Fehler: Manifest und Checksum-Datei stimmen nicht überein.")
-actual = hashlib.sha256(archive.read_bytes()).hexdigest()
-if actual != expected:
-    raise SystemExit(f"Fehler: SHA-256-Prüfung fehlgeschlagen ({actual}).")
+for raw_path, expected in zip(sys.argv[1::2], sys.argv[2::2]):
+    path = Path(raw_path)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != expected:
+        raise SystemExit(f"Fehler: SHA-256-Prüfung für {path.name!r} fehlgeschlagen.")
 PY
 
-extract="$temporary/release"
-mkdir -- "$extract"
-"$python_bin" - "$archive" "$extract" <<'PY'
-import stat, sys, zipfile
-from pathlib import Path
-archive, destination = Path(sys.argv[1]), Path(sys.argv[2]).resolve()
-with zipfile.ZipFile(archive) as bundle:
-    for info in bundle.infolist():
-        name = info.filename.replace("\\", "/")
-        parts = Path(name).parts
-        if (not name or name.startswith("/") or any(p in ("", ".", "..") for p in parts)
-                or ((info.external_attr >> 16) & 0o170000) == stat.S_IFLNK):
-            raise SystemExit(f"Fehler: unsicherer ZIP-Eintrag: {name!r}")
-        target = (destination / Path(*parts)).resolve()
-        if destination not in target.parents and target != destination:
-            raise SystemExit(f"Fehler: ZIP-Eintrag verlässt das Ziel: {name!r}")
-    bundle.extractall(destination)
-PY
-
-mapfile -t installers < <(find "$extract" -type f -name install.py -print)
-[[ "${#installers[@]}" -eq 1 ]] || {
-  echo "Fehler: Release enthält nicht genau einen Installer." >&2
-  exit 1
-}
-"$python_bin" "${installers[0]}" \
+"$python_bin" "$installer" \
   --manifest-url "$release_base/gusto-release.json" "${installer_args[@]}"

@@ -74,44 +74,48 @@ check("exit $LASTEXITCODE" not in powershell,
 check("Get-FileHash" not in powershell
       and "Security.Cryptography.SHA256" in powershell,
       "PowerShell bootstrap checksum must not require optional cmdlets")
+check("Get-Command py.exe" not in powershell
+      and "Get-Command python.exe" not in powershell
+      and "--managed-python-source" in powershell,
+      "Windows bootstrap must run only its downloaded app-private Python")
 
 with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
     output = Path(temporary)
-    archive = build_release.build_release(output)
-    manifest_path = output / build_release.MANIFEST_NAME
-    checksum_path = output / build_release.CHECKSUM_NAME
+    python_fixture = output / "python-fixture.nupkg"
+    with zipfile.ZipFile(python_fixture, "w") as package:
+        package.writestr("tools/python.exe", b"fixture")
+        package.writestr("tools/pythonw.exe", b"fixture")
+        package.writestr("tools/LICENSE.txt", b"Python license fixture")
+    for stale in (
+        output / "gusto-release.zip",
+        output / "gusto-release.zip.sha256",
+        output / "gusto-9.9.9-py3-none-any.whl",
+    ):
+        stale.write_bytes(b"obsolete")
+    manifest_path = build_release.build_release(
+        output, windows_python_source=python_fixture,
+    )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    check(archive.name == "gusto-release.zip"
-          and manifest["archive"] == archive.name,
-          "release archive must use a stable latest asset name")
-    check(manifest["sha256"] == digest
-          and checksum_path.read_text(encoding="utf-8").split()[0] == digest,
-          "manifest and checksum asset must bind the exact archive")
+    check(manifest["schema_version"] == 2
+          and set(manifest["assets"]) == {
+              "wheel", "installer", "windows_bootstrap",
+              "linux_bootstrap", "windows_python_x64",
+          }, "manifest must enumerate the direct installer assets")
+    for asset in manifest["assets"].values():
+        asset_path = output / asset["name"]
+        check(asset_path.is_file()
+              and hashlib.sha256(asset_path.read_bytes()).hexdigest()
+              == asset["sha256"],
+              f"manifest must bind direct asset {asset['name']}")
+    check(not (output / "gusto-release.zip").exists()
+          and not (output / "gusto-release.zip.sha256").exists()
+          and len(list(output.glob("gusto-*.whl"))) == 1,
+          "release build must remove obsolete ZIPs and stale wheels")
     check((output / "install.ps1").read_bytes() == (ROOT / "install.ps1").read_bytes()
-          and (output / "install.sh").read_bytes() == (ROOT / "install.sh").read_bytes(),
+          and (output / "install.sh").read_bytes() == (ROOT / "install.sh").read_bytes()
+          and (output / "install.py").read_bytes() == (ROOT / "install.py").read_bytes(),
           "standalone bootstraps must be published beside release assets")
-    with zipfile.ZipFile(archive) as bundle:
-        names = bundle.namelist()
-        for suffix in (
-            "/install.py", "/install.ps1", "/install.sh",
-            "/deploy/gusto.service", "/deploy/install-systemd.sh",
-            "/deploy/install-windows-task.ps1", "/skill/gusto/SKILL.md",
-            "/skill/gusto/references/cli.md",
-            "/skill/gusto/references/installation.md",
-            "/skill/gusto/references/telegram.md",
-        ):
-            check(any(name.endswith(suffix) for name in names),
-                  f"release payload missing {suffix}")
-        check(sum(name.endswith(".whl") for name in names) == 1,
-              "release must contain exactly one wheel")
-        wheel_name = next(name for name in names if name.endswith(".whl"))
-        wheel_path = output / Path(wheel_name).name
-        wheel_path.write_bytes(bundle.read(wheel_name))
-        shell_info = next(info for info in bundle.infolist()
-                          if info.filename.endswith("/install.sh"))
-        check((shell_info.external_attr >> 16) & 0o111,
-              "POSIX bootstrap must be executable after extraction")
+    wheel_path = output / manifest["assets"]["wheel"]["name"]
     with zipfile.ZipFile(wheel_path) as wheel:
         packaged = set(wheel.namelist())
     for required in (
@@ -180,27 +184,6 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
           second_skill_install.stdout + second_skill_install.stderr)
 
     if sys.platform.startswith("win"):
-        powershell_exe = (
-            subprocess.run(
-                ["where.exe", "pwsh.exe"], capture_output=True, text=True,
-                encoding="utf-8",
-            ).stdout.splitlines() or [None]
-        )[0]
-        if powershell_exe:
-            bootstrap = subprocess.run(
-                [
-                    powershell_exe, "-NoProfile", "-File",
-                    os.fspath(ROOT / "install.ps1"),
-                    "-ReleaseBase", os.fspath(output),
-                    "-InstallDir", os.fspath(output / "bootstrap-app"),
-                    "-DataDir", os.fspath(output / "bootstrap-data"),
-                    "-DryRun", "-Json",
-                ],
-                capture_output=True, text=True, encoding="utf-8",
-            )
-            check(bootstrap.returncode == 0, bootstrap.stdout + bootstrap.stderr)
-            check(json.loads(bootstrap.stdout)["status"] == "dry_run",
-                  "PowerShell bootstrap must consume local release fixtures")
         runtime = output / "runtime with spaces"
         venv.EnvBuilder(with_pip=True).create(runtime)
         installed = subprocess.run(
@@ -256,12 +239,17 @@ with tempfile.TemporaryDirectory(prefix="gusto-dry-run-") as temporary:
     }
     repeated = subprocess.run(
         [sys.executable, os.fspath(ROOT / "install.py"),
-         "--install-dir", os.fspath(destination)],
+         "--install-dir", os.fspath(destination), "--json"],
         cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
     )
+    repeated_error = json.loads(repeated.stdout)
     after = {path.name: path.read_bytes() for path in destination.iterdir()}
-    check(repeated.returncode == 1 and "gusto update" in repeated.stderr,
-          "repeated bootstrap must direct the user to gusto update")
+    check(repeated.returncode == 1
+          and repeated_error["ok"] is False
+          and "gusto update" in repeated_error["error"]
+          and not repeated.stderr,
+          "JSON bootstrap failure must remain one parseable object and direct "
+          "the agent to gusto update")
     check(before == after, "repeated bootstrap failure must not mutate the app")
 
 with tempfile.TemporaryDirectory(prefix="gusto-install-rollback-") as temporary:
@@ -269,7 +257,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-install-rollback-") as temporary:
     app_root = root / "claimed-app"
     data_root = root / "data"
 
-    def fake_runtime(source, runtime, version, data, server_url):
+    def fake_runtime(source, runtime, version, data, server_url, **kwargs):
         runtime.mkdir(parents=True)
 
     def fake_wrappers(application, bootstrap):
@@ -310,17 +298,22 @@ with tempfile.TemporaryDirectory(prefix="gusto-runtime-repair-") as temporary:
         "host": "0.0.0.0",
         "port": 9123,
         "manifest_url": "fixture",
+        "python_runtime": service.system_python_state(),
     })
     service.write_current(paths, gusto.__version__)
     rebuilt = []
 
-    def rebuild_runtime(source, runtime, version, data, server_url):
+    def rebuild_runtime(source, runtime, version, data, server_url, **kwargs):
         rebuilt.append((version, server_url))
         scripts = runtime / "Scripts"
         scripts.mkdir(parents=True)
         (scripts / "python.exe").write_bytes(b"python")
         (runtime / ".gusto-runtime.json").write_text(
-            json.dumps({"version": version, "verified": True}),
+            json.dumps({
+                "version": version,
+                "verified": True,
+                "python_runtime": kwargs["python_version"],
+            }),
             encoding="utf-8",
         )
 

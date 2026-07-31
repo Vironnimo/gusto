@@ -134,13 +134,17 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     release_dir = args.release_dir.resolve()
-    required = {
-        "gusto-release.zip",
-        "gusto-release.zip.sha256",
-        "gusto-release.json",
-        "install.ps1",
-        "install.sh",
-    }
+    manifest_path = release_dir / "gusto-release.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assets = manifest["assets"]
+        required = {
+            "gusto-release.json", "install.ps1", "install.sh",
+            *(str(asset["name"]) for asset in assets.values()),
+        }
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as error:
+        print(f"Fehler: Release-Manifest ist ungültig: {error}", file=sys.stderr)
+        return 2
     missing = sorted(name for name in required
                      if not (release_dir / name).is_file())
     if missing:
@@ -179,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
                 environment=environment,
                 log_path=command_log,
             )
-            execute(
+            install_result = as_json(execute(
                 [
                     "powershell.exe", "-NoProfile", "-NonInteractive",
                     "-ExecutionPolicy", "Bypass", "-File",
@@ -193,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
                 ],
                 environment=environment,
                 log_path=command_log,
-            )
+            ))
             wrapper = app_dir / "bin/gusto.cmd"
             execute(
                 [
@@ -215,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
             environment["XDG_DATA_HOME"] = os.fspath(fake_home / ".local/share")
             environment["XDG_CONFIG_HOME"] = os.fspath(fake_home / ".config")
             prepare_linux_service_adapter(work_dir, environment)
-            execute(
+            install_result = as_json(execute(
                 [
                     "bash", os.fspath(release_dir / "install.sh"),
                     "--release-base", os.fspath(release_dir),
@@ -227,17 +231,40 @@ def main(argv: list[str] | None = None) -> int:
                 ],
                 environment=environment,
                 log_path=command_log,
-            )
+            ))
             wrapper = app_dir / "bin/gusto"
 
         install_complete = True
+        if (install_result.get("status") != "installed"
+                or install_result.get("ok") is not True):
+            raise RuntimeError("Bootstrap lieferte keinen eindeutigen JSON-Erfolg.")
         if not wrapper.is_file():
             raise RuntimeError(f"Stabiler Gusto-Wrapper fehlt: {wrapper}")
 
-        manifest = json.loads(
-            (release_dir / "gusto-release.json").read_text(encoding="utf-8")
-        )
         version = manifest["version"]
+        state = json.loads(
+            (app_dir / "install-state.json").read_text(encoding="utf-8")
+        )
+        python_runtime = state.get("python_runtime")
+        if sys.platform.startswith("win"):
+            if (not isinstance(python_runtime, dict)
+                    or python_runtime.get("kind") != "managed"):
+                raise RuntimeError("Windows-Installation verwendet kein app-eigenes Python.")
+            private_python = Path(str(python_runtime["path"])).resolve()
+            if (not private_python.is_relative_to(app_dir.resolve())
+                    or not (private_python / "python.exe").is_file()):
+                raise RuntimeError("App-eigene Windows-Python-Runtime fehlt.")
+            active = json.loads(
+                (app_dir / "current.json").read_text(encoding="utf-8")
+            )
+            pyvenv = Path(active["runtime"]) / "pyvenv.cfg"
+            if os.fspath(private_python).lower() not in pyvenv.read_text(
+                encoding="utf-8",
+            ).lower():
+                raise RuntimeError("Gusto-venv wurde nicht aus dem app-eigenen Python gebaut.")
+        elif (not isinstance(python_runtime, dict)
+              or python_runtime.get("kind") != "system"):
+            raise RuntimeError("Linux-Installation dokumentiert ihr System-Python nicht.")
         health = get_json(base_url + "/api/v1/health")
         if health.get("version") != version:
             raise RuntimeError(

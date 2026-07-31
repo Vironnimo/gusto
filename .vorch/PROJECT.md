@@ -14,9 +14,10 @@ also be available through the JSON-capable CLI so an agent can operate the produ
 
 ## Architecture
 
-Python 3.10+ with a stdlib-only Core and CLI HTTP client. FastAPI, Jinja2,
-Markdown, Uvicorn, python-multipart, and Pillow form the always-installed
-service/UI runtime. Core owns recipe, search, log, suggestion, shopping-list,
+Python 3.10+ with a stdlib-only Core and CLI HTTP client. Windows releases carry
+a pinned, hash-verified app-private Python; Linux uses a suitable system Python.
+FastAPI, Jinja2, Markdown, Uvicorn, python-multipart, and Pillow form the
+always-installed service/UI runtime. Core owns recipe, search, log, suggestion, shopping-list,
 and sync behavior. The versioned anonymous LAN API exposes that Core; browser
 and normal CLI commands are thin clients of the same running service with no
 tokens and no local CLI fallback. A persisted revision journal drives
@@ -42,8 +43,9 @@ of scope.
 
 ## Development
 
-`scripts/build_release.py` creates stable public assets:
-`gusto-release.zip`, its SHA-256 file, and `gusto-release.json`.
+`scripts/build_release.py` creates a schema-2 manifest plus individually hashed
+Wheel, installer, bootstrap, and pinned Windows Python assets. There is no outer
+Gusto release ZIP.
 `.github/workflows/quality.yml` is the reusable PR/main/release gate: all script
 checks run on Windows and Linux with Python 3.10 and the current feature
 release, while real Chromium browser/PWA checks run on both operating systems.
@@ -56,8 +58,10 @@ explicit through `gusto install-skill vbot`. Managed application roots use
 versioned side-by-side runtimes and a current pointer under
 `%LOCALAPPDATA%\Programs\Gusto` or `~/.local/opt/gusto`; data stays separate
 under `%LOCALAPPDATA%\Gusto` or the XDG user-data directory. Installation is
-current-user only, registers a limited Windows logon task or `systemd --user`,
-starts immediately, and must pass health without admin/root. `gusto update` is
+current-user only. Windows needs no preinstalled Python and builds each Gusto
+version as a venv from the app-private runtime; Linux needs Python 3.10+.
+Installation registers a limited Windows logon task or `systemd --user`, starts
+immediately, and must pass health without admin/root. `gusto update` is
 the sole normal update path and rolls back a failed activation; installer
 reruns require explicit repair mode. Browser/PWA tests always use throwaway
 data through `GUSTO_HOME`.
@@ -204,6 +208,13 @@ Quality gates:
   removal are catalog mutations behind Core/API/CLI `gusto categories ...`.
   Agents can resolve `uncategorized_tags` without direct JSON edits; mutations
   use the catalog lock and publish catalog change events.
+- 2026-07-31: Public releases no longer publish or consume the private-era
+  outer Gusto ZIP/checksum pair. Schema-2 manifests hash each direct asset.
+  Windows PowerShell downloads the pinned official CPython NuGet runtime and
+  needs no existing Python; Gusto stores it under the managed app root and
+  builds every application version in its own venv. Updates retain Python
+  runtimes needed for rollback, and uninstall removes the complete app-owned
+  Python tree. Linux continues to use system Python 3.10+.
 
 ## Domain Maps
 

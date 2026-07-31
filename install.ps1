@@ -16,17 +16,6 @@ if (-not $ReleaseBase) {
 }
 $ReleaseBase = $ReleaseBase.TrimEnd("/")
 
-$python = Get-Command py.exe -ErrorAction SilentlyContinue
-$pythonPrefix = @("-3")
-if (-not $python) {
-    $python = Get-Command python.exe -ErrorAction Stop
-    $pythonPrefix = @()
-}
-& $python.Source @pythonPrefix -c "import sys; raise SystemExit(sys.version_info < (3, 10))"
-if ($LASTEXITCODE -ne 0) {
-    throw "Gusto braucht Python 3.10 oder neuer."
-}
-
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ("gusto-install-" + [Guid]::NewGuid())
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
@@ -35,81 +24,134 @@ try {
             Invoke-WebRequest -UseBasicParsing -Uri $Source -OutFile $Destination
         } elseif ($Source.StartsWith("file://")) {
             Copy-Item -LiteralPath ([Uri]$Source).LocalPath -Destination $Destination
+        } elseif ($Source -match "^[a-zA-Z][a-zA-Z0-9+.-]*://") {
+            throw "Release-URLs müssen HTTPS, file:// oder lokale Pfade sein."
         } else {
             Copy-Item -LiteralPath $Source -Destination $Destination
+        }
+    }
+
+    function Assert-Asset([object]$Asset, [string]$Label) {
+        if (-not $Asset -or -not ($Asset.name -is [string]) `
+                -or [IO.Path]::GetFileName($Asset.name) -ne $Asset.name `
+                -or -not ($Asset.sha256 -is [string]) `
+                -or $Asset.sha256 -notmatch "^[0-9a-fA-F]{64}$") {
+            throw "Manifest-Asset '$Label' ist ungültig."
+        }
+    }
+
+    function Assert-Sha256([string]$Path, [string]$Expected, [string]$Label) {
+        $sha256 = [Security.Cryptography.SHA256]::Create()
+        try {
+            $stream = [IO.File]::OpenRead($Path)
+            try {
+                $digest = $sha256.ComputeHash($stream)
+            } finally {
+                $stream.Dispose()
+            }
+        } finally {
+            $sha256.Dispose()
+        }
+        $actual = [BitConverter]::ToString($digest).Replace("-", "").ToLowerInvariant()
+        if ($actual -ne $Expected.ToLowerInvariant()) {
+            throw "SHA-256-Prüfung für '$Label' fehlgeschlagen."
         }
     }
 
     $manifestPath = Join-Path $temporary "gusto-release.json"
     Receive-Asset "$ReleaseBase/gusto-release.json" $manifestPath
     $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
-    if ($manifest.schema_version -ne 1 -or -not $manifest.archive `
-            -or -not $manifest.checksum -or -not $manifest.sha256) {
+    if ($manifest.schema_version -ne 2 -or -not ($manifest.version -is [string]) `
+            -or $manifest.version -notmatch "^[0-9]+\.[0-9]+\.[0-9]+$") {
         throw "Das Release-Manifest ist unvollständig oder unbekannt."
     }
-    foreach ($name in @($manifest.archive, $manifest.checksum)) {
-        if ([IO.Path]::GetFileName($name) -ne $name) {
-            throw "Release-Assets müssen einfache Dateinamen sein."
-        }
+    $wheelAsset = $manifest.assets.wheel
+    $installerAsset = $manifest.assets.installer
+    $pythonAsset = $manifest.assets.windows_python_x64
+    Assert-Asset $wheelAsset "wheel"
+    Assert-Asset $installerAsset "installer"
+    Assert-Asset $pythonAsset "windows_python_x64"
+    if (-not ($pythonAsset.version -is [string]) `
+            -or $pythonAsset.version -notmatch "^[0-9]+\.[0-9]+\.[0-9]+$" `
+            -or $pythonAsset.layout -ne "tools") {
+        throw "Die Windows-Python-Runtime im Manifest ist ungültig."
     }
-    $archivePath = Join-Path $temporary $manifest.archive
-    $checksumPath = Join-Path $temporary $manifest.checksum
-    Receive-Asset "$ReleaseBase/$($manifest.archive)" $archivePath
-    Receive-Asset "$ReleaseBase/$($manifest.checksum)" $checksumPath
 
-    $checksumWords = (Get-Content -Raw -LiteralPath $checksumPath).Trim().Split()
-    if ($checksumWords.Count -lt 1 -or
-            $checksumWords[0].ToLowerInvariant() -ne $manifest.sha256.ToLowerInvariant()) {
-        throw "Manifest und Checksum-Datei stimmen nicht überein."
-    }
-    $sha256 = [Security.Cryptography.SHA256]::Create()
-    try {
-        $archiveStream = [IO.File]::OpenRead($archivePath)
-        try {
-            $digestBytes = $sha256.ComputeHash($archiveStream)
-        } finally {
-            $archiveStream.Dispose()
-        }
-    } finally {
-        $sha256.Dispose()
-    }
-    $actual = [BitConverter]::ToString($digestBytes).Replace("-", "").ToLowerInvariant()
-    if ($actual -ne $manifest.sha256.ToLowerInvariant()) {
-        throw "SHA-256-Prüfung des Release-Archivs fehlgeschlagen."
+    $payload = Join-Path $temporary "payload"
+    New-Item -ItemType Directory -Path $payload | Out-Null
+    $wheelPath = Join-Path $payload $wheelAsset.name
+    $installerPath = Join-Path $payload $installerAsset.name
+    $pythonPackage = Join-Path $temporary $pythonAsset.name
+    foreach ($item in @(
+        @("$ReleaseBase/$($wheelAsset.name)", $wheelPath, $wheelAsset.sha256, "Gusto-Wheel"),
+        @("$ReleaseBase/$($installerAsset.name)", $installerPath, $installerAsset.sha256, "Installer"),
+        @("$ReleaseBase/$($pythonAsset.name)", $pythonPackage, $pythonAsset.sha256, "Python-Runtime")
+    )) {
+        Receive-Asset $item[0] $item[1]
+        Assert-Sha256 $item[1] $item[2] $item[3]
     }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $extract = Join-Path $temporary "release"
-    New-Item -ItemType Directory -Path $extract | Out-Null
-    $destinationRoot = [IO.Path]::GetFullPath($extract) + [IO.Path]::DirectorySeparatorChar
-    $zip = [IO.Compression.ZipFile]::OpenRead($archivePath)
+    $runtimeSource = Join-Path $temporary "python-runtime"
+    New-Item -ItemType Directory -Path $runtimeSource | Out-Null
+    $destinationRoot = [IO.Path]::GetFullPath($runtimeSource) + [IO.Path]::DirectorySeparatorChar
+    $zip = [IO.Compression.ZipFile]::OpenRead($pythonPackage)
     try {
         foreach ($entry in $zip.Entries) {
-            $target = [IO.Path]::GetFullPath((Join-Path $extract $entry.FullName))
+            $name = $entry.FullName.Replace("\", "/")
+            if (-not $name.StartsWith("tools/", [StringComparison]::Ordinal)) {
+                continue
+            }
+            $relative = $name.Substring(6)
+            if (-not $relative) { continue }
+            if ($relative.Contains(":")) {
+                throw "Unsicherer Python-Paketeintrag: $name"
+            }
+            $target = [IO.Path]::GetFullPath((Join-Path $runtimeSource $relative))
             if (-not $target.StartsWith($destinationRoot, [StringComparison]::OrdinalIgnoreCase)) {
-                throw "Unsicherer ZIP-Eintrag: $($entry.FullName)"
+                throw "Unsicherer Python-Paketeintrag: $name"
+            }
+            if (-not $entry.Name) {
+                New-Item -ItemType Directory -Force -Path $target | Out-Null
+                continue
+            }
+            $parent = [IO.Path]::GetDirectoryName($target)
+            New-Item -ItemType Directory -Force -Path $parent | Out-Null
+            $inputStream = $entry.Open()
+            try {
+                $outputStream = [IO.File]::Create($target)
+                try {
+                    $inputStream.CopyTo($outputStream)
+                } finally {
+                    $outputStream.Dispose()
+                }
+            } finally {
+                $inputStream.Dispose()
             }
         }
     } finally {
         $zip.Dispose()
     }
-    [IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $extract)
-    $installers = @(Get-ChildItem -LiteralPath $extract -Filter install.py -File -Recurse)
-    if ($installers.Count -ne 1) {
-        throw "Release enthält nicht genau einen Installer."
+    $python = Join-Path $runtimeSource "python.exe"
+    if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
+        throw "Das Python-Runtime-Paket enthält tools/python.exe nicht."
     }
 
-    $arguments = @()
-    $arguments += $pythonPrefix
-    $arguments += $installers[0].FullName
-    $arguments += @("--manifest-url", "$ReleaseBase/gusto-release.json")
+    $arguments = @(
+        $installerPath,
+        "--manifest-url", "$ReleaseBase/gusto-release.json",
+        "--managed-python-source", $runtimeSource,
+        "--managed-python-version", $pythonAsset.version,
+        "--managed-python-sha256", $pythonAsset.sha256,
+        "--host", $HostName,
+        "--port", "$Port"
+    )
     if ($InstallDir) { $arguments += @("--install-dir", $InstallDir) }
     if ($DataDir) { $arguments += @("--data-dir", $DataDir) }
-    $arguments += @("--host", $HostName, "--port", "$Port")
     if ($Repair) { $arguments += "--repair" }
     if ($DryRun) { $arguments += "--dry-run" }
     if ($Json) { $arguments += "--json" }
-    & $python.Source @arguments
+    & $python @arguments
     if ($LASTEXITCODE -ne 0) {
         throw "Die Gusto-Installation ist mit Status $LASTEXITCODE fehlgeschlagen."
     }

@@ -9,6 +9,7 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.fspath(ROOT))
@@ -24,18 +25,41 @@ def check(value, message):
     checks += 1
 
 
-def fixture(root: Path, version: str) -> Path:
-    archive = root / "gusto-release.zip"
-    with zipfile.ZipFile(archive, "w") as bundle:
-        bundle.writestr(f"gusto-{version}/install.py", "# fixture\n")
-        bundle.writestr(
-            f"gusto-{version}/gusto-{version}-py3-none-any.whl", b"fixture",
-        )
-    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+def fixture(
+    root: Path,
+    version: str,
+    *,
+    python_version: str = "3.13.14",
+) -> Path:
+    wheel = root / f"gusto-{version}-py3-none-any.whl"
+    wheel.write_bytes(b"fixture-" + version.encode("ascii"))
+    installer = root / "install.py"
+    installer.write_text("# fixture\n", encoding="utf-8")
+    python_runtime = root / "python-runtime-windows-x64.nupkg"
+    with zipfile.ZipFile(python_runtime, "w") as package:
+        package.writestr("tools/python.exe", b"python-fixture")
+        package.writestr("tools/pythonw.exe", b"pythonw-fixture")
+        package.writestr("tools/LICENSE.txt", b"license-fixture")
+    def asset(path: Path, **extra: str) -> dict[str, str]:
+        return {
+            "name": path.name,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            **extra,
+        }
     manifest = root / "gusto-release.json"
     manifest.write_text(json.dumps({
-        "schema_version": 1, "version": version,
-        "archive": archive.name, "sha256": digest,
+        "schema_version": 2,
+        "version": version,
+        "minimum_system_python": "3.10",
+        "assets": {
+            "wheel": asset(wheel),
+            "installer": asset(installer),
+            "windows_bootstrap": asset(installer),
+            "linux_bootstrap": asset(installer),
+            "windows_python_x64": asset(
+                python_runtime, version=python_version, layout="tools",
+            ),
+        },
     }), encoding="utf-8")
     return manifest
 
@@ -51,6 +75,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
     service.write_state(paths, {
         "data_dir": os.fspath(data), "host": "127.0.0.1", "port": 8000,
         "manifest_url": os.fspath(root / "gusto-release.json"),
+        "python_runtime": service.system_python_state(),
     })
     service.write_current(paths, "1.0.0")
     manifest = fixture(root, "1.1.0")
@@ -67,12 +92,16 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
     orchestration = []
 
     def runtime_installer(
-        paths_arg, version, wheel, data_dir, *, server_url_value=None,
+        paths_arg, version, wheel, data_dir, *, base_python,
+        python_version, server_url_value=None,
     ):
         target = paths_arg.version(version)
         target.mkdir(parents=True)
         (target / "verified").write_text(wheel.name, encoding="utf-8")
-        orchestration.append(("install", version, data_dir, server_url_value))
+        orchestration.append((
+            "install", version, data_dir, server_url_value,
+            base_python, python_version,
+        ))
         return target
 
     def controller(action, **kwargs):
@@ -96,8 +125,12 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
     check(result["status"] == "updated"
           and service.read_current(paths)["version"] == "1.1.0",
           "verified update must atomically select the new runtime")
+    python_state = service.read_state(paths)["python_runtime"]
     check(orchestration[:3] == [
-        ("install", "1.1.0", data.resolve(), "http://127.0.0.1:8000"),
+        (
+            "install", "1.1.0", data.resolve(), "http://127.0.0.1:8000",
+            Path(python_state["path"]), python_state["version"],
+        ),
         ("stop",), ("activate", "1.1.0"),
     ], "runtime must be prepared before the short service switch")
     check(health_expectations == [{
@@ -145,8 +178,109 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
           and not paths.version("1.2.0").exists(),
           "rollback must restore the pointer and discard failed runtime")
 
+    managed_root = root / "managed-python-update"
+    managed_paths = service.managed_paths(managed_root / "app")
+    managed_data = managed_root / "data"
+    managed_data.mkdir(parents=True)
+    old_python = service.managed_python_root(managed_paths, "3.13.14")
+    old_python.mkdir(parents=True)
+    (old_python / "python.exe").write_bytes(b"old-python")
+    old_runtime = managed_paths.version("1.0.0")
+    old_runtime.mkdir(parents=True)
+    (old_runtime / ".gusto-runtime.json").write_text(json.dumps({
+        "version": "1.0.0", "verified": True,
+        "python_runtime": "3.13.14",
+    }), encoding="utf-8")
+    service.write_state(managed_paths, {
+        "data_dir": os.fspath(managed_data),
+        "host": "127.0.0.1",
+        "port": 8010,
+        "manifest_url": "fixture",
+        "python_runtime": service.managed_python_state(
+            managed_paths, "3.13.14", "1" * 64,
+        ),
+    })
+    service.write_current(managed_paths, "1.0.0")
+
+    def fake_python_installer(paths_arg, source, version, sha256, **kwargs):
+        target = service.managed_python_root(paths_arg, version)
+        target.mkdir(parents=True, exist_ok=True)
+        executable = target / "python.exe"
+        executable.write_bytes(b"managed-python")
+        return executable
+
+    def managed_runtime_installer(
+        paths_arg, version, wheel, data_dir, *, base_python,
+        python_version, server_url_value=None,
+    ):
+        target = paths_arg.version(version)
+        target.mkdir(parents=True)
+        (target / ".gusto-runtime.json").write_text(json.dumps({
+            "version": version, "verified": True,
+            "python_runtime": python_version,
+        }), encoding="utf-8")
+        return target
+
+    managed_manifest = fixture(
+        managed_root, "1.1.0", python_version="3.14.0",
+    )
+    with patch.object(
+        update.service, "install_managed_python",
+        side_effect=fake_python_installer,
+    ):
+        managed_result = update.run_update(
+            app_root=managed_paths.app_root,
+            manifest_url=os.fspath(managed_manifest),
+            runtime_installer=managed_runtime_installer,
+            service_controller=lambda *args, **kwargs: {"ok": True},
+            service_installer=lambda *args, **kwargs: {"ok": True},
+            health_waiter=lambda *args, **kwargs: {"ok": True},
+        )
+    managed_state = service.read_state(managed_paths)
+    check(managed_result["status"] == "updated"
+          and managed_state["python_runtime"]["version"] == "3.14.0"
+          and service.managed_python_root(
+              managed_paths, "3.14.0",
+          ).is_dir()
+          and old_python.is_dir(),
+          "managed update must activate new Python while retaining rollback Python")
+
+    rollback_python_manifest = fixture(
+        managed_root, "1.2.0", python_version="3.15.0",
+    )
+    managed_health_calls = 0
+
+    def fail_managed_activation(*args, **kwargs):
+        global managed_health_calls
+        managed_health_calls += 1
+        if managed_health_calls == 1:
+            raise service.ServiceError("forced managed activation failure")
+        return {"ok": True}
+
+    with patch.object(
+        update.service, "install_managed_python",
+        side_effect=fake_python_installer,
+    ):
+        try:
+            update.run_update(
+                app_root=managed_paths.app_root,
+                manifest_url=os.fspath(rollback_python_manifest),
+                runtime_installer=managed_runtime_installer,
+                service_controller=lambda *args, **kwargs: {"ok": True},
+                service_installer=lambda *args, **kwargs: {"ok": True},
+                health_waiter=fail_managed_activation,
+            )
+        except update.UpdateError:
+            checks += 1
+        else:
+            raise AssertionError("managed Python activation failure must roll back")
+    check(service.read_state(managed_paths)["python_runtime"]["version"] == "3.14.0"
+          and service.read_current(managed_paths)["version"] == "1.1.0"
+          and not service.managed_python_root(managed_paths, "3.15.0").exists(),
+          "rollback must restore Python state and remove its unused runtime")
+
     try:
-        update.verify_archive(b"x", "0" * 64)
+        update.verify_asset(b"x", "0" * 64)
     except update.UpdateError:
         checks += 1
     else:
@@ -167,6 +301,8 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
 
     installed = update.install_runtime(
         stage_paths, "2.0.0", wheel, data,
+        base_python=Path(sys.executable),
+        python_version="3.13.14",
         server_url_value="http://127.0.0.1:9123",
         environment_builder=environment_builder,
         runner=lambda command, **kwargs: subprocess.CompletedProcess(

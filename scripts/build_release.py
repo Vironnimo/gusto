@@ -1,4 +1,4 @@
-"""Build verified, stable-named Gusto release assets."""
+"""Build direct, verified Gusto release assets without an outer bundle ZIP."""
 from __future__ import annotations
 
 import argparse
@@ -7,27 +7,26 @@ import json
 import os
 import re
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
+import urllib.request
 import zipfile
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-ARCHIVE_NAME = "gusto-release.zip"
 MANIFEST_NAME = "gusto-release.json"
-CHECKSUM_NAME = ARCHIVE_NAME + ".sha256"
-BUNDLE_FILES = (
-    Path("install.py"),
-    Path("install.ps1"),
-    Path("install.sh"),
-    Path("deploy/gusto.service"),
-    Path("deploy/install-systemd.sh"),
-    Path("deploy/install-windows-task.ps1"),
+INSTALLER_NAME = "install.py"
+WINDOWS_PYTHON_VERSION = "3.13.14"
+WINDOWS_PYTHON_ASSET = "python-runtime-windows-x64.nupkg"
+WINDOWS_PYTHON_URL = (
+    "https://www.nuget.org/api/v2/package/python/"
+    f"{WINDOWS_PYTHON_VERSION}"
 )
-BUNDLE_DIRECTORIES = (Path("skill/gusto"),)
+WINDOWS_PYTHON_SHA256 = (
+    "9ac15cfa6cab1115c83d48f2af55c554efa4d1bb044bbc4ab1c9d17ad426e16c"
+)
 
 
 def project_version() -> str:
@@ -38,24 +37,70 @@ def project_version() -> str:
     return match.group(1)
 
 
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def download_windows_python(destination: Path) -> None:
+    request = urllib.request.Request(
+        WINDOWS_PYTHON_URL,
+        headers={"User-Agent": "Gusto-Release-Builder/1"},
+    )
+    with (
+        urllib.request.urlopen(request, timeout=60) as response,
+        destination.open("wb") as output,
+    ):
+        shutil.copyfileobj(response, output)
+
+
+def validate_windows_python_package(path: Path) -> None:
+    try:
+        with zipfile.ZipFile(path) as package:
+            names = {name.replace("\\", "/") for name in package.namelist()}
+    except (OSError, zipfile.BadZipFile) as error:
+        raise RuntimeError(f"Windows-Python-Paket ist nicht lesbar: {error}") from error
+    for required in ("tools/python.exe", "tools/pythonw.exe", "tools/LICENSE.txt"):
+        if required not in names:
+            raise RuntimeError(
+                f"Windows-Python-Paket enthält {required!r} nicht."
+            )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Gusto-Release-Assets bauen.")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist")
+    parser.add_argument(
+        "--windows-python-source", type=Path, help=argparse.SUPPRESS,
+    )
     return parser
 
 
-def build_release(output_dir: Path) -> Path:
+def build_release(
+    output_dir: Path,
+    *,
+    windows_python_source: Path | None = None,
+) -> Path:
+    """Build one wheel plus independently hashed bootstrap/runtime assets."""
     output_dir = output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    for stale in (
+        *output_dir.glob("gusto-*.whl"),
+        output_dir / "gusto-release.zip",
+        output_dir / "gusto-release.zip.sha256",
+    ):
+        stale.unlink(missing_ok=True)
     version = project_version()
     with tempfile.TemporaryDirectory(prefix="gusto-release-") as temporary:
-        temporary_dir = Path(temporary)
-        wheel_dir = temporary_dir / "wheel"
+        wheel_dir = Path(temporary) / "wheel"
         wheel_dir.mkdir()
         result = subprocess.run(
             [sys.executable, "-m", "pip", "wheel", "--no-deps",
-             "--no-build-isolation",
-             "--wheel-dir", os.fspath(wheel_dir), os.fspath(ROOT)],
+             "--no-build-isolation", "--wheel-dir", os.fspath(wheel_dir),
+             os.fspath(ROOT)],
             cwd=ROOT,
         )
         if result.returncode:
@@ -63,83 +108,84 @@ def build_release(output_dir: Path) -> Path:
         wheels = list(wheel_dir.glob("gusto-*.whl"))
         if len(wheels) != 1:
             raise RuntimeError("Genau ein Gusto-Wheel erwartet.")
+        wheel = output_dir / wheels[0].name
+        shutil.copy2(wheels[0], wheel)
 
-        staging = temporary_dir / f"gusto-{version}"
-        staging.mkdir()
-        shutil.copy2(wheels[0], staging / wheels[0].name)
-        for relative in BUNDLE_FILES:
-            destination = staging / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / relative, destination)
-        for relative in BUNDLE_DIRECTORIES:
-            shutil.copytree(
-                ROOT / relative, staging / relative,
-                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    installer = output_dir / INSTALLER_NAME
+    shutil.copy2(ROOT / INSTALLER_NAME, installer)
+    for bootstrap in ("install.ps1", "install.sh"):
+        shutil.copy2(ROOT / bootstrap, output_dir / bootstrap)
+    windows_bootstrap = output_dir / "install.ps1"
+    linux_bootstrap = output_dir / "install.sh"
+
+    python_asset = output_dir / WINDOWS_PYTHON_ASSET
+    if windows_python_source is None:
+        temporary_python = python_asset.with_suffix(".download")
+        download_windows_python(temporary_python)
+        actual = sha256(temporary_python)
+        if actual != WINDOWS_PYTHON_SHA256:
+            temporary_python.unlink(missing_ok=True)
+            raise RuntimeError(
+                "SHA-256 des offiziellen Windows-Python-Pakets stimmt nicht: "
+                f"{actual}."
             )
-        (staging / "INSTALLATION.txt").write_text(
-            "Gusto wird als laufende Benutzer-App ohne Adminrechte installiert.\n\n"
-            "Windows: powershell -ExecutionPolicy Bypass -File .\\install.ps1\n"
-            "Linux:   ./install.sh\n\n"
-            "Der normale Updateweg ist anschließend: gusto update\n"
-            "Die Nutzdaten bleiben getrennt von den versionierten Runtimes.\n"
-            "Der passende Agent-Skill ist im Release und in der Runtime "
-            "enthalten. vBot-Installation: gusto install-skill vbot\n"
-            "Der App-Installer verändert Agent-Hosts nicht automatisch.\n",
-            encoding="utf-8",
-        )
+        os.replace(temporary_python, python_asset)
+    else:
+        shutil.copy2(windows_python_source.resolve(), python_asset)
+    validate_windows_python_package(python_asset)
 
-        archive = output_dir / ARCHIVE_NAME
-        temporary_archive = archive.with_suffix(".zip.tmp")
-        with zipfile.ZipFile(
-            temporary_archive, "w", compression=zipfile.ZIP_DEFLATED,
-        ) as bundle:
-            for path in sorted(staging.rglob("*")):
-                if not path.is_file():
-                    continue
-                name = path.relative_to(temporary_dir).as_posix()
-                info = zipfile.ZipInfo.from_file(path, name)
-                info.create_system = 3
-                executable = path.suffix == ".sh" or path.name == "install.sh"
-                permissions = 0o755 if executable else 0o644
-                info.external_attr = (stat.S_IFREG | permissions) << 16
-                bundle.writestr(
-                    info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED,
-                )
-        os.replace(temporary_archive, archive)
-
-    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    checksum = output_dir / CHECKSUM_NAME
-    checksum.write_text(f"{digest}  {ARCHIVE_NAME}\n", encoding="utf-8")
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "version": version,
-        "archive": ARCHIVE_NAME,
-        "checksum": CHECKSUM_NAME,
-        "sha256": digest,
-        "minimum_python": "3.10",
+        "minimum_system_python": "3.10",
+        "assets": {
+            "wheel": {
+                "name": wheel.name,
+                "sha256": sha256(wheel),
+            },
+            "installer": {
+                "name": installer.name,
+                "sha256": sha256(installer),
+            },
+            "windows_bootstrap": {
+                "name": windows_bootstrap.name,
+                "sha256": sha256(windows_bootstrap),
+            },
+            "linux_bootstrap": {
+                "name": linux_bootstrap.name,
+                "sha256": sha256(linux_bootstrap),
+            },
+            "windows_python_x64": {
+                "name": python_asset.name,
+                "sha256": sha256(python_asset),
+                "version": WINDOWS_PYTHON_VERSION,
+                "layout": "tools",
+            },
+        },
     }
-    (output_dir / MANIFEST_NAME).write_text(
+    manifest_path = output_dir / MANIFEST_NAME
+    manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    # Stable bootstrap filenames are published beside the manifest so the
-    # one-shot commands and the release payload always come from one release.
-    shutil.copy2(ROOT / "install.ps1", output_dir / "install.ps1")
-    shutil.copy2(ROOT / "install.sh", output_dir / "install.sh")
-    return archive
+    return manifest_path
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        archive = build_release(args.output_dir)
+        manifest = build_release(
+            args.output_dir,
+            windows_python_source=args.windows_python_source,
+        )
     except (OSError, RuntimeError) as error:
         print(f"Fehler: Release konnte nicht gebaut werden: {error}",
               file=sys.stderr)
         return 1
-    print(f"Release: {archive}")
-    print(f"Manifest: {archive.parent / MANIFEST_NAME}")
-    print(f"SHA-256: {archive.parent / CHECKSUM_NAME}")
+    value = json.loads(manifest.read_text(encoding="utf-8"))
+    print(f"Manifest: {manifest}")
+    for name, asset in value["assets"].items():
+        print(f"{name}: {manifest.parent / asset['name']} ({asset['sha256']})")
     return 0
 
 

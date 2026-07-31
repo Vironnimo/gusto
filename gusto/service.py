@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -19,7 +20,7 @@ CURRENT_FILENAME = "current.json"
 STATE_FILENAME = "install-state.json"
 TASK_NAME = "Gusto"
 UNIT_NAME = "gusto.service"
-STATE_SCHEMA = 1
+STATE_SCHEMA = 2
 
 
 class ServiceError(RuntimeError):
@@ -33,6 +34,7 @@ Runner = Callable[..., subprocess.CompletedProcess[str]]
 class ManagedPaths:
     app_root: Path
     versions: Path
+    python_runtimes: Path
     wrappers: Path
     current: Path
     state: Path
@@ -82,6 +84,7 @@ def managed_paths(app_root: str | Path | None = None) -> ManagedPaths:
     return ManagedPaths(
         app_root=root,
         versions=(root / "versions").resolve(),
+        python_runtimes=(root / "python").resolve(),
         wrappers=(root / "bin").resolve(),
         current=(root / CURRENT_FILENAME).resolve(),
         state=(root / STATE_FILENAME).resolve(),
@@ -146,6 +149,25 @@ def read_state(paths: ManagedPaths) -> dict[str, Any]:
     for field in ("data_dir", "host", "port"):
         if field not in state:
             raise ServiceError(f"Installationszustand enthält kein {field!r}.")
+    python_runtime = state.get("python_runtime")
+    if (not isinstance(python_runtime, dict)
+            or python_runtime.get("kind") not in {"managed", "system"}
+            or not isinstance(python_runtime.get("version"), str)
+            or not isinstance(python_runtime.get("path"), str)):
+        raise ServiceError(
+            "Installationszustand enthält keine gültige Python-Runtime."
+        )
+    try:
+        validate_python_version(str(python_runtime["version"]))
+        if python_runtime["kind"] == "managed":
+            _python_runtime_marker(
+                str(python_runtime["version"]),
+                str(python_runtime.get("sha256") or ""),
+            )
+    except ServiceError as error:
+        raise ServiceError(
+            "Installationszustand enthält keine gültige Python-Runtime."
+        ) from error
     return state
 
 
@@ -191,6 +213,190 @@ def runtime_python(runtime: Path, platform_name: str | None = None) -> Path:
     platform_name = platform_name or sys.platform
     return (runtime / "Scripts" / "python.exe" if platform_name.startswith("win")
             else runtime / "bin" / "python")
+
+
+def validate_python_version(version: str) -> str:
+    if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise ServiceError(f"Ungültige Python-Version: {version!r}")
+    return version
+
+
+def managed_python_root(paths: ManagedPaths, version: str) -> Path:
+    validate_python_version(version)
+    candidate = (paths.python_runtimes / version).resolve()
+    if not candidate.is_relative_to(paths.python_runtimes):
+        raise ServiceError("Ungültiger Pfad der verwalteten Python-Runtime.")
+    return candidate
+
+
+def base_python(root: Path, platform_name: str | None = None) -> Path:
+    platform_name = platform_name or sys.platform
+    return (root / "python.exe" if platform_name.startswith("win")
+            else root / "bin" / "python")
+
+
+def _python_runtime_marker(version: str, sha256: str) -> dict[str, object]:
+    if (not isinstance(sha256, str) or len(sha256) != 64
+            or any(value not in "0123456789abcdef" for value in sha256.lower())):
+        raise ServiceError("Ungültige SHA-256 der Python-Runtime.")
+    return {
+        "schema_version": 1,
+        "kind": "managed",
+        "version": validate_python_version(version),
+        "sha256": sha256.lower(),
+        "architecture": "x86_64",
+    }
+
+
+def managed_python_usable(root: Path, version: str, sha256: str) -> bool:
+    try:
+        marker = read_json_object(
+            root / ".gusto-python-runtime.json", "Python-Runtime-Markierung",
+        )
+    except ServiceError:
+        return False
+    if marker != _python_runtime_marker(version, sha256):
+        return False
+    python = base_python(root, "win32")
+    if not python.is_file():
+        return False
+    try:
+        result = subprocess.run(
+            [
+                os.fspath(python), "-I", "-c",
+                "import struct,sys; print('.'.join(map(str,sys.version_info[:3]))); "
+                "print(struct.calcsize('P') * 8)",
+            ],
+            text=True, encoding="utf-8", errors="replace", capture_output=True,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0 and result.stdout.splitlines() == [version, "64"]
+
+
+def install_managed_python(
+    paths: ManagedPaths,
+    source: Path,
+    version: str,
+    sha256: str,
+    *,
+    replace: bool = False,
+) -> Path:
+    """Stage and publish one app-owned, registry-free Windows Python."""
+    source = source.expanduser().resolve()
+    source_python = base_python(source, "win32")
+    if not source_python.is_file():
+        raise ServiceError(f"Python-Runtime-Quelle ist unvollständig: {source}")
+    for item in source.rglob("*"):
+        if item.is_symlink():
+            raise ServiceError(
+                f"Python-Runtime enthält einen symbolischen Link: {item}"
+            )
+    probe = subprocess.run(
+        [
+            os.fspath(source_python), "-I", "-c",
+            "import struct,sys; print('.'.join(map(str,sys.version_info[:3]))); "
+            "print(struct.calcsize('P') * 8)",
+        ],
+        text=True, encoding="utf-8", errors="replace", capture_output=True,
+    )
+    if probe.returncode or probe.stdout.splitlines() != [version, "64"]:
+        raise ServiceError(
+            "Python-Runtime-Quelle meldet nicht die erwartete Version/Architektur."
+        )
+
+    target = managed_python_root(paths, version)
+    if target.exists() and managed_python_usable(target, version, sha256):
+        return base_python(target, "win32")
+    if target.exists() and not replace:
+        raise ServiceError(
+            f"Vorhandene Python-Runtime ist nicht verifiziert: {target}."
+        )
+    paths.python_runtimes.mkdir(parents=True, exist_ok=True)
+    staging = paths.python_runtimes / f".staging-{version}-{os.getpid()}"
+    if staging.exists():
+        shutil.rmtree(staging)
+    try:
+        shutil.copytree(source, staging)
+        _atomic_json(
+            staging / ".gusto-python-runtime.json",
+            _python_runtime_marker(version, sha256),
+        )
+        if not managed_python_usable(staging, version, sha256):
+            raise ServiceError("Kopierte Python-Runtime hat die Prüfung nicht bestanden.")
+        if target.exists():
+            shutil.rmtree(target)
+        os.replace(staging, target)
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return base_python(target, "win32")
+
+
+def managed_python_state(
+    paths: ManagedPaths,
+    version: str,
+    sha256: str,
+) -> dict[str, str]:
+    root = managed_python_root(paths, version)
+    marker = _python_runtime_marker(version, sha256)
+    return {
+        "kind": "managed",
+        "version": str(marker["version"]),
+        "path": os.fspath(root),
+        "sha256": str(marker["sha256"]),
+    }
+
+
+def system_python_state(executable: str | Path | None = None) -> dict[str, str]:
+    executable = Path(
+        executable or getattr(sys, "_base_executable", sys.executable)
+    ).expanduser().resolve()
+    return {
+        "kind": "system",
+        "version": ".".join(str(value) for value in sys.version_info[:3]),
+        "path": os.fspath(executable),
+    }
+
+
+def state_base_python(paths: ManagedPaths, state: dict[str, Any]) -> Path:
+    runtime = state.get("python_runtime")
+    if not isinstance(runtime, dict):
+        raise ServiceError("Installationszustand enthält keine Python-Runtime.")
+    kind = runtime.get("kind")
+    version = runtime.get("version")
+    path = runtime.get("path")
+    if not isinstance(version, str) or not isinstance(path, str):
+        raise ServiceError("Installationszustand enthält eine ungültige Python-Runtime.")
+    if kind == "managed":
+        sha256 = runtime.get("sha256")
+        expected = managed_python_root(paths, version)
+        if Path(path).expanduser().resolve() != expected:
+            raise ServiceError("Python-Runtime verweist aus dem App-Root.")
+        if not isinstance(sha256, str) or not managed_python_usable(
+            expected, version, sha256,
+        ):
+            raise ServiceError("Verwaltete Python-Runtime ist nicht verwendbar.")
+        return base_python(expected, "win32")
+    if kind == "system":
+        executable = Path(path).expanduser().resolve()
+        if executable.is_relative_to(paths.app_root) or not executable.is_file():
+            raise ServiceError("System-Python der Installation ist nicht verwendbar.")
+        return executable
+    raise ServiceError(f"Unbekannte Python-Runtime-Art: {kind!r}")
+
+
+def create_virtual_environment(base: Path, target: Path) -> None:
+    result = subprocess.run(
+        [os.fspath(base), "-I", "-m", "venv", os.fspath(target)],
+        text=True, encoding="utf-8", errors="replace", capture_output=True,
+    )
+    if result.returncode:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise ServiceError(
+            "Virtuelle Umgebung konnte nicht erstellt werden"
+            + (f": {detail}" if detail else ".")
+        )
 
 
 def runtime_command(runtime: Path, platform_name: str | None = None) -> Path:

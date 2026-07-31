@@ -37,6 +37,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
     state = {
         "data_dir": os.fspath(data), "host": "0.0.0.0", "port": 8123,
         "manifest_url": "fixture",
+        "python_runtime": service.system_python_state(),
     }
     service.write_state(paths, state)
     service.write_current(paths, "1.2.3")
@@ -46,6 +47,23 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
           "install state must round-trip")
     check(service.server_url(state) == "http://127.0.0.1:8123",
           "wildcard listen host must become a local client URL")
+
+    corrupt_python = service.managed_python_root(paths, "3.13.14")
+    corrupt_python.mkdir(parents=True)
+    (corrupt_python / "python.exe").write_bytes(b"not-an-executable")
+    (corrupt_python / ".gusto-python-runtime.json").write_text(
+        json.dumps({
+            "schema_version": 1,
+            "kind": "managed",
+            "version": "3.13.14",
+            "sha256": "0" * 64,
+            "architecture": "x86_64",
+        }),
+        encoding="utf-8",
+    )
+    check(not service.managed_python_usable(
+        corrupt_python, "3.13.14", "0" * 64,
+    ), "a corrupt managed Python executable must be repairable, not crash probing")
 
     commands = []
     runner_calls = []

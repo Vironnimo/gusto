@@ -10,7 +10,6 @@ import tempfile
 import time
 import urllib.parse
 import urllib.request
-import venv
 import zipfile
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -80,34 +79,59 @@ def load_manifest(
         value = json.loads(downloader(location).decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise UpdateError(f"Release-Manifest ist nicht lesbar: {error}") from error
-    if not isinstance(value, dict) or value.get("schema_version") != 1:
+    if not isinstance(value, dict) or value.get("schema_version") != 2:
         raise UpdateError("Release-Manifest hat ein unbekanntes Format.")
     version = value.get("version")
-    archive = value.get("archive")
-    checksum = value.get("sha256")
-    if not isinstance(version, str) or not isinstance(archive, str):
-        raise UpdateError("Release-Manifest enthält keine Version oder kein Archiv.")
+    if not isinstance(version, str):
+        raise UpdateError("Release-Manifest enthält keine Version.")
     try:
         service.validate_version(version)
     except service.ServiceError as error:
         raise UpdateError(str(error)) from error
-    if (not isinstance(checksum, str) or len(checksum) != 64
-            or any(character not in "0123456789abcdefABCDEF"
-                   for character in checksum)):
-        raise UpdateError("Release-Manifest enthält keine gültige SHA-256-Prüfsumme.")
+    assets = value.get("assets")
+    if not isinstance(assets, dict):
+        raise UpdateError("Release-Manifest enthält keine Assets.")
+    resolved: dict[str, dict[str, str]] = {}
+    for key in ("wheel", "installer", "windows_python_x64"):
+        asset = assets.get(key)
+        if not isinstance(asset, dict):
+            raise UpdateError(f"Release-Manifest enthält Asset {key!r} nicht.")
+        name = asset.get("name")
+        checksum = asset.get("sha256")
+        if (not isinstance(name, str) or not name or Path(name).name != name
+                or not isinstance(checksum, str) or len(checksum) != 64
+                or any(character not in "0123456789abcdefABCDEF"
+                       for character in checksum)):
+            raise UpdateError(f"Release-Asset {key!r} ist ungültig.")
+        resolved[key] = {
+            **asset,
+            "name": name,
+            "url": resolve_asset(location, name),
+            "sha256": checksum.lower(),
+        }
+    python_asset = resolved["windows_python_x64"]
+    python_version = python_asset.get("version")
+    if python_asset.get("layout") != "tools" or not isinstance(
+        python_version, str,
+    ):
+        raise UpdateError("Windows-Python-Asset ist unvollständig.")
+    try:
+        service.validate_python_version(python_version)
+    except service.ServiceError as error:
+        raise UpdateError(str(error)) from error
     return {
         **value,
         "version": version,
-        "archive": resolve_asset(location, archive),
-        "sha256": checksum.lower(),
+        "assets": resolved,
     }
 
 
-def verify_archive(data: bytes, expected_sha256: str) -> str:
+def verify_asset(data: bytes, expected_sha256: str, label: str = "Asset") -> str:
     actual = hashlib.sha256(data).hexdigest()
     if actual != expected_sha256.lower():
         raise UpdateError(
-            f"SHA-256-Prüfung fehlgeschlagen (erwartet {expected_sha256}, "
+            f"SHA-256-Prüfung für {label} fehlgeschlagen "
+            f"(erwartet {expected_sha256}, "
             f"erhalten {actual})."
         )
     return actual
@@ -124,12 +148,11 @@ def safe_extract(archive: Path, destination: Path) -> None:
             if not name or name.startswith("/") or "\0" in name:
                 raise UpdateError(f"Unsicherer ZIP-Eintrag: {info.filename!r}")
             parts = Path(name).parts
-            if (any(part in {"", ".", ".."} for part in parts)
-                    or (parts and parts[0].endswith(":"))):
+            if (any(part in {"", ".", ".."} or ":" in part for part in parts)):
                 raise UpdateError(f"Unsicherer ZIP-Eintrag: {info.filename!r}")
             mode = (info.external_attr >> 16) & 0o170000
             if mode == 0o120000:
-                raise UpdateError(f"Symlink im Release-Archiv ist nicht erlaubt: {name}")
+                raise UpdateError(f"Symlink im Python-Paket ist nicht erlaubt: {name}")
             target = (destination / Path(*parts)).resolve()
             if not target.is_relative_to(destination):
                 raise UpdateError(f"ZIP-Eintrag verlässt das Ziel: {name}")
@@ -146,14 +169,14 @@ def safe_extract(archive: Path, destination: Path) -> None:
                 target.chmod(permissions)
 
 
-def find_release_payload(extracted: Path) -> tuple[Path, Path]:
-    installers = list(extracted.rglob("install.py"))
-    wheels = list(extracted.rglob("gusto-*.whl"))
-    if len(installers) != 1 or len(wheels) != 1:
-        raise UpdateError(
-            "Release-ZIP muss genau einen Installer und ein Gusto-Wheel enthalten."
-        )
-    return installers[0].parent, wheels[0]
+def extract_python_runtime(package: Path, destination: Path) -> None:
+    """Extract only the verified NuGet package's tools/ runtime subtree."""
+    extracted = destination / "package"
+    safe_extract(package, extracted)
+    tools = extracted / "tools"
+    if not service.base_python(tools, "win32").is_file():
+        raise UpdateError("Python-Runtime-Paket enthält tools/python.exe nicht.")
+    shutil.move(os.fspath(tools), os.fspath(destination / "runtime"))
 
 
 def write_runtime_settings(
@@ -175,7 +198,7 @@ def write_runtime_settings(
     return settings
 
 
-def verified_runtime(runtime: Path, version: str) -> bool:
+def verified_runtime(runtime: Path, version: str, python_version: str) -> bool:
     try:
         marker = json.loads(
             (runtime / ".gusto-runtime.json").read_text(encoding="utf-8")
@@ -183,7 +206,11 @@ def verified_runtime(runtime: Path, version: str) -> bool:
     except (OSError, json.JSONDecodeError):
         return False
     return (
-        marker == {"version": version, "verified": True}
+        marker == {
+            "version": version,
+            "verified": True,
+            "python_runtime": python_version,
+        }
         and service.runtime_python(runtime).is_file()
     )
 
@@ -267,6 +294,8 @@ def install_runtime(
     wheel: Path,
     data_dir: Path,
     *,
+    base_python: Path,
+    python_version: str,
     server_url_value: str | None = None,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     environment_builder: Callable[[Path], None] | None = None,
@@ -276,13 +305,13 @@ def install_runtime(
     paths.versions.mkdir(parents=True, exist_ok=True)
     recover_staging(paths, version)
     if runtime.exists():
-        if verified_runtime(runtime, version):
+        if verified_runtime(runtime, version, python_version):
             return runtime
         shutil.rmtree(runtime)
     if environment_builder is None:
-        environment_builder = lambda target: venv.EnvBuilder(
-            with_pip=True,
-        ).create(target)
+        environment_builder = lambda target: service.create_virtual_environment(
+            base_python, target,
+        )
     staging = Path(tempfile.mkdtemp(
         prefix=f".staging-{version}-", dir=paths.versions,
     )).resolve()
@@ -321,7 +350,11 @@ def install_runtime(
             )
         marker = staging / ".gusto-runtime.json"
         marker.write_text(
-            json.dumps({"version": version, "verified": True},
+            json.dumps({
+                "version": version,
+                "verified": True,
+                "python_runtime": python_version,
+            },
                        ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
@@ -353,7 +386,43 @@ def cleanup_versions(
             )
         except (OSError, json.JSONDecodeError):
             continue
-        if marker != {"version": candidate.name, "verified": True}:
+        if (not isinstance(marker, dict)
+                or marker.get("version") != candidate.name
+                or marker.get("verified") is not True
+                or not isinstance(marker.get("python_runtime"), str)):
+            continue
+        shutil.rmtree(candidate)
+        removed.append(candidate.name)
+    return sorted(removed, key=service.version_key)
+
+
+def cleanup_python_runtimes(paths: service.ManagedPaths) -> list[str]:
+    """Remove managed Python versions not referenced by a retained Gusto venv."""
+    referenced: set[str] = set()
+    if paths.versions.is_dir():
+        for runtime in paths.versions.iterdir():
+            if not runtime.is_dir():
+                continue
+            try:
+                marker = json.loads(
+                    (runtime / ".gusto-runtime.json").read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError):
+                continue
+            python_version = marker.get("python_runtime") if isinstance(
+                marker, dict,
+            ) else None
+            if isinstance(python_version, str):
+                referenced.add(python_version)
+    removed: list[str] = []
+    if not paths.python_runtimes.is_dir():
+        return removed
+    for candidate in paths.python_runtimes.iterdir():
+        if not candidate.is_dir() or candidate.name in referenced:
+            continue
+        try:
+            service.validate_python_version(candidate.name)
+        except service.ServiceError:
             continue
         shutil.rmtree(candidate)
         removed.append(candidate.name)
@@ -374,35 +443,106 @@ def _perform_update_locked(
     health_waiter: Callable[..., dict[str, Any]],
 ) -> dict[str, object]:
     latest = str(manifest["version"])
-    archive_bytes = downloader(str(manifest["archive"]))
-    verify_archive(archive_bytes, str(manifest["sha256"]))
+    assets = manifest["assets"]
+    if not isinstance(assets, dict):
+        raise UpdateError("Release-Manifest enthält keine Assets.")
+    wheel_asset = assets["wheel"]
+    if not isinstance(wheel_asset, dict):
+        raise UpdateError("Release-Manifest enthält kein Wheel.")
+    wheel_bytes = downloader(str(wheel_asset["url"]))
+    verify_asset(wheel_bytes, str(wheel_asset["sha256"]), "Gusto-Wheel")
     data_dir = Path(str(state["data_dir"])).expanduser().resolve()
     new_runtime: Path | None = None
+    new_python_root: Path | None = None
     switched = False
     rollback_ok = False
+    original_state = json.loads(json.dumps(state))
+    updated_state = json.loads(json.dumps(state))
     with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         temp = Path(temporary)
-        archive = temp / "release.zip"
-        archive.write_bytes(archive_bytes)
-        extracted = temp / "release"
-        safe_extract(archive, extracted)
-        _, wheel = find_release_payload(extracted)
-        new_runtime = runtime_installer(
-            paths,
-            latest,
-            wheel,
-            data_dir,
-            server_url_value=service.server_url(state),
-        )
+        wheel = temp / str(wheel_asset["name"])
+        wheel.write_bytes(wheel_bytes)
+        python_state = state["python_runtime"]
+        if not isinstance(python_state, dict):
+            raise UpdateError("Installationszustand enthält keine Python-Runtime.")
+        python_version = str(python_state["version"])
+        if python_state.get("kind") == "managed":
+            python_asset = assets["windows_python_x64"]
+            if not isinstance(python_asset, dict):
+                raise UpdateError("Release enthält keine Windows-Python-Runtime.")
+            release_python_version = str(python_asset["version"])
+            release_python_sha256 = str(python_asset["sha256"])
+            installed_sha256 = str(python_state.get("sha256") or "")
+            if (release_python_version == python_version
+                    and release_python_sha256 != installed_sha256):
+                raise UpdateError(
+                    "Das Release ersetzt dieselbe Python-Version mit anderem "
+                    "Inhalt; dafür ist eine neue Python-Version erforderlich."
+                )
+            if (release_python_version != python_version
+                    or release_python_sha256 != installed_sha256):
+                package_bytes = downloader(str(python_asset["url"]))
+                verify_asset(
+                    package_bytes, release_python_sha256, "Python-Runtime",
+                )
+                package = temp / str(python_asset["name"])
+                package.write_bytes(package_bytes)
+                extracted = temp / "python"
+                extracted.mkdir()
+                extract_python_runtime(package, extracted)
+                base_python = service.install_managed_python(
+                    paths,
+                    extracted / "runtime",
+                    release_python_version,
+                    release_python_sha256,
+                )
+                new_python_root = service.managed_python_root(
+                    paths, release_python_version,
+                )
+                updated_state["python_runtime"] = service.managed_python_state(
+                    paths, release_python_version, release_python_sha256,
+                )
+                python_version = release_python_version
+            else:
+                try:
+                    base_python = service.state_base_python(paths, state)
+                except service.ServiceError as error:
+                    raise UpdateError(
+                        "Die installierte Python-Runtime ist beschädigt; bitte "
+                        "den öffentlichen Installer im Reparaturmodus starten."
+                    ) from error
+        else:
+            try:
+                base_python = service.state_base_python(paths, state)
+            except service.ServiceError as error:
+                raise UpdateError(str(error)) from error
+
+        try:
+            new_runtime = runtime_installer(
+                paths,
+                latest,
+                wheel,
+                data_dir,
+                base_python=base_python,
+                python_version=python_version,
+                server_url_value=service.server_url(updated_state),
+            )
+        except Exception:
+            if new_python_root is not None:
+                cleanup_python_runtimes(paths)
+            raise
+
         try:
             service_controller("stop", app_root=paths.app_root)
             service.write_current(
                 paths, latest, previous_version=current_version,
             )
             switched = True
-            service_installer(paths, state)
+            if updated_state != state:
+                service.write_state(paths, updated_state)
+            service_installer(paths, updated_state)
             health_waiter(
-                service.health_url(state),
+                service.health_url(updated_state),
                 expected_version=latest,
                 expected_data_path=data_dir,
             )
@@ -410,9 +550,11 @@ def _perform_update_locked(
             try:
                 if switched:
                     service.write_current(paths, current_version)
-                service_installer(paths, state)
+                if updated_state != state:
+                    service.write_state(paths, original_state)
+                service_installer(paths, original_state)
                 health_waiter(
-                    service.health_url(state),
+                    service.health_url(original_state),
                     expected_version=current_version,
                     expected_data_path=data_dir,
                 )
@@ -435,6 +577,8 @@ def _perform_update_locked(
                 ) from activation_error
             if new_runtime is not None:
                 shutil.rmtree(new_runtime, ignore_errors=True)
+            if new_python_root is not None:
+                cleanup_python_runtimes(paths)
             message = (
                 "Update-Aktivierung fehlgeschlagen; vorige Version wurde "
                 f"wiederhergestellt: {activation_error}"
@@ -452,6 +596,7 @@ def _perform_update_locked(
             ) from activation_error
 
     removed = cleanup_versions(paths, {latest, current_version})
+    removed_python = cleanup_python_runtimes(paths)
     return {
         **base_result,
         "status": "updated",
@@ -460,6 +605,8 @@ def _perform_update_locked(
         "update_available": False,
         "rollback": rollback_ok,
         "removed_versions": removed,
+        "python_runtime": updated_state["python_runtime"],
+        "removed_python_runtimes": removed_python,
     }
 
 

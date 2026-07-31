@@ -63,6 +63,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-paths-") as temporary:
     service.write_state(paths, {
         "data_dir": os.fspath(root / "data"),
         "host": "0.0.0.0", "port": 8000,
+        "python_runtime": service.system_python_state(),
     })
     check(Path(service.read_current(paths)["runtime"]) == runtime,
           "pointer runtime must be derived inside versions/")
@@ -101,7 +102,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-paths-") as temporary:
     (nonempty / "personal.txt").write_text("keep", encoding="utf-8")
     try:
         install.validate_install_targets(
-            nonempty, root / "separate-data", managed=False, legacy=False,
+            nonempty, root / "separate-data", managed=False,
         )
     except ValueError:
         checks += 1
@@ -115,7 +116,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-paths-") as temporary:
     ):
         try:
             install.validate_install_targets(
-                root / "app", data_candidate, managed=True, legacy=False,
+                root / "app", data_candidate, managed=True,
             )
         except ValueError:
             checks += 1

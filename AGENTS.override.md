@@ -89,10 +89,12 @@ python -m gusto serve          # explicit development service
 
 Installation is per-user, registers login autostart, starts the service
 immediately and verifies `/api/v1/health`. Windows uses a limited current-user
-Scheduled Task; Linux uses `systemd --user`. It needs no admin rights and does
-not run before login. Re-running the installer is not an update; only explicit
-repair mode may replace an existing installation. Windows lifecycle commands
-refuse to take over or remove an unrelated Scheduled Task named `Gusto`.
+Scheduled Task and a pinned, hash-verified app-private Python; no preinstalled
+Python is required. Each Gusto version is its own venv. Linux uses Python 3.10+
+and `systemd --user`. Installation needs no admin rights and does not run before
+login. Re-running the installer is not an update; only explicit repair mode may
+replace an existing installation. Windows lifecycle commands refuse to take
+over or remove an unrelated Scheduled Task named `Gusto`.
 
 **Instance safety for agents:** normal household tasks use the installed
 `gusto` command and the running server. At the first Gusto operation in each
@@ -257,7 +259,8 @@ Full round-trip in the on-demand skill reference
 - `install.py` — managed installation implementation
 - `install.ps1`, `install.sh` — public Windows/Linux one-shot bootstraps
 - `gusto.settings.json` — development instance data selection (`gusto-dev`)
-- `scripts/build_release.py` — builds stable release ZIP, checksum and manifest
+- `scripts/build_release.py` — builds direct manifest-hashed assets: Wheel,
+  installer, and pinned Windows Python runtime; there is no outer Gusto ZIP
 - `.github/workflows/quality.yml` — reusable Linux/Windows, minimum/current
   Python, Chromium, and offline-PWA gates for PRs, `main`, and releases
 - `.github/workflows/release.yml` — builds once, smoke-installs the exact

@@ -26,11 +26,13 @@ The UI and the data fields are German; the code is English.
 
 ## Installation
 
-Gusto needs Python 3.10 or newer. Installation is entirely per-user: no
-administrator or root rights, no system-wide files and no token configuration.
-The installer downloads the latest public release, creates a versioned managed
-runtime, registers Gusto for the current user, enables login autostart, starts
-the service immediately and verifies its health.
+Installation is entirely per-user: no administrator or root rights, no
+system-wide files and no token configuration. Windows needs no preinstalled
+Python: the PowerShell bootstrap downloads Gusto's pinned, SHA-256-verified
+app-private Python and creates each Gusto version in its own venv. Linux uses
+an existing Python 3.10 or newer. The installer registers Gusto for the current
+user, enables login autostart, starts the service immediately and verifies its
+health.
 
 On Windows, Gusto never takes over or removes an unrelated Scheduled Task that
 happens to be named `Gusto`; such a name collision is reported and must be
@@ -229,7 +231,7 @@ install.ps1         public Windows bootstrap
 install.sh          public Linux bootstrap
 gusto.settings.json development instance data selection
 deploy/             platform user-autostart compatibility helpers
-scripts/build_release.py  build public release assets + manifest/checksum
+scripts/build_release.py  build direct, manifest-hashed public release assets
 scripts/run_quality.py    one cross-platform entry point for every quality gate
 scripts/ci_smoke_install.py  release install/lifecycle smoke test
 scripts/            end-to-end tests of the web UI (Playwright)
@@ -320,9 +322,9 @@ installed on fresh Ubuntu and Windows runners. The smoke test verifies the
 one-shot bootstrap, per-user service, health contract, browser UI/PWA shell,
 remote CLI mutation, restart, `gusto update --check`, and data-preserving
 uninstall. Only after both installations pass does the final job create build
-provenance attestations and publish the stable manifest, archive, checksum, and
-one-shot scripts. Write, OIDC, and attestation permissions exist only in that
-final job.
+provenance attestations and publish the stable manifest, Wheel, installer,
+Windows Python runtime, and one-shot scripts. There is no outer Gusto release
+ZIP. Write, OIDC, and attestation permissions exist only in that final job.
 
 The public installation URLs become usable after the first successful tagged
 release; publishing the tag is intentionally not part of a local install/build.

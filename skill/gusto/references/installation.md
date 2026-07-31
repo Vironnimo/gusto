@@ -18,7 +18,8 @@ host. Installing or refreshing the separate vBot copy is the explicit local
 
 ## Requirements and trust boundary
 
-- Windows or Linux with Python 3.10 or newer.
+- Windows PowerShell 5.1 or newer; no preinstalled Python is required.
+- Linux with Python 3.10 or newer.
 - Run as the normal target user. Never request administrator rights, `sudo`, a
   machine-wide PATH change, or a system service.
 - Gusto binds to the LAN and intentionally has no authentication or tokens.
@@ -44,9 +45,31 @@ Linux:
 curl -fsSL https://github.com/Vironnimo/gusto/releases/latest/download/install.sh | bash
 ```
 
-The bootstrap downloads `gusto-release.json`, the stable release ZIP and its
-checksum from the latest public GitHub release. It verifies manifest agreement,
-SHA-256 and safe ZIP paths before running the bundled installer.
+When an agent needs a machine-readable installation result, invoke the same
+bootstrap with JSON enabled instead of parsing human/pip output:
+
+```powershell
+$script = Join-Path $env:TEMP "gusto-install.ps1"
+irm https://github.com/Vironnimo/gusto/releases/latest/download/install.ps1 -OutFile $script
+try { & $script -Json } finally { Remove-Item -LiteralPath $script -Force }
+```
+
+```bash
+curl -fsSL https://github.com/Vironnimo/gusto/releases/latest/download/install.sh |
+  bash -s -- --json
+```
+
+Expect exactly one JSON object on stdout. Require `ok:true` and
+`status:"installed"`; on Windows also require `python_runtime.kind:"managed"`.
+Then run `gusto home --json` with the installed command before any domain
+mutation.
+
+The bootstrap downloads `gusto-release.json` plus the individually listed
+assets from the latest public GitHub release. Every asset is SHA-256 checked.
+Windows then safely extracts the pinned Python runtime, runs the verified
+installer with it, stores that Python below Gusto's app root, and creates the
+Gusto version in its own venv. Linux runs the verified installer and Wheel with
+the existing system Python. There is no outer Gusto release ZIP.
 
 A successful install:
 
@@ -97,12 +120,16 @@ Inspect without changing anything:
 gusto update --check --json
 ```
 
-The update downloads and verifies the published manifest/archive, installs the
-new runtime in a per-app locked staging area, atomically publishes it
+The update downloads and verifies the published manifest and Wheel, installs
+the new runtime in a per-app locked staging area, atomically publishes it
 side-by-side, stops the service, switches the current-version pointer, restarts,
 and checks both expected version and data path. Activation failure switches
 back and health-checks the prior version; JSON distinguishes `update_failed`
 with `rollback:true` from `rollback_failed`.
+
+On Windows, an update also downloads a new pinned Python asset when the release
+changes Python versions. Retained Gusto versions keep every Python runtime they
+still reference, so rollback remains usable.
 
 Never present re-running the installer as the update path.
 
@@ -163,13 +190,15 @@ is the foreground recovery/development command.
 | Purpose | Windows | Linux |
 |---|---|---|
 | Managed app root | `%LOCALAPPDATA%\Programs\Gusto` | `~/.local/opt/gusto` |
+| Python used for Gusto venvs | app root `\python\<version>` | existing system Python |
 | Stable command | app root `\bin\gusto.cmd` | app root `/bin/gusto` plus `~/.local/bin/gusto` |
 | User data | `%LOCALAPPDATA%\Gusto` | `$XDG_DATA_HOME/gusto` or `~/.local/share/gusto` |
 | Autostart | Scheduled Task `Gusto` | `~/.config/systemd/user/gusto.service` |
 
-The app root contains `versions/`, `current.json`, `install-state.json`, and
-stable wrappers. Normal updates retain the active and previous verified
-versions; user data is not part of a release archive.
+The app root contains `versions/`, `current.json`, `install-state.json`, stable
+wrappers, and on Windows the app-private Python runtime(s). Normal updates
+retain the active and previous verified versions plus the Python runtimes they
+need; user data is not part of a release asset.
 The bundled skill lives below the active runtime's `share/gusto/skill/gusto`;
 normal agents install it through `gusto install-skill`, not by copying this
 internal path themselves.
@@ -183,8 +212,9 @@ gusto uninstall --keep-data --json
 ```
 
 This removes the service registration, current-user app registration/PATH
-integration and managed runtimes while preserving recipes, images, favorites,
-shopping state and cooking history. Permanent data deletion is separate:
+integration, managed venvs, and app-private Windows Python while preserving
+recipes, images, favorites, shopping state and cooking history. Permanent data
+deletion is separate:
 
 ```bash
 gusto uninstall --delete-data --yes --json
