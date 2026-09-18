@@ -18,6 +18,58 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// Bestätigungsdialoge für destruktive Formulare: Der Nutzertext steht im
+// data-confirm-Attribut des Formulars, nicht in einem JS-String im
+// onsubmit-Attribut. HTML-Entities werden im Attribut zurück dekodiert, ein
+// Apostroph im Titel würde den eingebetteten JS-String vorzeitig beenden und
+// die Bestätigung still ausfallen lassen. Ohne JavaScript funktionieren die
+// Formulare weiterhin ohne Dialog.
+document.addEventListener("submit", (e) => {
+  const form = e.target;
+  if (!(form instanceof HTMLFormElement) || !form.dataset.confirm) return;
+  if (!window.confirm(form.dataset.confirm)) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+});
+
+// Doppel-Submit-Schutz fuer POST-Formulare: Core-Mutationen wie "Heute
+// gekocht" deduplizieren bewusst nicht (zweimal an einem Tag kochen ist
+// legitim), deshalb darf ein Doppelklick keinen zweiten Eintrag erzeugen.
+// Ein zweiter Submit im selben Moment wird abgewiesen. Die Buttons werden
+// erst NACH dem Submit-Event deaktiviert: Deaktiviert man den Submit-Button
+// innerhalb des Events, bricht Chromium die laufende Submission ab und es
+// waere gar nichts passiert. Nur POST-Formulare: bei GET-Formularen traegt
+// der geklickte Button seinen Wert mit (Zeitraum-Schalter) - ein dort
+// deaktivierter Button wuerde ihn aus der Anfrage verschlucken.
+document.addEventListener("submit", (e) => {
+  const form = e.target;
+  if (!(form instanceof HTMLFormElement) || form.method !== "post") return;
+  if (e.defaultPrevented) return; // z. B. abgelehnter Bestätigungsdialog
+  if (form.dataset.submitted) {
+    e.preventDefault(); // zweiter Klick im selben Moment: nur ein Eintrag
+    return;
+  }
+  form.dataset.submitted = "1";
+  setTimeout(() => {
+    for (const button of form.querySelectorAll("button, input[type='submit']")) {
+      if (button.type === "submit") button.disabled = true;
+    }
+  }, 0);
+});
+
+// Zurueck-Navigation aus dem Back-Forward-Cache stellt das alte DOM wieder
+// her: das Formular muss dort erneut benutzbar sein.
+window.addEventListener("pageshow", (e) => {
+  if (!e.persisted) return;
+  for (const form of document.querySelectorAll('form[data-submitted]')) {
+    delete form.dataset.submitted;
+    for (const button of form.querySelectorAll("button[disabled], input[disabled]")) {
+      button.disabled = false;
+    }
+  }
+});
+
 // Live-Suche: waehrend man tippt, werden Ergebnisse UND Tag-Leiste ohne Submit
 // aktualisiert. Wir holen entprellt denselben Endpunkt (/?q=...&tag=...) und
 // tauschen nur die betroffenen Bereiche – so bleibt die volle Suchlogik des
@@ -32,13 +84,20 @@ document.addEventListener("keydown", (e) => {
   let seq = 0;
   let timer = null;
 
-  async function update() {
+  async function update(fallbackToSubmit = false) {
     const params = new URLSearchParams(window.location.search); // aktive Tags behalten
     params.set("q", input.value);
     const url = "/?" + params.toString();
     const mine = ++seq;
     try {
       const resp = await fetch(url);
+      if (mine !== seq) return; // eine neuere Eingabe hat gewonnen
+      if (!resp.ok) {
+        // Server-/Netzfehler: das klassische Submit liefert die
+        // server-gerenderte Liste, statt die Suche stumm zu lassen.
+        if (fallbackToSubmit) form.submit();
+        return;
+      }
       const html = await resp.text();
       if (mine !== seq) return; // eine neuere Eingabe hat gewonnen
       const doc = new DOMParser().parseFromString(html, "text/html");
@@ -51,7 +110,10 @@ document.addEventListener("keydown", (e) => {
       if (neueTags && tagfilter) tagfilter.innerHTML = neueTags.innerHTML;
       history.replaceState(null, "", url); // URL/Lesezeichen aktuell halten
     } catch (e) {
-      /* offline o.Ae.: das normale Submit bleibt als Fallback nutzbar */
+      // Verbindungsfehler: das klassische Submit bleibt der Fallback, damit
+      // Enter weiterhin zur server-gerenderten Liste führt.
+      if (mine !== seq) return; // eine neuere Eingabe hat gewonnen
+      if (fallbackToSubmit) form.submit();
     }
   }
 
@@ -62,7 +124,7 @@ document.addEventListener("keydown", (e) => {
 
   input.addEventListener("input", schedule);  // tippen + natives "x"-Loeschen
   input.addEventListener("search", schedule); // Clear-Button mancher Browser
-  form.addEventListener("submit", (e) => { e.preventDefault(); clearTimeout(timer); update(); });
+  form.addEventListener("submit", (e) => { e.preventDefault(); clearTimeout(timer); update(true); });
 })();
 
 // Online-Aktualisierung: Der laufende Gusto-Dienst meldet erfolgreiche
@@ -101,7 +163,13 @@ document.addEventListener("keydown", (e) => {
       }
 
       const revision = Number(change && change.revision);
-      if (!Number.isFinite(revision) || revision <= latestRevision) return;
+      if (!Number.isFinite(revision) || revision === latestRevision) return;
+      // Eine kleinere Revision ist kein veraltetes Ereignis, sondern der
+      // bewusste Server-Reset (Journal-Reset/Store-Wechsel/Kompaktierung):
+      // Der Server schickt die kleinere aktuelle Revision. Folgen wir ihr
+      // nicht zurueck, wuerden wir alle Ereignisse verwerfen, bis Mutationen
+      // die alte Revision wieder ueberholt haben - und staenden dauerhaft
+      // still, inklusive Reconnects mit der alten ?after=-URL.
       latestRevision = revision;
 
       const resources = Array.isArray(change.resources) ? change.resources : [];

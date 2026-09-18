@@ -108,6 +108,31 @@ try:
         page.wait_for_function("() => document.querySelectorAll('#results .card').length === 3")
         check(page.locator("#results .card").count() == 3, "live search cleared -> 3 hits again")
 
+        # Live-search fallback: if the fetch fails, Enter must still navigate
+        # to the server-rendered list instead of silently doing nothing.
+        # The service worker would answer the fetch itself and bypass the
+        # route, so this check runs in a context without service workers.
+        fb_ctx = browser.new_context(service_workers="block")
+        fb = fb_ctx.new_page()
+        fb.route("**/*", lambda route: route.abort()
+                 if route.request.resource_type in ("fetch", "xhr")
+                 else route.continue_())
+        fb.goto(BASE, wait_until="load")
+        fb.fill("input[name=q]", "kokos")
+        fb.press("input[name=q]", "Enter")
+        try:
+            fb.wait_for_url("**/*q=kokos*", timeout=3000)
+            fallback_navigated = True
+        except Exception:
+            fallback_navigated = False
+        check(fallback_navigated,
+              "search fallback: Enter navigates when the live fetch fails")
+        if fallback_navigated:
+            fb.wait_for_load_state("load")
+            check(fb.locator("#results .card").count() == 1,
+                  "search fallback: server-rendered list appears after failed live fetch")
+        fb_ctx.close()
+
         # --- Tag filter: facets / multi-select ---
         page.goto(BASE, wait_until="load")
         check(page.locator(".taggroup").count() >= 3, "tag bar grouped by category")
@@ -144,6 +169,17 @@ try:
         page.wait_for_load_state("load")
         check(page.locator(".card").count() == 1, "'indisch' deselected again -> 1 hit")
 
+        # Empty state with active search/tag filters: recipes exist, they just
+        # do not match -- the CTA must not claim a first recipe, and the
+        # active filter must offer its reset.
+        page.goto(BASE + "/?q=zzz-gibts-nicht", wait_until="load")
+        content = page.content()
+        check("Neues Rezept anlegen" in content
+              and "Erstes Rezept anlegen" not in content,
+              "filtered empty state invites to create a new recipe, not the first one")
+        check(page.locator(".empty a", has_text="Filter zurücksetzen").count() == 1,
+              "filtered empty state offers to reset the filter")
+
         # Recipe page
         page.goto(BASE, wait_until="load")
         page.locator(".card-title", has_text="Carbonara").click()
@@ -174,9 +210,46 @@ try:
         check(page.locator(".timeline li").count() >= 3, "log has a new entry")
         page.screenshot(path=str(SHOTS / "04_log.png"), full_page=True)
 
+        # Double submit "Heute gekocht": a fast double click must produce
+        # exactly one log entry (client-side submit guard; the core does not
+        # deduplicate on purpose). Two synchronous clicks mimic the race.
+        page.goto(BASE + "/recipe/rotes-linsen-dal", wait_until="load")
+        log_before = len(json.loads(
+            (TESTDATA / "data" / "log.json").read_text(encoding="utf-8")))
+        page.evaluate(
+            "() => { const b = document.querySelector('form[action$=\"/cooked\"] button');"
+            " b.click(); b.click(); }")
+        deadline = time.time() + 5
+        while True:
+            log_after = len(json.loads(
+                (TESTDATA / "data" / "log.json").read_text(encoding="utf-8")))
+            if log_after >= log_before + 1 or time.time() >= deadline:
+                break
+            time.sleep(0.1)
+        check(log_after == log_before + 1,
+              "double click 'Heute gekocht' on the recipe logs exactly one entry")
+
+        page.goto(BASE + "/suggestions", wait_until="load")
+        log_before = len(json.loads(
+            (TESTDATA / "data" / "log.json").read_text(encoding="utf-8")))
+        page.evaluate(
+            "() => { const b = document.querySelector('form.card-quick button');"
+            " b.click(); b.click(); }")
+        deadline = time.time() + 5
+        while True:
+            log_after = len(json.loads(
+                (TESTDATA / "data" / "log.json").read_text(encoding="utf-8")))
+            if log_after >= log_before + 1 or time.time() >= deadline:
+                break
+            time.sleep(0.1)
+        check(log_after == log_before + 1,
+              "double click 'Heute gekocht' on suggestions logs exactly one entry")
+
         # Suggestions
         page.goto(BASE + "/suggestions", wait_until="load")
         check("Was koche ich" in page.content(), "suggestions page loads")
+        check("am längsten nicht Gekochte zuerst" in page.content(),
+              "suggestion copy stays consistent with du-form wording")
         page.screenshot(path=str(SHOTS / "05_suggest.png"), full_page=True)
 
         # Create a new recipe
@@ -276,9 +349,51 @@ try:
               and "Test Pfannkuchen Deluxe" not in page.content(),
               "explicit purge permanently removes the archived test recipe")
 
+        # Confirmation dialogs must appear even when the title contains an
+        # apostrophe (user text is kept out of JS strings, so it cannot break
+        # the confirmation; without the fix the form submits silently).
+        cp = browser.new_page(viewport={"width": 1280, "height": 900})
+        cp.goto(BASE + "/new", wait_until="load")
+        cp.fill("input[name=title]", "Oma's Kuchen")
+        cp.fill("input[name=tags]", "test")
+        cp.fill("textarea[name=content]",
+                "## Zutaten\n\n- 1 Ei\n- 1 Prise Salz\n\n## Zubereitung\n\n1. Alles verruhren.")
+        cp.locator("button.btn", has_text="Speichern").click()
+        cp.wait_for_load_state("load")
+        cp.locator(".recipe-more summary").click()
+        confirm_messages = []
+        confirm_accept = {"value": False}
+        def handle_confirm(dialog):
+            confirm_messages.append(dialog.message)
+            if confirm_accept["value"]:
+                dialog.accept()
+            else:
+                dialog.dismiss()
+        cp.on("dialog", handle_confirm)
+        cp.locator("button.btn-text", has_text="Archivieren").click()
+        cp.wait_for_timeout(800)
+        check(len(confirm_messages) == 1 and "Oma's Kuchen" in confirm_messages[0],
+              "confirm with apostrophe in title: dialog appears")
+        check("/archive/" not in cp.url,
+              "confirm dismiss: recipe stays active")
+        if "/archive/" not in cp.url:
+            confirm_accept["value"] = True
+            cp.locator("button.btn-text", has_text="Archivieren").click()
+            cp.wait_for_load_state("load")
+            check("/archive/" in cp.url,
+                  "confirm accept: recipe is archived")
+        cp.close()
+
         # 404
         resp = page.goto(BASE + "/recipe/gibtsnicht")
         check(resp.status == 404, "unknown recipe -> 404 page")
+
+        # The root-scoped service worker must never come from the HTTP cache,
+        # or SW/offline-shell updates would be delayed.
+        sw_response = page.request.get(BASE + "/sw.js")
+        check(sw_response.ok
+              and sw_response.headers.get("cache-control") == "no-cache",
+              "sw.js is served with Cache-Control: no-cache")
 
         # --- Shopping list (JS client takes over: renders into #shop-client) ---
         page.goto(BASE, wait_until="load")
@@ -429,6 +544,23 @@ try:
         page.wait_for_function("() => document.querySelectorAll('#shop-client .shop-group-done').length === 0")
         check(page.locator("#shop-client .shop-item").count() == 6, "6 open items again (client)")
         page.screenshot(path=str(SHOTS / "10_shopping_after.png"), full_page=True)
+
+        # Shopping sync contract: a body without "items" behaves like an
+        # empty list and returns the full server state; a body that is not an
+        # object stays rejected.
+        sync_missing = page.request.post(
+            BASE + "/api/shopping/sync",
+            data={}, headers={"content-type": "application/json"})
+        check(sync_missing.status == 200,
+              "shopping sync: missing 'items' acts as an empty list")
+        check(isinstance(sync_missing.json().get("items"), list)
+              and len(sync_missing.json()["items"]) >= 6,
+              "shopping sync: missing 'items' returns the server state")
+        sync_not_object = page.request.post(
+            BASE + "/api/shopping/sync",
+            data="[]", headers={"content-type": "application/json"})
+        check(sync_not_object.status == 400,
+              "shopping sync: a non-object body stays rejected")
 
         # No-JS fallback: server-rendered list works without JavaScript
         # (state-independent: before/after instead of a fixed count)

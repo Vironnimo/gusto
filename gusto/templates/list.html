@@ -67,7 +67,8 @@
 <div class="empty">
   <p class="empty-emoji">🍅</p>
   <p>Keine Rezepte gefunden{% if q or selected %} für diese Suche{% endif %}.</p>
-  <a class="btn" href="/new">Erstes Rezept anlegen</a>
+  <a class="btn" href="/new">Neues Rezept anlegen</a>
+  {% if q or selected %}<a class="btn-ghost" href="{{ reset_href }}">Filter zurücksetzen</a>{% endif %}
 </div>
 {% endif %}
 </div>

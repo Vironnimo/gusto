@@ -688,10 +688,17 @@ async def api_shopping_sync(request: Request):
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "invalid JSON"}, status_code=400)
-    if not isinstance(body, dict) or not isinstance(body.get("items"), list):
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid shopping state"}, status_code=400)
+    items = body.get("items")
+    if items is None:
+        # Sync contract: a missing "items" behaves like an empty list, so the
+        # PWA first start receives the full server state.
+        items = []
+    if not isinstance(items, list):
         return JSONResponse({"error": "invalid shopping state"}, status_code=400)
     try:
-        merged = core.shopping_merge(body["items"])
+        merged = core.shopping_merge(items)
     except ValueError:
         return JSONResponse({"error": "invalid shopping state"}, status_code=400)
     return JSONResponse({"items": [i.to_dict() for i in merged]})
@@ -704,8 +711,11 @@ async def api_shopping_sync(request: Request):
 
 @app.get("/sw.js", include_in_schema=False)
 def service_worker():
+    # Without no-cache a browser may keep serving a stale service worker from
+    # its HTTP cache, which would delay SW and offline-shell updates.
     return FileResponse(str(BASE / "static" / "sw.js"),
-                        media_type="application/javascript")
+                        media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
 
 
 @app.exception_handler(StarletteHTTPException)
