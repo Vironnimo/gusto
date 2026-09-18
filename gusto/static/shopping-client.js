@@ -93,7 +93,40 @@
     if (!isNaN(candidateMs) && !isNaN(currentMs)) {
       return candidateMs > currentMs;
     }
+    // Same ranking as the server's _version_key: a valid timestamp always
+    // beats a malformed legacy value; only two malformed values fall back to
+    // a lexicographic comparison.
+    if (!isNaN(candidateMs)) return true;
+    if (!isNaN(currentMs)) return false;
     return (candidate || "") > (current || "");
+  }
+
+  // New unique item id. crypto.randomUUID exists only in secure contexts;
+  // over plain HTTP (LAN) fall back to a UUID-v4-shaped id from
+  // crypto.getRandomValues, then to Math.random + time. Ids are not secrets,
+  // uniqueness is all that matters.
+  function newId() {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+      var bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+      bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10
+      var hex = "";
+      for (var i = 0; i < bytes.length; i++) {
+        hex += (bytes[i] < 16 ? "0" : "") + bytes[i].toString(16);
+      }
+      return hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" +
+        hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20);
+    }
+    // No WebCrypto at all: time + Math.random is unique enough for an id here.
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+      var r = (Math.random() * 16) | 0;
+      var v = c === "x" ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    }) + "-" + Date.now().toString(16);
   }
 
   // --- Rendering -------------------------------------------------------------
@@ -211,10 +244,20 @@
       return it.checked;
     });
 
-    clientEl.textContent = "";
-
-    // Compact add panel (same structure as the server-rendered fallback).
-    clientEl.appendChild(renderAddPanel());
+    // Keep the add panel across re-renders: replacing it would destroy a
+    // half-typed input and its focus on every sync/SSE re-render. The panel
+    // is created once and must never be detached -- removing even briefly a
+    // focused node moves focus to <body> and it does not come back. Only the
+    // children after the panel are rebuilt.
+    var addPanel = clientEl.querySelector("details.shop-add-panel");
+    if (!addPanel) {
+        clientEl.textContent = ""; // first render only: drop leftover markup
+        addPanel = renderAddPanel();
+        clientEl.appendChild(addPanel);
+    }
+    while (clientEl.lastChild && clientEl.lastChild !== addPanel) {
+        clientEl.removeChild(clientEl.lastChild);
+    }
 
     if (openItems.length === 0 && doneItems.length === 0) {
       clientEl.appendChild(renderEmpty());
@@ -591,7 +634,7 @@
     var items = loadItems();
     var now = nowIso();
     items.push({
-      id: crypto.randomUUID(),
+      id: newId(),
       text: text,
       quantity: quantity || "",
       checked: false,

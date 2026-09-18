@@ -68,7 +68,7 @@
     <div>
       <p>Entfernt diesen Archiveintrag unwiderruflich. Sichtbare Einkaufsposten aus dem Rezept müssen vorher entfernt werden.</p>
       <form method="post" action="/archive/{{ r.slug }}/purge"
-            onsubmit="return confirm('„{{ r.title }}“ wirklich endgültig löschen? Das kann nicht rückgängig gemacht werden.');">
+            data-confirm="„{{ r.title }}“ wirklich endgültig löschen? Das kann nicht rückgängig gemacht werden.">
         <input type="hidden" name="confirm" value="1">
         <button class="btn-text" type="submit">Unwiderruflich löschen</button>
       </form>

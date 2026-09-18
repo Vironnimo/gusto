@@ -36,7 +36,7 @@
         <div class="recipe-more-menu">
           <a href="/recipe/{{ r.slug }}/edit">Bearbeiten</a>
           <form method="post" action="/recipe/{{ r.slug }}/delete"
-                onsubmit="return confirm('Rezept „{{ r.title }}“ samt Bildern archivieren? Es kann später wiederhergestellt werden.');">
+                data-confirm="Rezept „{{ r.title }}“ samt Bildern archivieren? Es kann später wiederhergestellt werden.">
             <button class="btn-text" type="submit">Archivieren</button>
           </form>
         </div>
