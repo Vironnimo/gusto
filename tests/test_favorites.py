@@ -35,6 +35,21 @@ def expect_valueerror(function, *args, **kwargs):
 def main():
     check(core.favorites_load() == [], "a fresh catalog must be empty")
 
+    # Corrupted favorites data must raise a German ValueError and check() must
+    # report it as a hard error instead of crashing.
+    core.favorites_path().parent.mkdir(parents=True, exist_ok=True)
+    core.favorites_path().write_text("[]", encoding="utf-8")
+    expect_valueerror(core.favorites_load)
+    corrupted = core.check()
+    check(any("favorites.json" in message
+              for message in corrupted["invalid_data_files"]),
+          "corrupted favorites data must be reported by the integrity check")
+    check(corrupted["ok"] is False,
+          "corrupted favorites data must be a hard error")
+    os.remove(core.favorites_path())
+    check(core.favorites_load() == [],
+          "a removed favorites file must load as an empty catalog")
+
     need = core.favorite_add_need(
         "Pizzateig", aliases=["1 Rolle Pizzateig", "  Pizzateig  "],
     )
@@ -85,6 +100,10 @@ def main():
     check([product.id for product in moved.products] == [second.id, first.id],
           "products must move to an explicit one-based rank")
     expect_valueerror(core.favorite_move_product, need.id, first.id, 3)
+    for invalid_position in (True, "1", 1.5, 0):
+        expect_valueerror(
+            core.favorite_move_product, need.id, first.id, invalid_position,
+        )
 
     old_filename = first.image_filename
     updated = core.favorite_update_product(

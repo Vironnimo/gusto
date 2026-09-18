@@ -647,7 +647,25 @@ def load_recipes() -> list[Recipe]:
     p = index_path()
     if not p.exists():
         return []
-    return [Recipe.from_dict(d) for d in json.loads(p.read_text(encoding="utf-8"))]
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(
+            f"Ungültiger Rezeptkatalog in '{p.name}': {error}"
+        ) from error
+    if not isinstance(raw, list):
+        raise ValueError(
+            f"Ungültiger Rezeptkatalog in '{p.name}': JSON-Liste erwartet."
+        )
+    recipes = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"Ungültiger Rezeptkatalog in '{p.name}': "
+                "jeder Eintrag muss ein JSON-Objekt sein."
+            )
+        recipes.append(Recipe.from_dict(entry))
+    return recipes
 
 
 def _save_recipes_unlocked(recipes: list[Recipe]) -> None:
@@ -792,10 +810,18 @@ def slugify(title: str) -> str:
 def add_recipe(title: str, tags=None, duration_min=None, servings=None,
                content: str | None = None, slug: str | None = None) -> Recipe:
     title = _recipe_title(title)
+    tags = _recipe_tags(tags or [])
     _positive_recipe_number(duration_min, "Die Dauer")
     _positive_recipe_number(servings, "Die Portionszahl")
-    recipes = load_recipes()
+    if slug is not None and (
+            not isinstance(slug, str) or not slug
+            or Path(slug).name != slug or slug.startswith(".")):
+        raise ValueError(
+            "Der Rezept-Slug muss ein nicht-leerer Name ohne Pfadanteile "
+            "und ohne führenden Punkt sein."
+        )
     slug = slug or slugify(title)
+    recipes = load_recipes()
     if any(r.slug == slug for r in recipes):
         raise ValueError(f"Es gibt bereits ein Rezept mit dem Slug '{slug}'.")
     if archive_recipe_dir(slug).exists():
@@ -808,11 +834,25 @@ def add_recipe(title: str, tags=None, duration_min=None, servings=None,
         _content_with_title(content, title) if content is not None
         else _template(title)
     )
-    _write_text(recipe_file(slug), recipe_content)
-    r = Recipe(slug=slug, title=title, tags=tags or [],
+    markdown_path = recipe_file(slug)
+    previous_content = (
+        markdown_path.read_text(encoding="utf-8")
+        if markdown_path.is_file() else None
+    )
+    _write_text(markdown_path, recipe_content)
+    r = Recipe(slug=slug, title=title, tags=tags,
                duration_min=duration_min, servings=servings)
     recipes.append(r)
-    _save_recipes_unlocked(recipes)
+    try:
+        _save_recipes_unlocked(recipes)
+    except Exception:
+        # Without the index entry the .md would stay behind as an orphaned
+        # file (a hard check error), so roll the Markdown back as well.
+        if previous_content is None:
+            markdown_path.unlink(missing_ok=True)
+        else:
+            _write_text(markdown_path, previous_content)
+        raise
     return r
 
 
@@ -821,10 +861,32 @@ def _template(title: str) -> str:
 
 
 def _recipe_title(value: str) -> str:
-    """Return a normalized non-empty recipe title."""
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError("Das Rezept braucht einen Titel.")
+    """Return a normalized non-empty, single-line recipe title."""
+    if (not isinstance(value, str) or not value.strip()
+            or "\n" in value or "\r" in value):
+        raise ValueError(
+            "Das Rezept braucht einen nicht-leeren, einzeiligen Titel."
+        )
     return value.strip()
+
+
+def _recipe_tags(values) -> list[str]:
+    """Return one-line recipe tags, case-insensitively deduplicated."""
+    if (not isinstance(values, list)
+            or not all(isinstance(value, str) and value.strip()
+                       and "\n" not in value and "\r" not in value
+                       for value in values)):
+        raise ValueError(
+            "Rezept-Tags müssen eine Liste nicht-leerer, einzeiliger Texte sein."
+        )
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        tag = value.strip()
+        if tag.lower() not in seen:
+            seen.add(tag.lower())
+            result.append(tag)
+    return result
 
 
 def _content_with_title(content: str, title: str) -> str:
@@ -1172,6 +1234,10 @@ def search(query: str = "", match: str = "any", tags: list[str] | None = None,
     matches if it has AT LEAST ONE of the selected tags in EVERY selected
     category -- i.e. OR within a category and AND across categories. Tags without
     a category form one shared group (OR among themselves)."""
+    if not isinstance(query, str):
+        raise ValueError("Der Suchbegriff muss ein Text sein.")
+    if match not in ("any", "all"):
+        raise ValueError("Der Suchmodus muss 'any' oder 'all' sein.")
     _positive_recipe_number(max_time, "Die maximale Dauer")
     terms = [t.lower() for t in query.split()]
     groups = _group_tags(tags or [])
@@ -1213,7 +1279,20 @@ def _matches_tags(r: Recipe, groups: dict[str, set[str]]) -> bool:
 def load_log(days: int | None = None) -> list[dict]:
     _positive_recipe_number(days, "Die Anzahl der Tage")
     p = log_path()
-    entries = json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
+    entries: list[dict] = []
+    if p.exists():
+        try:
+            entries = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(
+                f"Ungültiges Kochprotokoll in '{p.name}': {error}"
+            ) from error
+        if (not isinstance(entries, list)
+                or not all(isinstance(entry, dict) for entry in entries)):
+            raise ValueError(
+                f"Ungültiges Kochprotokoll in '{p.name}': "
+                "JSON-Liste von Objekten erwartet."
+            )
     if days is not None:
         cutoff = (date.today() - timedelta(days=days)).isoformat()
         entries = [e for e in entries if e["date"] >= cutoff]
@@ -1238,10 +1317,21 @@ def log_cooked(slug: str, when: str | None = None) -> None:
     entries = load_log()
     entries.append({"date": when, "slug": slug})
     _write_json(log_path(), sorted(entries, key=lambda e: e["date"]))
+    changed_last_cooked = False
     for r in recipes:
         if r.slug == slug and (r.last_cooked is None or when > r.last_cooked):
             r.last_cooked = when
-    _save_recipes_unlocked(recipes)
+            changed_last_cooked = True
+    try:
+        _save_recipes_unlocked(recipes)
+    except Exception:
+        # The log entry must never persist without its last_cooked update.
+        if changed_last_cooked:
+            _write_json(
+                log_path(), sorted(entries[:-1], key=lambda e: e["date"]),
+                track_mutation=False,
+            )
+        raise
 
 
 # --- Suggestions ------------------------------------------------------------
@@ -1286,7 +1376,7 @@ def update_recipe(slug: str, title: str | None = None, tags=None,
     if title is not None:
         target.title = _recipe_title(title)
     if tags is not None:
-        target.tags = tags
+        target.tags = _recipe_tags(tags)
     if clear_duration:
         target.duration_min = None
     elif duration_min is not None:
@@ -1432,7 +1522,13 @@ def restore_archived_recipe(slug: str) -> Recipe:
 
 @_locked_mutation("catalog", "shopping", event_resources=("catalog",))
 def purge_archived_recipe(slug: str) -> ArchivedRecipe:
-    """Permanently remove one archived recipe snapshot."""
+    """Permanently remove one archived recipe snapshot.
+
+    The snapshot is first moved into a hidden transaction folder under the
+    archive root and only then removed recursively. An interrupted purge
+    therefore never leaves a half-deleted visible archive entry behind; the
+    leftover folder is reported by ``check`` as ``stale_archive_transactions``.
+    """
     entry = get_archived(slug)
     if entry is None:
         raise ValueError(f"Kein archiviertes Rezept mit Slug '{slug}'.")
@@ -1447,7 +1543,9 @@ def purge_archived_recipe(slug: str) -> ArchivedRecipe:
             f"{count} sichtbare Einkaufsposten {verb} noch auf '{slug}'. "
             "Entferne diese Einträge vor dem endgültigen Löschen."
         )
-    shutil.rmtree(archive_recipe_dir(slug))
+    temporary = archive_dir() / f".{slug}.purge.{uuid.uuid4().hex}"
+    archive_recipe_dir(slug).replace(temporary)
+    shutil.rmtree(temporary)
     _mark_mutation()
     return entry
 
@@ -1658,7 +1756,14 @@ def remove_recipe_image(slug: str, image_id: str) -> str | None:
 
 def check() -> dict:
     """Check hard data-integrity errors and non-blocking organization warnings."""
-    recipes = load_recipes()
+    # Corrupted data files must be reported as integrity errors instead of
+    # crashing the whole diagnostic with a raw loader exception.
+    invalid_data_files: list[str] = []
+    try:
+        recipes = load_recipes()
+    except ValueError as error:
+        recipes = []
+        invalid_data_files.append(str(error))
     indexed = {r.slug for r in recipes}
     present = {p.stem for p in recipes_dir().glob("*.md")} if recipes_dir().exists() else set()
     duplicate_recipe_slugs = sorted({
@@ -1696,7 +1801,11 @@ def check() -> dict:
                 or (recipe.cover_image_id is not None
                     and recipe.cover_image_id not in {image.id for image in recipe.images})):
             invalid_cover_images.append(recipe.slug)
-    favorite_needs = favorites_load()
+    try:
+        favorite_needs = favorites_load()
+    except ValueError as error:
+        favorite_needs = []
+        invalid_data_files.append(str(error))
     referenced_favorite_images = {
         product.image_filename
         for need in favorite_needs
@@ -1772,12 +1881,22 @@ def check() -> dict:
     archived_slugs = {entry.slug for entry in archived_entries}
     known_slugs = indexed | archived_slugs
     active_archive_conflicts = sorted(indexed & archived_slugs)
+    try:
+        shopping_items = shopping_load()
+    except ValueError as error:
+        shopping_items = []
+        invalid_data_files.append(str(error))
     unresolved_shopping_sources = sorted({
-        item.source for item in shopping_load()
+        item.source for item in shopping_items
         if not item.deleted and item.source and item.source not in known_slugs
     })
+    try:
+        log_entries = load_log()
+    except ValueError as error:
+        log_entries = []
+        invalid_data_files.append(str(error))
     unresolved_log_references = sorted({
-        entry.get("slug") for entry in load_log()
+        entry.get("slug") for entry in log_entries
         if entry.get("slug") and entry.get("slug") not in known_slugs
     })
 
@@ -1812,6 +1931,7 @@ def check() -> dict:
         "missing_favorite_image_files": sorted(
             referenced_favorite_images - present_favorite_images
         ),
+        "invalid_data_files": invalid_data_files,
     }
     hard_error_fields = [
         "duplicate_recipe_slugs",
@@ -1835,6 +1955,7 @@ def check() -> dict:
         "duplicate_favorite_aliases",
         "orphaned_favorite_image_files",
         "missing_favorite_image_files",
+        "invalid_data_files",
     ]
     warning_fields = ["uncategorized_tags", "unresolved_log_references"]
     result["errors"] = [
@@ -1937,8 +2058,24 @@ def favorites_load() -> list[ShoppingNeed]:
     path = favorites_path()
     if not path.exists():
         return []
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return [ShoppingNeed.from_dict(raw) for raw in data.get("needs", [])]
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(
+            f"Ungültige Favoriten in '{path.name}': {error}"
+        ) from error
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Ungültige Favoriten in '{path.name}': JSON-Objekt erwartet."
+        )
+    needs = data.get("needs", [])
+    if (not isinstance(needs, list)
+            or not all(isinstance(need, dict) for need in needs)):
+        raise ValueError(
+            f"Ungültige Favoriten in '{path.name}': "
+            "'needs' muss eine Liste von Objekten sein."
+        )
+    return [ShoppingNeed.from_dict(need) for need in needs]
 
 
 def _favorites_save_unlocked(needs: list[ShoppingNeed]) -> None:
@@ -2199,7 +2336,8 @@ def favorite_move_product(identifier: str, product_id: str,
     needs = favorites_load()
     need = _favorite_need(needs, identifier)
     product = _favorite_product(need, product_id)
-    if position < 1 or position > len(need.products):
+    if (isinstance(position, bool) or not isinstance(position, int)
+            or not 1 <= position <= len(need.products)):
         raise ValueError(f"Position muss zwischen 1 und {len(need.products)} liegen.")
     need.products.remove(product)
     need.products.insert(position - 1, product)
@@ -2272,8 +2410,24 @@ def shopping_load() -> list[ShoppingItem]:
     p = shopping_path()
     if not p.exists():
         return []
-    data = json.loads(p.read_text(encoding="utf-8"))
-    return [ShoppingItem.from_dict(d) for d in data.get("items", [])]
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(
+            f"Ungültige Einkaufsliste in '{p.name}': {error}"
+        ) from error
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Ungültige Einkaufsliste in '{p.name}': JSON-Objekt erwartet."
+        )
+    items = data.get("items", [])
+    if (not isinstance(items, list)
+            or not all(isinstance(item, dict) for item in items)):
+        raise ValueError(
+            f"Ungültige Einkaufsliste in '{p.name}': "
+            "'items' muss eine Liste von Objekten sein."
+        )
+    return [ShoppingItem.from_dict(item) for item in items]
 
 
 def _shopping_save_unlocked(items: list[ShoppingItem]) -> None:
@@ -2449,9 +2603,14 @@ def shopping_merge(remote_items: list[dict]) -> list[ShoppingItem]:
     wins. Old second-precision and new millisecond timestamps are both accepted.
     On a tie the local version stays. Ids that exist only remotely are taken
     over; tombstones (deleted=True) propagate like any other change.
+    Every taken-over item needs non-empty text, and a visible item's source
+    must still name a known active or archived recipe. Tombstones keep their
+    deliberately unvalidated sources so that a purge of the referenced recipe
+    never blocks a legitimate sync.
     """
     # Local state (incl. tombstones) as the source of truth, indexed by id.
     merged: dict[str, ShoppingItem] = {i.id: i for i in shopping_load()}
+    known_sources: set[str] | None = None
 
     if not isinstance(remote_items, list):
         raise ValueError("Der Einkaufslisten-Stand muss eine Liste sein.")
@@ -2467,6 +2626,8 @@ def shopping_merge(remote_items: list[dict]) -> list[ShoppingItem]:
             raise ValueError("Jeder Einkaufslisten-Eintrag braucht eine id.")
         if not isinstance(remote.text, str):
             raise ValueError("Der Text eines Einkaufslisten-Eintrags ist ungültig.")
+        if not remote.text.strip():
+            raise ValueError("Ein Einkaufslisten-Eintrag braucht einen Text.")
         if not isinstance(remote.quantity, str):
             raise ValueError("Die Menge eines Einkaufslisten-Eintrags ist ungültig.")
         if not isinstance(remote.checked, bool) or not isinstance(remote.deleted, bool):
@@ -2480,6 +2641,16 @@ def shopping_merge(remote_items: list[dict]) -> list[ShoppingItem]:
         # id on both sides -> later updated_at wins;
         # on a tie the local version stays.
         if local is None or _version_key(remote.updated_at) > _version_key(local.updated_at):
+            if not remote.deleted and remote.source:
+                # Only taken-over versions are persisted, so a losing stale
+                # version may still reference a since-purged recipe.
+                if known_sources is None:
+                    known_sources = set(recipe_references())
+                if remote.source not in known_sources:
+                    raise ValueError(
+                        f"Die Quelle '{remote.source}' eines "
+                        "Einkaufslisten-Eintrags ist kein bekanntes Rezept."
+                    )
             merged[remote.id] = remote
     # ids that exist only locally stay unchanged.
 

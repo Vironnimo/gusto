@@ -182,4 +182,48 @@ expect_valueerror([item([], "2026-06-23T18:00:00Z")])
 expect_valueerror([item("x", 123)])
 
 
+core.add_recipe("Syncquelle", content="# Syncquelle\n", slug="syncquelle")
+
+# --- 13) taken-over items need non-empty text -------------------------------
+reset_local([item("a", "2026-06-23T18:00:00Z", text="lokal")])
+expect_valueerror([item("bad", "2026-06-23T19:00:00Z", text="   ")])
+loaded = by_id(core.shopping_load())
+check(loaded["a"].text == "lokal" and "bad" not in loaded,
+      "a rejected empty-text item must not be persisted")
+
+
+# --- 14) taken-over visible items need a known source -----------------------
+reset_local([])
+result = core.shopping_merge([
+    item("ok", "2026-06-23T18:00:00Z", text="Mehl", source="syncquelle"),
+])
+check(by_id(result)["ok"].source == "syncquelle",
+      "a taken-over item with a known recipe source is accepted")
+expect_valueerror([
+    item("bad", "2026-06-23T18:00:00Z", text="Mehl",
+         source="unbekanntes-rezept"),
+])
+check("bad" not in by_id(core.shopping_load()),
+      "an unknown source must not reach the shopping file")
+
+
+# --- 15) tombstones keep their source; stale losing versions are tolerated --
+reset_local([])
+result = core.shopping_merge([
+    item("tomb", "2026-06-23T18:00:00Z", text="Alt",
+         source="weggepurgt", deleted=True),
+])
+m = by_id(result)
+check(m["tomb"].deleted is True and m["tomb"].source == "weggepurgt",
+      "tombstones keep their deliberately unvalidated source")
+
+reset_local([item("a", "2026-06-23T19:00:00Z", text="neu", deleted=True)])
+result = core.shopping_merge([
+    item("a", "2026-06-23T18:00:00Z", text="alt", source="weggepurgt"),
+])
+m = by_id(result)
+check(m["a"].deleted is True and m["a"].text == "neu",
+      "a losing stale version may still reference a purged recipe")
+
+
 print(f"OK - {checks} checks passed (test_merge.py)")

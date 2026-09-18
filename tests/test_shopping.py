@@ -78,6 +78,21 @@ def main():
     check(core.shopping_load() == [], "Fresh shopping list must be empty.")
     check(core.shopping_list() == [], "Empty list -> shopping_list() == [].")
 
+    # --- corrupted file shapes ----------------------------------------------
+    # A wrong JSON root must fail with a German ValueError instead of a raw
+    # AttributeError, and check() must report it as an integrity error.
+    core.shopping_path().write_text("[]", encoding="utf-8")
+    expect_valueerror(core.shopping_load)
+    corrupted = core.check()
+    check(any("shopping_list.json" in message
+              for message in corrupted["invalid_data_files"]),
+          "corrupted shopping data must be reported as an integrity error.")
+    check(corrupted["ok"] is False,
+          "corrupted shopping data must be a hard error.")
+    os.remove(core.shopping_path())
+    check(core.shopping_load() == [],
+          "a removed shopping file must load as an empty list.")
+
     # --- shopping_add -------------------------------------------------------
     a = core.shopping_add("Milch", quantity="1 L")
     check(a.id and a.created_at and a.updated_at,

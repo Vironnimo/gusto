@@ -63,6 +63,14 @@ def main():
     expect_valueerror(core.add_recipe, "   ")
     expect_valueerror(core.add_recipe, "Zeitreise", duration_min=0)
     expect_valueerror(core.add_recipe, "Hungrige Runde", servings=-1)
+    # An explicitly given slug must stay a plain, non-hidden file name:
+    # path parts or a leading dot could write Markdown outside recipes/.
+    for invalid_slug in ("../evil", "a/b", ".versteckt", "..", ""):
+        expect_valueerror(core.add_recipe, "Böser Slug", slug=invalid_slug)
+    expect_valueerror(core.add_recipe, "Falscher Typ", slug=5)
+    check(core.get("evil") is None
+          and not (core.project_root() / "evil.md").exists(),
+          "a rejected path slug must not write outside the recipes folder")
 
     check([r.slug for r in core.search("kokosmilch")] == [curry.slug],
           "full-text search must include recipe content")
@@ -74,6 +82,9 @@ def main():
           "maximum duration must filter recipes")
     expect_valueerror(core.search, max_time=0)
     expect_valueerror(core.search, max_time=-1)
+    expect_valueerror(core.search, "kokosmilch", "alle")
+    expect_valueerror(core.search, "kokosmilch", "ALL")
+    expect_valueerror(core.search, None)
     check(core.uncategorized_tags(["VEGAN", "saisonal", "saisonal"])
           == ["saisonal"],
           "uncategorized tags must be distinct and category matching case-insensitive")
@@ -145,6 +156,66 @@ def main():
     )
     expect_valueerror(core.update_recipe, quick.slug, title="  ")
 
+    # Titles must stay single-line: a newline or carriage return would desync
+    # the metadata title from the Markdown H1 and trip the hard title check.
+    store_before = core.check()
+    expect_valueerror(core.add_recipe, "A\nB")
+    check(core.check() == store_before and core.get("a-b") is None,
+          "a rejected title must not create a recipe or change the store")
+    quick_before = core.get(quick.slug).to_dict()
+    quick_content_before = core.get(quick.slug).content()
+    expect_valueerror(core.update_recipe, quick.slug, title="A\rB")
+    expect_valueerror(core.update_recipe, quick.slug, title="A\nB")
+    check(core.get(quick.slug).to_dict() == quick_before
+          and core.get(quick.slug).content() == quick_content_before,
+          "a rejected title update must leave the recipe unchanged")
+
+    # Recipe tags are normalized like category tags: one-line strings,
+    # case-insensitively deduplicated with the first spelling kept.
+    duplicate_tags = core.add_recipe("Doppel-Tags", tags=["vegan", "vegan"])
+    check(duplicate_tags.tags == ["vegan"],
+          "duplicate recipe tags must be stored once")
+    spelled_tags = core.add_recipe(
+        "Schreibweise-Tags", tags=["Vegan", "vegan"])
+    check(spelled_tags.tags == ["Vegan"],
+          "tag deduplication must keep the first spelling")
+    clean_store = core.check()
+    check(clean_store["ok"] is True and clean_store["uncategorized_tags"] == [],
+          "valid recipe tags must keep the store consistent")
+    expect_valueerror(core.add_recipe, "Zeilen-Tag", tags=["a\nb"])
+    expect_valueerror(core.add_recipe, "Zahlen-Tag", tags=[1])
+    check(core.check() == clean_store and core.get("zeilen-tag") is None
+          and core.get("zahlen-tag") is None,
+          "rejected tag lists must not create recipes")
+    tidied = core.update_recipe(duplicate_tags.slug, tags=["a", "A"])
+    check(tidied.tags == ["a"],
+          "recipe tag updates must deduplicate like category tags")
+    check(core.check()["uncategorized_tags"] == ["a"],
+          "tag deduplication must not duplicate uncategorized entries")
+    cleared_tags = core.update_recipe(spelled_tags.slug, tags=[])
+    check(cleared_tags.tags == [],
+          "an empty tag list must still clear the tags")
+    expect_valueerror(core.update_recipe, duplicate_tags.slug, tags="vegan")
+    check(core.get(duplicate_tags.slug).tags == ["a"],
+          "a non-list tag update must leave the recipe unchanged")
+
+    # Remove the experiment recipes again so the rest of the suite starts
+    # from the original store; archive plus purge is the permanent path.
+    for experiment in (duplicate_tags, spelled_tags):
+        core.archive_recipe(experiment.slug)
+        core.purge_archived_recipe(experiment.slug)
+    check(core.check() == store_before,
+          "the title and tag experiments must leave the store unchanged")
+
+    # Every slug that slugify produces must remain a valid explicit slug.
+    for sample in ("Käse-Soufflé", "Übungs-ß-Rezept", "100% Curry!!",
+                   "Nur Punkt-Slug", "..."):
+        derived = core.slugify(sample)
+        created = core.add_recipe(f"Beliebiger Titel für {sample}", slug=derived)
+        check(created.slug == derived,
+              "every slugify output must remain accepted as an explicit slug")
+        core.purge_archived_recipe(core.archive_recipe(created.slug).slug)
+
     # Multiple stored images, free roles/captions, and one selected cover.
     first_source = HOME / "finished.png"
     second_source = HOME / "step.jpg"
@@ -202,6 +273,26 @@ def main():
     expect_valueerror(core.load_log, days=0)
     expect_valueerror(core.load_log, days=-1)
 
+    # A failing index write must roll the created Markdown back, and a failing
+    # catalog write must roll the new log entry back.
+    def _failing_save(recipes):
+        raise ValueError("simulierter Schreibfehler")
+    original_save = core._save_recipes_unlocked
+    core._save_recipes_unlocked = _failing_save
+    try:
+        expect_valueerror(core.add_recipe, "Rollback Rezept")
+        check(not core.recipe_file("rollback-rezept").exists()
+              and core.get("rollback-rezept") is None,
+              "a failed index write must roll back the created recipe Markdown")
+        expect_valueerror(core.log_cooked, pasta.slug)
+        check([entry["date"] for entry in core.load_log()]
+              == [older_cook, recent_cook],
+              "a failed catalog write must roll back the new log entry")
+        check(core.get(pasta.slug).last_cooked == recent_cook,
+              "a failed catalog write must leave last_cooked unchanged")
+    finally:
+        core._save_recipes_unlocked = original_save
+
     # Delete is reversible archive: Markdown, metadata and owned images move
     # together while log and shopping keep resolving the slug.
     sourced = core.shopping_add("Tomaten", source=pasta.slug)
@@ -251,6 +342,33 @@ def main():
     check(initial["ok"] is True and not initial["errors"],
           "a consistent store must expose an explicit successful check result")
 
+    # Corrupted data files become German ValueErrors, and check() reports them
+    # as integrity errors instead of crashing with a raw loader exception.
+    index_backup = core.index_path().read_text(encoding="utf-8")
+    core.index_path().write_text('{"kaputt": true}', encoding="utf-8")
+    try:
+        expect_valueerror(core.load_recipes)
+        corrupted = core.check()
+        check(any("recipes.json" in message
+                  for message in corrupted["invalid_data_files"]),
+              "a corrupted catalog index must be reported as a data-file error")
+        check(corrupted["ok"] is False,
+              "a corrupted catalog index must be a hard error")
+    finally:
+        core.index_path().write_text(index_backup, encoding="utf-8")
+    log_backup = core.log_path().read_text(encoding="utf-8")
+    core.log_path().write_text("[kein json]", encoding="utf-8")
+    try:
+        expect_valueerror(core.load_log)
+        corrupted = core.check()
+        check(any("log.json" in message
+                  for message in corrupted["invalid_data_files"]),
+              "a corrupted cooking log must be reported as a data-file error")
+    finally:
+        core.log_path().write_text(log_backup, encoding="utf-8")
+    check(core.check()["ok"] is True,
+          "restored data files must check cleanly again")
+
     (core.recipes_dir() / "orphan.md").write_text("# Orphan\n", encoding="utf-8")
     core.recipe_file(curry.slug).unlink()
     recipes = core.load_recipes()
@@ -290,6 +408,44 @@ def main():
     core.purge_archived_recipe(pasta.slug)
     check(core.get_archived(pasta.slug) is None,
           "explicit purge must permanently remove the archived snapshot")
+
+    # Purge parks the snapshot in a hidden transaction folder before the
+    # recursive removal, so an interrupted purge can never leave a half-deleted
+    # visible archive entry behind.
+    purge_target = core.add_recipe("Purge-Ziel", content="# Purge-Ziel\n")
+    core.archive_recipe(purge_target.slug)
+    core.purge_archived_recipe(purge_target.slug)
+    check(core.get_archived(purge_target.slug) is None
+          and not any(path.name.startswith(".")
+                      for path in core.archive_dir().iterdir()),
+          "a completed purge must leave no transaction leftovers")
+    interrupt_target = core.add_recipe("Abbruch-Purge", content="# Abbruch-Purge\n")
+    core.archive_recipe(interrupt_target.slug)
+    original_rmtree = core.shutil.rmtree
+    def _failing_rmtree(path, *args, **kwargs):
+        raise OSError("simulierter Abbruch")
+    core.shutil.rmtree = _failing_rmtree
+    try:
+        try:
+            core.purge_archived_recipe(interrupt_target.slug)
+            raise AssertionError("purge must fail when the snapshot removal fails")
+        except OSError:
+            pass
+    finally:
+        core.shutil.rmtree = original_rmtree
+    leftovers = sorted(path.name for path in core.archive_dir().iterdir()
+                       if path.name.startswith("."))
+    check(len(leftovers) == 1 and core.get_archived(interrupt_target.slug) is None,
+          "an interrupted purge must park the snapshot in a hidden folder")
+    interrupted_check = core.check()
+    check(interrupted_check["stale_archive_transactions"] == leftovers
+          and not interrupted_check["invalid_archive_entries"]
+          and not interrupted_check["missing_archive_files"],
+          "an interrupted purge must be visible as a stale transaction, "
+          "not as a broken archive entry")
+    core.shutil.rmtree(core.archive_dir() / leftovers[0])
+    check(core.check()["stale_archive_transactions"] == [],
+          "removing the stale transaction folder must clear the check finding")
 
     # The persisted change journal is monotone across concurrent transactions,
     # while reads and idempotent PWA merges stay silent.
