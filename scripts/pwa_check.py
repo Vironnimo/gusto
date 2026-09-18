@@ -154,6 +154,46 @@ def wait_count(page, selector, n, timeout=8000):
     except PWTimeout:
         return False
 
+def wait_item_once(page, text, timeout=8000):
+    """Wait until exactly one rendered item carries this text.
+
+    Count-based waits are fragile after a direct store reset: a client from
+    an earlier section can still push its last known state (offline-first
+    sync), so unrelated leftovers may show up. The property under test is
+    that the item appears -- exactly once, so accidental duplicate renders
+    still fail.
+    """
+    try:
+        page.wait_for_function(
+            "(t) => Array.from(document.querySelectorAll('#shop-client .shop-item .shop-text'))"
+            ".filter(e => e.textContent.trim() === t).length === 1",
+            arg=text, timeout=timeout)
+        return True
+    except PWTimeout:
+        return False
+
+def reset_and_wait(settle=0.5, timeout=3.0):
+    """Clear the server store and verify that it stays empty.
+
+    reset_shopping() rewrites the store file directly, but a client from an
+    earlier section can push its last known state right after that (offline-
+    first sync). Re-check after a short settle window and re-clear once if
+    needed, so the seeds of the following sections stay deterministic.
+    """
+    reset_shopping()
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            if not api_get():
+                time.sleep(settle)
+                if not api_get():
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.1)
+    reset_shopping()
+    return False
+
 def sw_ready(page, timeout_ms=6000):
     return page.evaluate(
         """async (to) => {
@@ -350,6 +390,101 @@ try:
             "img => img.complete && img.naturalWidth > 0"),
             "offline: cached product image remains recognizable")
         cp.close()
+
+        # --- 6) client robustness: uuid fallback, re-render survival, merge ---
+        # E1: "Hinzufügen" must work in non-secure contexts (plain HTTP LAN)
+        # where crypto.randomUUID does not exist. The wait is text-based (not
+        # count==1) so a leftover push from an earlier section cannot fail the
+        # check, while duplicate renders still do.
+        reset_and_wait()
+        ctx = browser.new_context()
+        ctx.add_init_script("delete Crypto.prototype.randomUUID;")
+        page = ctx.new_page()
+        page.goto(BASE + "/shopping", wait_until="load")
+        # Let the initial sync and the SSE connection settle before typing,
+        # exactly like the other live-event sections do.
+        page.wait_for_timeout(1400)
+        page.locator("#shop-client .shop-add-panel summary").click()
+        page.fill("#shop-client input[name=text]", "Toast")
+        page.locator("#shop-client form.shop-add button").click()
+        check(wait_item_once(page, "Toast"),
+              "no randomUUID: added item appears locally")
+        check(wait_server(lambda its: any(i["text"] == "Toast" for i in its)),
+              "no randomUUID: added item reaches the server")
+        ctx.close()
+
+        # E2a: re-renders (sync/SSE) must not destroy a half-typed add input.
+        reset_and_wait()
+        seed_shopping([mk("Milch", past_iso())])
+        ctx = browser.new_context()
+        page = ctx.new_page()
+        page.goto(BASE + "/shopping", wait_until="load")
+        check(wait_item_once(page, "Milch"),
+              "render survivor: initial item loaded")
+        # app.js opens its EventSource only after the initial navigation settled.
+        page.wait_for_timeout(1400)
+        page.locator("#shop-client .shop-add-panel summary").click()
+        page.fill("#shop-client input[name=text]", "halb getippt")
+        # A foreign server change (API + SSE) triggers a full re-render.
+        api_sync([*api_get(), mk("Brot", now_iso())])
+        check(wait_item_once(page, "Brot"),
+              "render survivor: foreign change re-renders the list")
+        check(page.input_value("#shop-client input[name=text]") == "halb getippt",
+              "render survivor: half-typed text survives the re-render")
+        ctx.close()
+
+        # E2b: after adding, focus must land on the same, still-connected input.
+        reset_and_wait()
+        ctx = browser.new_context()
+        page = ctx.new_page()
+        page.goto(BASE + "/shopping", wait_until="load")
+        page.locator("#shop-client .shop-add-panel summary").click()
+        page.fill("#shop-client input[name=text]", "Apfel")
+        page.locator("#shop-client form.shop-add button").click()
+        check(wait_item_once(page, "Apfel"),
+              "focus return: added item joins the list")
+        check(page.evaluate(
+            "() => document.activeElement === document.querySelector('#shop-client input[name=text]')"
+        ), "focus return: focus is back in the add input after adding")
+        check(page.locator("#shop-client details.shop-add-panel").count() == 1,
+              "focus return: add panel is never duplicated")
+        check(wait_server(lambda its: any(i["text"] == "Apfel" for i in its)),
+              "focus return: added item reaches the server")
+        ctx.close()
+
+        # E3: the client merge must rank a VALID timestamp over a malformed one
+        # exactly like the server (_version_key) -- even if the malformed raw
+        # string sorts above every ISO value lexicographically.
+        reset_and_wait()
+        ctx = browser.new_context()
+        page = ctx.new_page()
+        page.goto(BASE + "/shopping", wait_until="load")
+        page.wait_for_timeout(1400)
+        page.evaluate("""() => {
+            const item = {id: "merge-x", text: "lokal", quantity: "",
+                          checked: false, source: null,
+                          created_at: "zzz", updated_at: "zzz", deleted: false};
+            localStorage.setItem("gusto.shopping", JSON.stringify({items: [item]}));
+        }""")
+        # The server holds a NEWER VALID timestamp for the same id; the change
+        # event plus an explicit replay-safe dispatch trigger the client sync.
+        api_sync([itm(now_iso(), id="merge-x", text="server")])
+        page.evaluate(
+            "document.dispatchEvent(new CustomEvent('gusto:change', {detail: {resources: ['shopping']}}))")
+        try:
+            merged_ok = page.wait_for_function(
+                """() => {
+                    const raw = localStorage.getItem("gusto.shopping") || "{}";
+                    const items = (JSON.parse(raw).items) || [];
+                    const mine = items.filter(i => i.id === "merge-x");
+                    return mine.length === 1 && mine[0].text === "server";
+                }""", timeout=6000)
+            merged_ok = True
+        except PWTimeout:
+            merged_ok = False
+        check(merged_ok,
+              "malformed local timestamp loses to valid server timestamp")
+        ctx.close()
 
         browser.close()
 finally:

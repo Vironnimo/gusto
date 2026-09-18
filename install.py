@@ -265,6 +265,14 @@ def load_service_module(source: Path):
     return service
 
 
+def load_update_module(source: Path):
+    """Load the updater from the same payload that provides the service."""
+    if source.suffix == ".whl":
+        sys.path.insert(0, os.fspath(source))
+    from gusto import update
+    return update
+
+
 def runtime_is_usable(
     runtime: Path,
     version: str,
@@ -310,7 +318,11 @@ def install_source_runtime(
     python_version: str,
     json_output: bool = False,
 ) -> None:
-    if not venv_python(runtime).is_file():
+    # A present interpreter alone does not make a usable venv: a partially
+    # removed runtime can still contain Scripts/python.exe. Rebuild whenever
+    # the venv marker is missing instead of installing into a broken venv.
+    if not (venv_python(runtime).is_file()
+            and (runtime / "pyvenv.cfg").is_file()):
         service = load_service_module(source)
         service.create_virtual_environment(base_python, runtime)
     python = venv_python(runtime)
@@ -365,12 +377,16 @@ def write_wrappers(app_root: Path, bootstrap_python: Path) -> Path:
     wrappers.mkdir(parents=True, exist_ok=True)
     if sys.platform.startswith("win"):
         wrapper = wrappers / "gusto.cmd"
+        # The pointer path travels through the environment: inlining it as a
+        # single-quoted PowerShell literal would break on an apostrophe in the
+        # installation path.
         text = (
             "@echo off\r\n"
             "setlocal\r\n"
+            "set \"GUSTO_CURRENT=%~dp0..\\current.json\"\r\n"
             "for /f \"usebackq delims=\" %%P in (`powershell.exe -NoProfile "
             "-NonInteractive -Command "
-            "\"(Get-Content -Raw -LiteralPath '%~dp0..\\current.json' | "
+            "\"(Get-Content -Raw -LiteralPath $env:GUSTO_CURRENT | "
             "ConvertFrom-Json).runtime\"`) do set \"GUSTO_RUNTIME=%%P\"\r\n"
             "\"%GUSTO_RUNTIME%\\Scripts\\gusto.exe\" %*\r\n"
             "exit /b %ERRORLEVEL%\r\n"
@@ -470,11 +486,12 @@ def main(argv: list[str] | None = None) -> int:
         _print_error(
             "--port muss zwischen 1 und 65535 liegen.", json_output=args.json,
         )
-        return 2
+        return 1
     try:
         source, source_kind = installation_source()
         version = source_version(source)
         service = load_service_module(source)
+        gusto_update = load_update_module(source)
         service.validate_version(version)
     except (ValueError, OSError, RuntimeError) as error:
         _print_error(f"{error}.", json_output=args.json)
@@ -594,87 +611,129 @@ def main(argv: list[str] | None = None) -> int:
     repair_current = None
     rebuild_runtime = False
     replace_python_runtime = False
-    if managed_exists and args.repair:
-        try:
-            state = service.read_state(paths)
-            data_dir = Path(str(state["data_dir"])).expanduser().resolve()
-            validate_install_targets(
-                app_root, data_dir, managed=True,
-            )
-            repair_current = service.read_current(paths, require_runtime=False)
-            version = str(repair_current["version"])
-            runtime = Path(str(repair_current["runtime"]))
-            installed_python = state["python_runtime"]
-            assert isinstance(installed_python, dict)
-            installed_python_version = str(installed_python["version"])
-            if managed_python_requested:
-                if installed_python.get("kind") != "managed":
-                    raise RuntimeError(
-                        "Die Reparatur darf nicht von System-Python auf eine "
-                        "verwaltete Runtime umstellen."
-                    )
-                if (args.managed_python_version != installed_python_version
-                        or args.managed_python_sha256 != installed_python.get("sha256")):
-                    raise RuntimeError(
-                        "Die Python-Runtime des Reparaturpakets passt nicht zur "
-                        "installierten Runtime."
-                    )
-            try:
-                base_python = service.state_base_python(paths, state)
-            except service.ServiceError:
-                if not managed_python_requested:
-                    raise RuntimeError(
-                        "Die Python-Runtime ist beschädigt. Reparatur über das "
-                        "öffentliche install.ps1 erneut starten."
-                    )
-                replace_python_runtime = True
-                base_python = service.base_python(
-                    service.managed_python_root(paths, installed_python_version),
-                    "win32",
-                )
-            rebuild_runtime = (
-                replace_python_runtime
-                or not runtime_is_usable(
-                    runtime, version, installed_python_version,
-                )
-            )
-            if rebuild_runtime and payload_version != version:
-                raise RuntimeError(
-                    f"Die aktive Version {version} ist beschädigt, das "
-                    f"Reparaturpaket enthält aber {payload_version}. "
-                    "Eine Reparatur darf kein verdecktes Update durchführen."
-                )
-        except Exception as error:
-            _print_error(
-                f"Reparatur nicht möglich: {error}", json_output=args.json,
-            )
-            return 1
-    else:
-        runtime = paths.version(version)
-        if managed_python_requested:
-            assert managed_python_source is not None
-            base_python = service.base_python(
-                service.managed_python_root(
-                    paths, str(python_runtime["version"]),
-                ),
-                "win32",
-            )
-        else:
-            base_python = Path(str(python_runtime["path"])).resolve()
     migrated = False
     try:
-        data_dir.mkdir(parents=True, exist_ok=True)
-        for name in ("recipes", "images", "archive", "data"):
-            (data_dir / name).mkdir(parents=True, exist_ok=True)
-        migrated = migrate_checkout_data(ROOT, data_dir)
-        if managed_exists and args.repair:
-            assert repair_current is not None
-            if rebuild_runtime:
+        # Serialize with `gusto update`: both paths build, replace, and publish
+        # runtimes below app_root, so the shared lock also keeps the repair
+        # decision below valid until the runtime is published.
+        with gusto_update.update_lock(paths):
+            if managed_exists and args.repair:
                 try:
-                    service.remove_user_service(paths)
-                except Exception:
-                    pass
-                if replace_python_runtime:
+                    state = service.read_state(paths)
+                    data_dir = Path(str(state["data_dir"])).expanduser().resolve()
+                    validate_install_targets(
+                        app_root, data_dir, managed=True,
+                    )
+                    repair_current = service.read_current(
+                        paths, require_runtime=False,
+                    )
+                    version = str(repair_current["version"])
+                    runtime = Path(str(repair_current["runtime"]))
+                    installed_python = state["python_runtime"]
+                    assert isinstance(installed_python, dict)
+                    installed_python_version = str(installed_python["version"])
+                    if managed_python_requested:
+                        if installed_python.get("kind") != "managed":
+                            raise RuntimeError(
+                                "Die Reparatur darf nicht von System-Python auf "
+                                "eine verwaltete Runtime umstellen."
+                            )
+                        if (args.managed_python_version != installed_python_version
+                                or args.managed_python_sha256
+                                != installed_python.get("sha256")):
+                            raise RuntimeError(
+                                "Die Python-Runtime des Reparaturpakets passt "
+                                "nicht zur installierten Runtime."
+                            )
+                    try:
+                        base_python = service.state_base_python(paths, state)
+                    except service.ServiceError:
+                        if not managed_python_requested:
+                            raise RuntimeError(
+                                "Die Python-Runtime ist beschädigt. Reparatur "
+                                "über das öffentliche install.ps1 erneut starten."
+                            )
+                        replace_python_runtime = True
+                        base_python = service.base_python(
+                            service.managed_python_root(
+                                paths, installed_python_version,
+                            ),
+                            "win32",
+                        )
+                    rebuild_runtime = (
+                        replace_python_runtime
+                        or not runtime_is_usable(
+                            runtime, version, installed_python_version,
+                        )
+                    )
+                    if rebuild_runtime and payload_version != version:
+                        raise RuntimeError(
+                            f"Die aktive Version {version} ist beschädigt, das "
+                            f"Reparaturpaket enthält aber {payload_version}. "
+                            "Eine Reparatur darf kein verdecktes Update "
+                            "durchführen."
+                        )
+                except Exception as error:
+                    _print_error(
+                        f"Reparatur nicht möglich: {error}",
+                        json_output=args.json,
+                    )
+                    return 1
+            else:
+                runtime = paths.version(version)
+                if managed_python_requested:
+                    assert managed_python_source is not None
+                    base_python = service.base_python(
+                        service.managed_python_root(
+                            paths, str(python_runtime["version"]),
+                        ),
+                        "win32",
+                    )
+                else:
+                    base_python = Path(str(python_runtime["path"])).resolve()
+            data_dir.mkdir(parents=True, exist_ok=True)
+            for name in ("recipes", "images", "archive", "data"):
+                (data_dir / name).mkdir(parents=True, exist_ok=True)
+            migrated = migrate_checkout_data(ROOT, data_dir)
+            if managed_exists and args.repair:
+                assert repair_current is not None
+                if rebuild_runtime:
+                    try:
+                        service.remove_user_service(paths)
+                    except Exception:
+                        pass
+                    if replace_python_runtime:
+                        assert managed_python_source is not None
+                        assert args.managed_python_version is not None
+                        assert args.managed_python_sha256 is not None
+                        base_python = service.install_managed_python(
+                            paths,
+                            managed_python_source,
+                            args.managed_python_version,
+                            args.managed_python_sha256,
+                            replace=True,
+                        )
+                    shutil.rmtree(runtime, ignore_errors=True)
+                    if runtime.exists():
+                        raise RuntimeError(
+                            f"Die Runtime unter {runtime} ließ sich nicht "
+                            "vollständig entfernen. Bitte den Gusto-Dienst "
+                            "beenden (gusto stop) und die Reparatur erneut "
+                            "starten."
+                        )
+                    install_source_runtime(
+                        source, runtime, version, data_dir,
+                        service.server_url(state),
+                        base_python=base_python,
+                        python_version=str(state["python_runtime"]["version"]),
+                        json_output=args.json,
+                    )
+            else:
+                if runtime.exists():
+                    raise RuntimeError(
+                        f"Versionsordner existiert bereits: {runtime}"
+                    )
+                if managed_python_requested:
                     assert managed_python_source is not None
                     assert args.managed_python_version is not None
                     assert args.managed_python_sha256 is not None
@@ -683,9 +742,7 @@ def main(argv: list[str] | None = None) -> int:
                         managed_python_source,
                         args.managed_python_version,
                         args.managed_python_sha256,
-                        replace=True,
                     )
-                shutil.rmtree(runtime, ignore_errors=True)
                 install_source_runtime(
                     source, runtime, version, data_dir,
                     service.server_url(state),
@@ -693,47 +750,35 @@ def main(argv: list[str] | None = None) -> int:
                     python_version=str(state["python_runtime"]["version"]),
                     json_output=args.json,
                 )
-        else:
-            if runtime.exists():
-                raise RuntimeError(f"Versionsordner existiert bereits: {runtime}")
-            if managed_python_requested:
-                assert managed_python_source is not None
-                assert args.managed_python_version is not None
-                assert args.managed_python_sha256 is not None
-                base_python = service.install_managed_python(
-                    paths,
-                    managed_python_source,
-                    args.managed_python_version,
-                    args.managed_python_sha256,
-                )
-            install_source_runtime(
-                source, runtime, version, data_dir,
-                service.server_url(state),
-                base_python=base_python,
-                python_version=str(state["python_runtime"]["version"]),
-                json_output=args.json,
+                service.write_state(paths, state)
+                service.write_current(paths, version)
+            write_instance_settings(
+                runtime, Path(str(state["data_dir"])), service.server_url(state),
             )
-            service.write_state(paths, state)
-            service.write_current(paths, version)
-        write_instance_settings(
-            runtime, Path(str(state["data_dir"])), service.server_url(state),
+            write_wrappers(app_root, base_python)
+            if sys.platform.startswith("win"):
+                add_windows_user_path(paths.wrappers)
+            service.install_user_service(paths, state)
+            service.wait_for_health(
+                service.health_url(state),
+                expected_version=version,
+                expected_data_path=state["data_dir"],
+            )
+            result.update({
+                "status": "repaired" if args.repair else "installed",
+                "version": version,
+                "data_path": os.fspath(data_dir),
+                "url": service.server_url(state),
+                "python_runtime": state["python_runtime"],
+            })
+    except gusto_update.UpdateError as error:
+        # Another update or installer holds the app lock; nothing was mutated,
+        # so the existing installation must stay untouched.
+        _print_error(
+            f"Installation oder Reparatur nicht möglich: {error}",
+            json_output=args.json,
         )
-        write_wrappers(app_root, base_python)
-        if sys.platform.startswith("win"):
-            add_windows_user_path(paths.wrappers)
-        service.install_user_service(paths, state)
-        service.wait_for_health(
-            service.health_url(state),
-            expected_version=version,
-            expected_data_path=state["data_dir"],
-        )
-        result.update({
-            "status": "repaired" if args.repair else "installed",
-            "version": version,
-            "data_path": os.fspath(data_dir),
-            "url": service.server_url(state),
-            "python_runtime": state["python_runtime"],
-        })
+        return 1
     except Exception as error:
         if not managed_exists:
             try:

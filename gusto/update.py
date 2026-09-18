@@ -4,17 +4,19 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
 import shutil
 import subprocess
 import tempfile
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from . import service
 
@@ -23,6 +25,12 @@ DEFAULT_MANIFEST_URL = (
     "https://github.com/Vironnimo/gusto/releases/latest/download/"
     "gusto-release.json"
 )
+
+MAX_FETCH_RETRIES = 3
+RETRY_BASE_DELAY_SECONDS = 0.5
+RETRY_MAX_DELAY_SECONDS = 4.0
+# 500 counts only because release downloads are idempotent GET requests.
+RETRYABLE_HTTP_CODES = frozenset({429, 500, 502, 503, 504})
 
 
 class UpdateError(RuntimeError):
@@ -38,7 +46,27 @@ class UpdateError(RuntimeError):
         self.result = result or {"ok": False, "status": "failed", "error": message}
 
 
-def fetch_bytes(location: str, *, timeout: float = 30.0) -> bytes:
+def _transient_download_error(error: Exception) -> bool:
+    """Report whether a failed release download deserves another attempt."""
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code in RETRYABLE_HTTP_CODES
+    return isinstance(error, (urllib.error.URLError, TimeoutError, OSError))
+
+
+def _retry_delay(attempt: int) -> float:
+    """Return the capped exponential backoff with jitter for one retry."""
+    backoff = min(
+        RETRY_BASE_DELAY_SECONDS * 2 ** attempt, RETRY_MAX_DELAY_SECONDS,
+    )
+    return random.uniform(backoff / 2, backoff)
+
+
+def fetch_bytes(
+    location: str,
+    *,
+    timeout: float = 30.0,
+    opener: Callable[..., Any] = urllib.request.urlopen,
+) -> bytes:
     """Read a local/file fixture or an HTTPS release asset."""
     local = Path(location).expanduser()
     if local.is_file():
@@ -53,8 +81,19 @@ def fetch_bytes(location: str, *, timeout: float = 30.0) -> bytes:
     request = urllib.request.Request(
         location, headers={"User-Agent": "Gusto-Updater/1"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
+    attempt = 0
+    while True:
+        try:
+            with opener(request, timeout=timeout) as response:
+                return response.read()
+        except Exception as error:
+            if (attempt >= MAX_FETCH_RETRIES
+                    or not _transient_download_error(error)):
+                raise UpdateError(
+                    f"Release-Download fehlgeschlagen ({location}): {error}"
+                ) from error
+            time.sleep(_retry_delay(attempt))
+            attempt += 1
 
 
 def resolve_asset(manifest_location: str, asset: str) -> str:
@@ -230,31 +269,55 @@ def recover_staging(paths: service.ManagedPaths, version: str) -> list[Path]:
     return removed
 
 
-@contextmanager
-def update_lock(paths: service.ManagedPaths):
-    """Hold one crash-safe per-app update lock across staging and activation."""
-    lock_path = paths.app_root / ".update.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        descriptor = os.open(
-            lock_path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600,
-        )
-    except FileExistsError:
-        deadline = time.monotonic() + 2.0
-        while lock_path.stat().st_size < 1:
+LOCK_INIT_WAIT_SECONDS = 2.0
+# A crash between the exclusive create and the first written byte leaves an
+# empty lock file. Only a file that stayed empty for this safe period counts as
+# abandoned; a live initializer stays empty for microseconds.
+LOCK_INIT_STALE_SECONDS = 10.0
+
+
+def _open_lock_handle(lock_path: Path) -> IO[bytes]:
+    """Open the lock file, reclaiming an abandoned initialization once."""
+    deadline = time.monotonic() + LOCK_INIT_WAIT_SECONDS
+    while True:
+        try:
+            descriptor = os.open(
+                lock_path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600,
+            )
+        except FileExistsError:
+            try:
+                info = lock_path.stat()
+            except FileNotFoundError:
+                # Another waiter reclaimed the stale file first.
+                continue
+            if info.st_size >= 1:
+                return lock_path.open("r+b", buffering=0)
+            if time.time() - info.st_mtime > LOCK_INIT_STALE_SECONDS:
+                # No process can hold a lock on an empty file, and no live
+                # initializer leaves one empty that long, so this is the crash
+                # leftover that would otherwise block every later update.
+                lock_path.unlink(missing_ok=True)
+                continue
             if time.monotonic() >= deadline:
                 raise UpdateError(
                     "Die Gusto-Update-Sperre ist nicht initialisiert."
                 )
             time.sleep(0.01)
-        handle = lock_path.open("r+b", buffering=0)
-    else:
-        try:
-            os.write(descriptor, b"\0")
-        except Exception:
-            os.close(descriptor)
-            raise
-        handle = os.fdopen(descriptor, "r+b", buffering=0)
+        else:
+            try:
+                os.write(descriptor, b"\0")
+            except Exception:
+                os.close(descriptor)
+                raise
+            return os.fdopen(descriptor, "r+b", buffering=0)
+
+
+@contextmanager
+def update_lock(paths: service.ManagedPaths):
+    """Hold one crash-safe per-app update lock across staging and activation."""
+    lock_path = paths.app_root / ".update.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = _open_lock_handle(lock_path)
     handle.seek(0)
     try:
         if os.name == "nt":
@@ -548,6 +611,13 @@ def _perform_update_locked(
             )
         except Exception as activation_error:
             try:
+                # Stop the failed instance explicitly before restoring the
+                # previous runtime. On Linux `enable --now` never restarts an
+                # already active unit, so without this stop the rollback could
+                # leave the failed version serving while the pointer claims the
+                # restored one. The stop also matches the Windows activation
+                # path, which always stops a running task before re-registering.
+                service_controller("stop", app_root=paths.app_root)
                 if switched:
                     service.write_current(paths, current_version)
                 if updated_state != state:

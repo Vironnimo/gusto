@@ -72,7 +72,7 @@
           <button class="btn-ghost" type="submit">Angaben speichern</button>
         </form>
         <form class="image-remove-form" method="post" action="/recipe/{{ r.slug }}/images/{{ image.id }}/remove"
-              onsubmit="return confirm('Dieses Bild wirklich entfernen?');">
+              data-confirm="Dieses Bild wirklich entfernen?">
           <button class="btn-text" type="submit">Bild entfernen</button>
         </form>
       </article>

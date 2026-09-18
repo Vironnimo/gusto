@@ -69,12 +69,27 @@ def as_json(result: subprocess.CompletedProcess[str]) -> Any:
         ) from error
 
 
-def wait_removed(path: Path, timeout: float = 20) -> None:
+def wait_removed(path: Path, timeout: float = 120) -> None:
+    """Wait for the uninstall helper and report what it left behind.
+
+    Windows runners can need well over 20 seconds to release the app-owned
+    Python tree, so the deadline is generous and a failure lists the paths
+    that are still present.
+    """
     deadline = time.monotonic() + timeout
     while path.exists() and time.monotonic() < deadline:
         time.sleep(0.1)
-    if path.exists():
-        raise RuntimeError(f"Deinstallation ließ den App-Root zurück: {path}")
+    if not path.exists():
+        return
+    remaining: list[str] = []
+    for item in path.rglob("*"):
+        remaining.append(os.fspath(item.relative_to(path)))
+        if len(remaining) >= 20:
+            break
+    raise RuntimeError(
+        f"Deinstallation ließ den App-Root zurück: {path} "
+        f"(verbleibend: {', '.join(remaining) or 'leerer Ordner'})"
+    )
 
 
 def get_json(url: str) -> Any:
