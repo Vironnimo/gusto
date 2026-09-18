@@ -26,6 +26,9 @@ from . import __version__, core
 router = APIRouter(prefix="/api/v1", tags=["api-v1"])
 
 MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+MAX_REQUEST_BYTES = 40 * 1024 * 1024
+MAX_FILENAME_CHARS = 255
+_ILLEGAL_FILENAME_CHARS = set('<>:"/\\|?*')
 _BODY_KEYS = {"operation", "arguments", "attachments"}
 _ATTACHMENT_KEYS = {"name", "filename", "content_base64"}
 _ATTACHMENT_OPERATIONS = {
@@ -181,6 +184,13 @@ def _validate_attachments(operation: str, attachments) -> list[dict]:
                 or Path(filename).name != filename
                 or filename in {".", ".."}):
             raise CommandError("Der Originaldateiname eines Anhangs ist ungültig.")
+        if (len(filename) > MAX_FILENAME_CHARS
+                or any(character in _ILLEGAL_FILENAME_CHARS
+                       for character in filename)):
+            raise CommandError(
+                "Der Originaldateiname eines Anhangs enthält unzulässige "
+                "Zeichen oder ist zu lang."
+            )
         if not isinstance(content, str):
             raise CommandError("'content_base64' muss ein Text sein.")
         if len(content) > ((MAX_ATTACHMENT_BYTES + 2) // 3) * 4:
@@ -212,7 +222,13 @@ def _materialized_attachments(attachments: list[dict]):
             if len(content) > MAX_ATTACHMENT_BYTES:
                 raise CommandError("Der Anhang ist größer als 25 MB.", 413)
             path = root / f"{index}-{attachment['filename']}"
-            path.write_bytes(content)
+            try:
+                path.write_bytes(content)
+            except OSError as error:
+                raise CommandError(
+                    f"Anhang '{attachment['name']}' konnte nicht materialisiert "
+                    f"werden: {error}"
+                ) from error
             paths[attachment["name"]] = path
         yield paths
 
@@ -332,7 +348,7 @@ def _recipe_create(arguments: dict, _attachments: dict) -> dict:
         servings=_integer(values, "servings"),
     )
     result = recipe.to_dict()
-    warnings = _tag_warnings(tags)
+    warnings = _tag_warnings(recipe.tags)
     if warnings:
         result["warnings"] = warnings
     return result
@@ -356,22 +372,29 @@ def _recipe_update(arguments: dict, _attachments: dict) -> dict:
         "clear_duration", "clear_servings",
     }
     values = _arguments(arguments, allowed=allowed, required={"slug"})
-    changes = allowed - {"slug"}
-    if not any(name in values for name in changes):
+    tags = _strings(values, "tags", optional=True)
+    slug = _string(values, "slug")
+    title = _string(values, "title", optional=True)
+    duration_min = _integer(values, "duration_min")
+    servings = _integer(values, "servings")
+    clear_duration = _boolean(values, "clear_duration")
+    clear_servings = _boolean(values, "clear_servings")
+    if (title is None and tags is None and duration_min is None
+            and servings is None and not clear_duration
+            and not clear_servings):
         raise CommandError("Gib mindestens eine Änderung an.")
-    tags = _strings(values, "tags", optional=True, default=None)
     recipe = core.update_recipe(
-        _string(values, "slug"),
-        title=_string(values, "title", optional=True),
+        slug,
+        title=title,
         tags=tags,
-        duration_min=_integer(values, "duration_min"),
-        servings=_integer(values, "servings"),
-        clear_duration=_boolean(values, "clear_duration"),
-        clear_servings=_boolean(values, "clear_servings"),
+        duration_min=duration_min,
+        servings=servings,
+        clear_duration=clear_duration,
+        clear_servings=clear_servings,
     )
     result = recipe.to_dict()
     if tags is not None:
-        warnings = _tag_warnings(tags)
+        warnings = _tag_warnings(recipe.tags)
         if warnings:
             result["warnings"] = warnings
     return result
@@ -604,21 +627,25 @@ def _favorites_product_set(arguments: dict, attachments: dict) -> dict:
         },
         required={"need", "id"},
     )
-    changed = any(
-        name in values
-        for name in {"name", "brand", "store", "note", "remove_image"}
-    ) or "image" in attachments
-    if not changed:
+    need_id = _string(values, "need")
+    product_id = _string(values, "id")
+    name = _string(values, "name", optional=True)
+    brand = _string(values, "brand", optional=True)
+    store = _string(values, "store", optional=True)
+    note = _string(values, "note", optional=True)
+    remove_image = _boolean(values, "remove_image")
+    if (name is None and brand is None and store is None and note is None
+            and not remove_image and "image" not in attachments):
         raise CommandError("Gib mindestens eine Änderung an.")
     return core.favorite_update_product(
-        _string(values, "need"),
-        _string(values, "id"),
-        name=_string(values, "name", optional=True),
-        brand=_string(values, "brand", optional=True),
-        store=_string(values, "store", optional=True),
-        note=_string(values, "note", optional=True),
+        need_id,
+        product_id,
+        name=name,
+        brand=brand,
+        store=store,
+        note=note,
         image=attachments.get("image"),
-        remove_image=_boolean(values, "remove_image"),
+        remove_image=remove_image,
     ).to_dict()
 
 
@@ -796,6 +823,18 @@ def health():
 
 @router.post("/command")
 async def command(request: Request):
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared = int(content_length)
+        except ValueError:
+            return _error("Der Content-Length-Header muss eine ganze Zahl sein.")
+        if declared > MAX_REQUEST_BYTES:
+            return _error(
+                "Der Request-Body ist größer als "
+                f"{MAX_REQUEST_BYTES // (1024 * 1024)} MB.",
+                413,
+            )
     try:
         body = await request.json()
     except Exception:

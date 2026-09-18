@@ -14,6 +14,7 @@ from urllib import error, parse, request
 
 DEFAULT_SERVER_URL = "http://127.0.0.1:8000"
 DEFAULT_TIMEOUT_SECONDS = 15.0
+REQUEST_TIMEOUT_SECONDS_PER_MB = 1.0
 SETTINGS_FILENAME = "gusto.settings.json"
 
 
@@ -60,7 +61,12 @@ def resolve_server_url(
 ) -> str:
     """Resolve ``--server`` → ``GUSTO_URL`` → settings → loopback default."""
     environment = os.environ if environ is None else environ
-    if explicit:
+    if explicit is not None:
+        if not isinstance(explicit, str) or not explicit.strip():
+            raise ClientError(
+                "Ungültige Gusto-Server-URL aus --server: Erwartet wird "
+                "http://… oder https://…"
+            )
         return _normalize_server_url(explicit, source="--server")
 
     configured = environment.get("GUSTO_URL")
@@ -97,12 +103,12 @@ def encode_attachment(
 ) -> dict[str, str]:
     """Read a local file and encode it for the command envelope."""
     source = Path(path).expanduser()
+    if not source.is_file():
+        raise ClientError(f"Datei '{source}' ist keine reguläre Datei.")
     try:
         content = source.read_bytes()
     except OSError as exc:
         raise ClientError(f"Datei '{source}' konnte nicht gelesen werden: {exc}") from exc
-    if not source.is_file():
-        raise ClientError(f"Datei '{source}' ist keine reguläre Datei.")
     return {
         "name": name,
         "filename": source.name,
@@ -171,7 +177,12 @@ def command(
     server_url: str | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> Any:
-    """Execute one command and unwrap the API's ``result`` value."""
+    """Execute one command and unwrap the API's ``result`` value.
+
+    The timeout scales with the serialized payload (plus one second per
+    megabyte), so large Base64 attachments do not masquerade as an
+    unreachable server.
+    """
     base_url = resolve_server_url(server_url)
     endpoint = f"{base_url}/api/v1/command"
     envelope = {
@@ -179,7 +190,13 @@ def command(
         "arguments": dict(arguments or {}),
         "attachments": [dict(item) for item in (attachments or [])],
     }
-    response = _request_json("POST", endpoint, payload=envelope, timeout=timeout)
+    payload_bytes = len(json.dumps(envelope, ensure_ascii=False).encode("utf-8"))
+    effective_timeout = (
+        timeout + payload_bytes / (1024 * 1024) * REQUEST_TIMEOUT_SECONDS_PER_MB
+    )
+    response = _request_json(
+        "POST", endpoint, payload=envelope, timeout=effective_timeout,
+    )
     if response.get("ok") is not True:
         message = response.get("error")
         if not isinstance(message, str) or not message:
@@ -203,8 +220,13 @@ def health(
     for attempt in range(max(0, retries) + 1):
         try:
             response = _request_json("GET", endpoint, timeout=timeout)
-            if response.get("ok") is False:
-                raise ClientError(str(response.get("error") or "Health-Check fehlgeschlagen."))
+            if response.get("ok") is not True:
+                message = response.get("error")
+                if not isinstance(message, str) or not message:
+                    message = (
+                        "Gusto-Server meldet keinen gültigen Health-Status."
+                    )
+                raise ClientError(message)
             return response
         except ClientError as exc:
             last_error = exc

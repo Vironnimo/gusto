@@ -274,6 +274,40 @@ def main():
         and updated["warnings"][0]["code"] == "uncategorized_tags",
         "recipe.update must preserve recipe shape and structured tag warnings",
     )
+    unchanged_recipe = command("recipe.show", {"slug": soup["slug"]})
+    command("recipe.update", {
+        "slug": soup["slug"],
+        "title": None, "tags": None, "duration_min": None, "servings": None,
+        "clear_duration": False, "clear_servings": False,
+    }, status=400)
+    check(
+        command("recipe.show", {"slug": soup["slug"]}) == unchanged_recipe,
+        "recipe.update without an effective change must leave the recipe as is",
+    )
+    renamed = command("recipe.update", {
+        "slug": soup["slug"], "title": "Kartoffelsuppe klassisch",
+    })
+    check(
+        renamed["title"] == "Kartoffelsuppe klassisch"
+        and renamed["tags"] == ["vegan", "saisonal"]
+        and renamed["duration_min"] == 25,
+        "recipe.update must still apply one single effective value",
+    )
+    served = command("recipe.update", {
+        "slug": soup["slug"],
+        "title": None, "tags": None, "duration_min": None, "servings": 2,
+        "clear_duration": False, "clear_servings": False,
+    })
+    check(
+        served["servings"] == 2
+        and served["title"] == "Kartoffelsuppe klassisch",
+        "recipe.update must keep working with the full CLI payload",
+    )
+    cleared = command("recipe.update", {"slug": soup["slug"], "tags": []})
+    check(
+        cleared["tags"] == [],
+        "recipe.update must clear tags with an explicit empty list",
+    )
     cooked = command("recipe.cooked", {"slug": soup["slug"], "date": None})
     check(cooked["ok"] is True, "recipe.cooked must return the CLI result shape")
     check(
@@ -289,6 +323,18 @@ def main():
     check(
         diagnostics["ok"] is True,
         "check.run must return complete diagnostics as a successful command",
+    )
+    case_variant = command("recipe.create", {
+        "title": "Tag-Varianten",
+        "tags": ["pasta", "PASTA"],
+    })
+    check(
+        case_variant["warnings"] == [{
+            "code": "uncategorized_tags",
+            "message": "Tags ohne Kategorie (Facet „Sonstige“): pasta",
+            "tags": ["pasta"],
+        }],
+        "tag warnings must describe the stored tags, not raw case variants",
     )
 
     # Attachments: strict shape/context, successful import, and cleanup.
@@ -354,6 +400,34 @@ def main():
         )
     finally:
         api.MAX_ATTACHMENT_BYTES = previous_limit
+    command(
+        "image.add",
+        {"slug": soup["slug"]},
+        [attachment("image", "a<b.png", png_pixel())],
+        status=400,
+    )
+    command(
+        "image.add",
+        {"slug": soup["slug"]},
+        [attachment("image", "x" * 300 + ".png", png_pixel())],
+        status=400,
+    )
+    oversized = client.post(
+        "/api/v1/command",
+        json={"operation": "catalog.list"},
+        headers={"Content-Length": str(50 * 1024 * 1024)},
+    )
+    check(
+        oversized.status_code == 413 and oversized.json()["ok"] is False,
+        "a request above the body limit must be rejected before reading it",
+    )
+    clean_filename = command(
+        "image.add",
+        {"slug": soup["slug"]},
+        [attachment("image", "ok name.png", png_pixel())],
+    )
+    check(clean_filename["filename"].endswith(".png"),
+          "a legal filename with spaces must still be importable")
     removed_image = command("image.remove", {
         "slug": soup["slug"], "id": image["id"],
     })
@@ -393,6 +467,36 @@ def main():
     check(set_product["name"] == "Barista Plus"
           and set_product["image_filename"] == "",
           "favorites.product.set must support partial edits and image removal")
+    unchanged_need = command("favorites.show", {"need": need["id"]})
+    command("favorites.product.set", {
+        "need": need["id"], "id": first_product["id"],
+        "name": None, "brand": None, "store": None, "note": None,
+        "remove_image": False,
+    }, status=400)
+    check(
+        command("favorites.show", {"need": need["id"]}) == unchanged_need,
+        "favorites.product.set without an effective change must leave the need as is",
+    )
+    stored = command("favorites.product.set", {
+        "need": need["id"], "id": first_product["id"],
+        "name": None, "brand": None, "store": "Edeka", "note": None,
+        "remove_image": False,
+    })
+    check(
+        stored["id"] == first_product["id"]
+        and stored["name"] == "Barista Plus"
+        and stored["store"] == "Edeka",
+        "favorites.product.set must still apply one single effective field",
+    )
+    blanked = command("favorites.product.set", {
+        "need": need["id"], "id": first_product["id"],
+        "name": None, "brand": None, "store": "", "note": None,
+        "remove_image": False,
+    })
+    check(
+        blanked["store"] == "",
+        "favorites.product.set must treat empty strings as effective values",
+    )
     moved = command("favorites.product.move", {
         "need": need["id"], "id": second_product["id"], "position": 1,
     })

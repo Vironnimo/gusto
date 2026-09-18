@@ -156,6 +156,19 @@ def check_client_contract():
         == "http://settings.example:8123",
         "instance settings must provide the server URL",
     )
+    try:
+        client.resolve_server_url("", environ={})
+    except client.ClientError as error:
+        check("Ungültige Gusto-Server-URL aus --server" in str(error),
+              "an empty --server must fail instead of falling through")
+    else:
+        raise AssertionError("an empty --server value was silently ignored")
+    check(
+        client.resolve_server_url(
+            environ={"GUSTO_URL": ""}, settings_path=settings,
+        ) == "http://settings.example:8123",
+        "an empty GUSTO_URL must keep behaving like an unset variable",
+    )
     image = HOME / "attachment.bin"
     image.write_bytes(b"\x00gusto\xff")
     attachment = client.encode_attachment("image", image)
@@ -167,6 +180,19 @@ def check_client_contract():
         },
         "attachments must use the versioned Base64 envelope",
     )
+    attachment_folder = HOME / "attachment-folder"
+    attachment_folder.mkdir()
+    for description, rejected in (
+        ("directories", attachment_folder),
+        ("missing paths", HOME / "missing-attachment.bin"),
+    ):
+        try:
+            client.encode_attachment("image", rejected)
+        except client.ClientError as error:
+            check("keine reguläre Datei" in str(error),
+                  f"encode_attachment must reject {description} with a clear message")
+        else:
+            raise AssertionError(f"encode_attachment accepted {description}")
     captured = []
 
     def fake_request(method, url, *, payload=None, timeout=None):
@@ -198,6 +224,51 @@ def check_client_contract():
                   "remote command errors must retain their API message")
         else:
             raise AssertionError("remote command failure was not raised")
+    timeouts = []
+
+    def timing_request(method, url, *, payload=None, timeout=None):
+        timeouts.append(timeout)
+        return {"ok": True, "result": {"slug": "test"}}
+
+    heavy = HOME / "heavy-attachment.bin"
+    heavy.write_bytes(bytes(1024 * 1024))
+    with patch.object(client, "_request_json", side_effect=timing_request):
+        client.command(
+            "recipe.show", {"slug": "test"},
+            attachments=[client.encode_attachment("image", heavy)],
+            server_url="http://gusto.local:9000",
+        )
+    check(
+        client.DEFAULT_TIMEOUT_SECONDS < timeouts[0]
+        <= client.DEFAULT_TIMEOUT_SECONDS + 2.0,
+        "large attachments must scale the command timeout instead of "
+        "failing as unreachable",
+    )
+    with patch.object(
+        client, "_request_json", return_value={"ok": True, "version": "1.2.3"},
+    ):
+        check(client.health("http://gusto.local")["version"] == "1.2.3",
+              "health must accept the documented ok=true response")
+    with patch.object(
+        client, "_request_json", return_value={"ok": False, "error": "startet"},
+    ):
+        try:
+            client.health("http://gusto.local")
+        except client.ClientError as error:
+            check(str(error) == "startet",
+                  "health must retain an explicit ok=false error message")
+        else:
+            raise AssertionError("health accepted an ok=false response")
+    with patch.object(
+        client, "_request_json", return_value={"status": "ready"},
+    ):
+        try:
+            client.health("http://gusto.local")
+        except client.ClientError as error:
+            check("Health" in str(error),
+                  "health must reject a body without an ok field")
+        else:
+            raise AssertionError("health accepted a response without ok")
 
 
 def check_serve_json_contract():
@@ -371,12 +442,42 @@ def check_lifecycle_contract():
           "update rollback failures must preserve their structured result")
 
 
+def check_edit_readback_contract():
+    from gusto import cli
+
+    def non_utf8_editor(path, *, quiet=False):
+        Path(path).write_bytes(b"# Kaputt\n\n- Zutat \xe4\n")
+        return {"editor": "fake", "path": os.fspath(Path(path)), "exit_code": 0}
+
+    def show_only(_args, operation, _arguments=None, *, attachments=None):
+        check(operation == "recipe.show",
+              "a non-UTF-8 editor result must not be uploaded")
+        return {"slug": "edit-readback", "content": "# Ok\n"}
+
+    with patch.object(cli, "_open_editor", side_effect=non_utf8_editor):
+        with patch.object(cli, "_remote", side_effect=show_only):
+            try:
+                cli._edit_remote(
+                    SimpleNamespace(server=None, json=True), "edit-readback",
+                )
+            except cli.client.ClientError as error:
+                check("UTF-8" in str(error) and "codec" not in str(error),
+                      "edit must report a non-UTF-8 editor result in German")
+            except UnicodeDecodeError:
+                raise AssertionError(
+                    "edit leaked a raw UnicodeDecodeError for non-UTF-8 content"
+                ) from None
+            else:
+                raise AssertionError("non-UTF-8 editor content was accepted")
+
+
 def main():
     check_client_contract()
     importlib.import_module("gusto.cli")
     check("gusto.core" not in sys.modules,
           "importing the normal CLI client must not import local persistence")
     check_lifecycle_contract()
+    check_edit_readback_contract()
     start_server()
     home = as_json("home")
     check(Path(home["path"]).resolve() == HOME.resolve()
@@ -570,6 +671,16 @@ def main():
     )
     check("not allowed with argument" in conflicting_content.stderr,
           "content set must reject simultaneous stdin and file input")
+    invalid_utf8 = HOME / "invalid-utf8.md"
+    invalid_utf8.write_bytes(b"# Kaputte Suppe\n\n- Zutat \xe4\n")
+    broken_encoding = as_json_error(
+        "content", "set", slug, "--file", os.fspath(invalid_utf8),
+    )
+    check(os.fspath(invalid_utf8) in broken_encoding["error"]
+          and "UTF-8" in broken_encoding["error"]
+          and "codec" not in broken_encoding["error"],
+          "content set must reject non-UTF-8 files with a German message "
+          "including the path")
     sourced = as_json(
         "shopping", "add", "Eine Prise Salz", "--source", slug,
     )
@@ -696,6 +807,11 @@ def main():
           in " ".join(favorites_set_help.stdout.split()),
           "favorites set help must disclose alias preservation")
 
+    without_alias = as_json("favorites", "add", "Zucker")
+    check(without_alias["name"] == "Zucker" and without_alias["aliases"] == [],
+          "favorites add without --alias must create a need with no aliases")
+    as_json("favorites", "remove", without_alias["id"])
+
     consistency = as_json("check")
     check(consistency["recipe_count"] == 2
           and consistency["favorite_need_count"] == 1
@@ -729,6 +845,13 @@ def main():
     edited = as_json("edit", slug)
     check(edited["slug"] == slug and edited["exit_code"] == 0,
           "edit --json must return one parseable result after the editor exits")
+
+    editor_failure = as_json_error("new", "Editorfail Test", "--edit")
+    check("editorfail-test" in editor_failure["error"]
+          and "bereits angelegt" in editor_failure["error"],
+          "new --edit must name the already-created slug when the editor fails")
+    check(as_json("show", "editorfail-test")["title"] == "Editorfail Test",
+          "a failed new --edit must leave the created recipe in place")
 
     deleted = as_json("delete", slug)
     check(deleted["slug"] == slug and deleted["archived"] is True

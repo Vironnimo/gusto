@@ -123,11 +123,19 @@ def version_key(version: str) -> tuple[tuple[int, int, int], tuple[tuple[int, An
 def _atomic_json(path: Path, value: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
-    temporary.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(temporary, path)
+    try:
+        temporary.write_text(
+            json.dumps(value, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary, path)
+    finally:
+        # A failed replace is exactly the case where the target is temporarily
+        # locked, so the half-written sibling must not survive the attempt.
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def read_json_object(path: Path, label: str) -> dict[str, Any]:
@@ -149,6 +157,13 @@ def read_state(paths: ManagedPaths) -> dict[str, Any]:
     for field in ("data_dir", "host", "port"):
         if field not in state:
             raise ServiceError(f"Installationszustand enthält kein {field!r}.")
+    host = state.get("host")
+    if not isinstance(host, str) or not host or "/" in host or " " in host:
+        raise ServiceError("Installationszustand enthält keinen gültigen Host.")
+    port = state.get("port")
+    if (isinstance(port, bool) or not isinstance(port, int)
+            or not 1 <= port <= 65535):
+        raise ServiceError("Installationszustand enthält keinen gültigen Port.")
     python_runtime = state.get("python_runtime")
     if (not isinstance(python_runtime, dict)
             or python_runtime.get("kind") not in {"managed", "system"}
@@ -460,6 +475,34 @@ def health_url(state: dict[str, Any]) -> str:
     return server_url(state).rstrip("/") + "/api/v1/health"
 
 
+def _health_mismatch(
+    value: Any,
+    expected_version: str | None,
+    expected_data: Path | None,
+) -> str | None:
+    """Describe how a reachable health response misses the expectation."""
+    if not isinstance(value, dict) or value.get("ok") is not True:
+        return "Health-Antwort meldet nicht ok=true"
+    if expected_version is not None and value.get("version") != expected_version:
+        return (
+            "Health-Antwort stammt von Version "
+            f"{value.get('version')!r}, erwartet {expected_version!r}"
+        )
+    if expected_data is not None:
+        actual_data = value.get("data_path")
+        if not isinstance(actual_data, str):
+            return "Health-Antwort enthält keinen Datenpfad"
+        actual_path = Path(actual_data).expanduser().resolve()
+        if os.path.normcase(os.fspath(actual_path)) != os.path.normcase(
+            os.fspath(expected_data)
+        ):
+            return (
+                f"Health-Antwort verwendet Datenpfad {actual_path}, "
+                f"erwartet {expected_data}"
+            )
+    return None
+
+
 def wait_for_health(
     url: str,
     *,
@@ -483,30 +526,20 @@ def wait_for_health(
                     raise OSError(f"HTTP {response.status}")
                 body = response.read()
             value = json.loads(body.decode("utf-8"))
-            if not isinstance(value, dict) or value.get("ok") is not True:
-                raise ValueError("Health-Antwort meldet nicht ok=true")
-            if (expected_version is not None
-                    and value.get("version") != expected_version):
-                raise ValueError(
-                    "Health-Antwort stammt von Version "
-                    f"{value.get('version')!r}, erwartet {expected_version!r}"
-                )
-            if expected_data is not None:
-                actual_data = value.get("data_path")
-                if not isinstance(actual_data, str):
-                    raise ValueError("Health-Antwort enthält keinen Datenpfad")
-                actual_path = Path(actual_data).expanduser().resolve()
-                if os.path.normcase(os.fspath(actual_path)) != os.path.normcase(
-                    os.fspath(expected_data)
-                ):
-                    raise ValueError(
-                        f"Health-Antwort verwendet Datenpfad {actual_path}, "
-                        f"erwartet {expected_data}"
-                    )
-            return value
         except (OSError, ValueError, json.JSONDecodeError,
                 urllib.error.URLError) as error:
             last_error = str(error)
+        else:
+            # Only unreachability is transient. A server that answers with
+            # another version, another store, or ok=false will not fix itself
+            # while polling, so its meaningful error must fail fast.
+            mismatch = _health_mismatch(value, expected_version, expected_data)
+            if mismatch is not None:
+                raise ServiceError(
+                    f"Gusto ist unter {url} erreichbar, erfüllt aber nicht "
+                    f"die Erwartung: {mismatch}"
+                )
+            return value
         if time.monotonic() >= deadline:
             raise ServiceError(
                 f"Gusto wurde unter {url} nicht erreichbar: {last_error}"
