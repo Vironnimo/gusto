@@ -301,7 +301,13 @@ def cmd_new(args):
     })
     editor_result = None
     if args.edit:
-        editor_result = _edit_remote(args, recipe["slug"])
+        try:
+            editor_result = _edit_remote(args, recipe["slug"])
+        except (OSError, ValueError) as error:
+            raise client.ClientError(
+                f"Rezept wurde bereits angelegt (Slug '{recipe['slug']}'); "
+                f"der Editor-Aufruf schlug fehl: {error}"
+            ) from error
     if args.json:
         result = dict(recipe)
         if editor_result is not None:
@@ -325,6 +331,11 @@ def _edit_remote(args, slug: str) -> dict:
         editor_result = _open_editor(temporary, quiet=args.json)
         try:
             content = temporary.read_text(encoding="utf-8")
+        except UnicodeDecodeError as error:
+            raise client.ClientError(
+                "Bearbeiteter Rezepttext konnte nicht gelesen werden "
+                "(erwartet wird UTF-8)."
+            ) from error
         except OSError as error:
             raise client.ClientError(
                 f"Bearbeiteter Rezepttext konnte nicht gelesen werden: {error}"
@@ -350,6 +361,11 @@ def cmd_content_set(args):
     else:
         try:
             content = Path(args.file).expanduser().read_text(encoding="utf-8")
+        except UnicodeDecodeError as error:
+            raise client.ClientError(
+                f"Rezeptdatei '{args.file}' konnte nicht gelesen werden "
+                "(erwartet wird UTF-8)."
+            ) from error
         except OSError as error:
             raise client.ClientError(
                 f"Rezeptdatei '{args.file}' konnte nicht gelesen werden: {error}"
@@ -429,6 +445,7 @@ def cmd_check(args):
         )
         labels = {
             "duplicate_recipe_slugs": "Doppelte aktive Slugs",
+            "invalid_data_files": "Ungültige Daten-JSON-Dateien",
             "orphaned_files": ".md ohne Index-Eintrag",
             "missing_files": "Index-Eintrag ohne .md",
             "title_mismatches": "Titel stimmt nicht mit Markdown-H1 überein",
@@ -671,7 +688,7 @@ def cmd_favorites_match(args):
 
 def cmd_favorites_add(args):
     need = _remote(
-        args, "favorites.add", {"name": args.name, "aliases": args.alias},
+        args, "favorites.add", {"name": args.name, "aliases": args.alias or []},
     )
     if args.json:
         _dump(need)
