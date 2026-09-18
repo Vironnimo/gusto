@@ -49,6 +49,7 @@ parser remain plain stderr and exit `2`.
   List/filter recipes. `--tag` is repeatable **and** comma-separated
   (`--tag a --tag b` ≡ `--tag a,b`). `--max-time` caps `duration_min` and
   excludes recipes whose duration is unknown; the cap must be positive.
+  Recipes are sorted by title (A–Z, case-insensitive).
 - `search "<query>" [--match any|all] [--tag T ...] [--max-time N] [--json]`
   Full-text over title, tags, **and the markdown body** (so ingredients match).
   `any` (default) = any term present; `all` = every term present.
@@ -61,6 +62,8 @@ parser remain plain stderr and exit `2`.
 - `log [--days N] [--json]`
   Cooking log. Human output is newest-first and labels archived recipes. `N`
   must be positive.
+  `--json` keeps the storage order, which is **oldest-first**; sort by `date`
+  yourself when recency matters in scripts.
 - `suggest [--days N] [--limit N] [--json]`
   Recipes not cooked in the last positive N days (default 7), longest-ago
   first. `limit` must be nonnegative; `0` returns an empty array.
@@ -91,6 +94,8 @@ parser remain plain stderr and exit `2`.
   Download Markdown to a temporary file, open it in `$EDITOR`, then upload the
   completed content through the server. JSON waits until the editor exits and
   returns `slug`, temporary absolute `path`, `editor`, and `exit_code`.
+  Without `EDITOR` set, Windows opens notepad and Linux nano — headless agents
+  must set `EDITOR` to a scriptable editor or use `content set` instead.
 - `content set <slug> (--file PATH | --stdin) [--json]`
   Replace the complete Markdown body through the server from a local UTF-8 file
   or stdin. Use this for headless agents; never edit the live data directory.
@@ -146,6 +151,8 @@ and browser clients see the same facet order and assignment.
 - `image list <slug> [--json]` — list every image and the selected cover.
 - `image add <slug> <path> [--role R] [--caption TEXT] [--cover] [--json]` —
   copy an image into Gusto. The first image automatically becomes the cover.
+  Accepted formats are JPG, PNG, WebP, and GIF; without `--role`, the free-form
+  purpose defaults to `gallery`.
 - `image set <slug> <id> [--role R] [--caption TEXT] [--json]` — update free-form
   purpose and/or caption.
 - `image cover <slug> <id> [--json]` — select an existing image as the top image.
@@ -200,6 +207,8 @@ and browser clients see the same facet order and assignment.
   `id` follows the JSON error contract above.
 - `shopping remove <id> [--json]` — tombstone (sync-safe; never hard-deleted).
   Repeating the same removal is a no-op that preserves `updated_at`.
+  JSON returns the reduced confirmation `{ "id": "…", "deleted": true }`, not
+  the full item shape.
 - `shopping remove-done [--json]` — tombstone all checked visible items; returns
   `{ "removed": N }`.
 - `shopping clear [--json]` — tombstone every visible item, open or checked;
@@ -371,6 +380,7 @@ With `--dry-run`, only `status` changes to `dry_run`; the reported
   "recipe_count": 3,
   "archive_count": 1,
   "duplicate_recipe_slugs": [],
+  "invalid_data_files": [],
   "orphaned_files": [],
   "missing_files": [],
   "title_mismatches": [],
