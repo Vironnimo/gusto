@@ -83,6 +83,7 @@ Quality gates:
 - `python tests/test_concurrency.py`
 - `python tests/test_recipes.py`
 - `python tests/test_cli.py`
+- `python tests/test_web_render.py`
 - `python tests/test_agent_contract.py`
 - `python tests/test_skill_install.py`
 - `python tests/test_service.py`

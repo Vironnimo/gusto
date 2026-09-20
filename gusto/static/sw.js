@@ -6,9 +6,10 @@
 //                /api/...:     network-only (do not cache)
 //                recipe/archive media: network-only (moved images must stay current)
 //                favorite media: cache-first (filenames change on replacement)
-//                other GET:    cache-first (static)
+//                other GET:    cache-first (non-HTML only)
 
-const CACHE = "gusto-v11";
+// The version bump also evicts HTML pages cached by the old fallthrough.
+const CACHE = "gusto-v12";
 
 const APP_SHELL = [
   "/shopping",
@@ -84,14 +85,23 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Other same-origin GET (static): cache-first.
+  // Other same-origin GET (static assets, favorite product media): cache-first.
+  // HTML responses are never cached: the live search fetches full "/?q=..."
+  // pages per keystroke, and such fetch()-mode subrequests are never read
+  // back from this cache (navigations use the network-first branch above and
+  // the app shell is precached), so caching them only grew the cache
+  // unboundedly. Non-HTML responses stay cached so favorite product photos
+  // remain recognizable offline (shopping-client also warms them via fetch).
   event.respondWith(
     caches.match(request).then(
       (cached) =>
         cached ||
         fetch(request).then((response) => {
-          // Put successful responses into the cache after the fact.
-          if (response && response.ok) {
+          // Cache successful responses after the fact, but never HTML
+          // documents (see above).
+          const contentType = response && response.headers.get("content-type");
+          if (response && response.ok && contentType
+              && !contentType.startsWith("text/html")) {
             const copy = response.clone();
             caches.open(CACHE).then((cache) => cache.put(request, copy));
           }

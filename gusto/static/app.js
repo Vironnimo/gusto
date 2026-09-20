@@ -105,9 +105,18 @@ window.addEventListener("pageshow", (e) => {
       const neueTags = doc.getElementById("tagfilter");
       if (neu) {
         results.classList.add("is-live"); // Karten-Einblendung beim Tippen aus
-        results.innerHTML = neu.innerHTML;
+        // No innerHTML with server data (project security rule): the already
+        // parsed nodes are cloned over instead of copying markup through
+        // strings, so server escaping stays the only source of markup.
+        results.replaceChildren(
+          ...Array.from(neu.childNodes, (node) => node.cloneNode(true))
+        );
       }
-      if (neueTags && tagfilter) tagfilter.innerHTML = neueTags.innerHTML;
+      if (neueTags && tagfilter) {
+        tagfilter.replaceChildren(
+          ...Array.from(neueTags.childNodes, (node) => node.cloneNode(true))
+        );
+      }
       history.replaceState(null, "", url); // URL/Lesezeichen aktuell halten
     } catch (e) {
       // Verbindungsfehler: das klassische Submit bleibt der Fallback, damit
@@ -141,7 +150,12 @@ window.addEventListener("pageshow", (e) => {
     if (path === "/log") return new Set(["log", "catalog"]);
     if (path === "/suggestions") return new Set(["catalog", "log"]);
     if (path === "/archive" || path.startsWith("/archive/")) return new Set(["catalog"]);
-    if (path === "/new" || path.startsWith("/recipe/") || path === "/") {
+    // Form-bearing pages (/new, /recipe/*/edit, /recipe/*/images) must not
+    // auto-reload: a reload triggered by another client's change would wipe
+    // unsaved input and interrupt running photo uploads. Plain view pages
+    // keep reloading so external changes stay visible.
+    if (path === "/"
+        || (path.startsWith("/recipe/") && !/\/(edit|images)$/.test(path))) {
       return new Set(["catalog", "log"]);
     }
     return new Set();
@@ -163,13 +177,11 @@ window.addEventListener("pageshow", (e) => {
       }
 
       const revision = Number(change && change.revision);
+      // A strictly smaller revision signals a server-side journal reset and
+      // must be followed; only the exact revision this page already rendered
+      // is skipped. Replays after a reconnect are genuinely missed changes,
+      // so they must pass the filter too.
       if (!Number.isFinite(revision) || revision === latestRevision) return;
-      // Eine kleinere Revision ist kein veraltetes Ereignis, sondern der
-      // bewusste Server-Reset (Journal-Reset/Store-Wechsel/Kompaktierung):
-      // Der Server schickt die kleinere aktuelle Revision. Folgen wir ihr
-      // nicht zurueck, wuerden wir alle Ereignisse verwerfen, bis Mutationen
-      // die alte Revision wieder ueberholt haben - und staenden dauerhaft
-      // still, inklusive Reconnects mit der alten ?after=-URL.
       latestRevision = revision;
 
       const resources = Array.isArray(change.resources) ? change.resources : [];

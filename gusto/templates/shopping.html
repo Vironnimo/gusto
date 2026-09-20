@@ -46,6 +46,8 @@
   <a class="btn-ghost shop-favorites-link" href="/favorites"><span aria-hidden="true">♥</span> Lieblingsprodukte</a>
 </section>
 
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
 <div id="shop-server">
   <details class="shop-add-panel">
     <summary><span>Artikel hinzufügen</span><span aria-hidden="true">＋</span></summary>

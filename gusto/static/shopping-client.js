@@ -709,6 +709,34 @@
 
   var syncing = false;
   var pending = false;
+  // Bounded retry for a failed sync (exponential backoff with a little
+  // jitter so parallel tabs do not retry in lockstep). Success resets the
+  // budget; offline pauses it because the "online" event re-syncs.
+  var RETRY_BASE_MS = 2000;
+  var RETRY_MAX_MS = 60000;
+  var RETRY_MAX_ATTEMPTS = 5;
+  var retryAttempts = 0;
+  var retryTimer = null;
+
+  function resetRetry() {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+    retryAttempts = 0;
+  }
+
+  function scheduleRetry() {
+    clearTimeout(retryTimer);
+    if (!navigator.onLine || retryAttempts >= RETRY_MAX_ATTEMPTS) return;
+    var delay = Math.min(
+      RETRY_BASE_MS * Math.pow(2, retryAttempts) + Math.floor(Math.random() * 500),
+      RETRY_MAX_MS
+    );
+    retryAttempts += 1;
+    retryTimer = setTimeout(function () {
+      retryTimer = null;
+      sync();
+    }, delay);
+  }
 
   // Merge the server response into the CURRENT local state -- same rule as the
   // server (per id the larger updated_at wins). This way a sync response does
@@ -744,13 +772,17 @@
         return res.json();
       })
       .then(function (data) {
+        resetRetry();
         var incoming = data && Array.isArray(data.items) ? data.items : [];
         // merge against the CURRENT state, do not blindly overwrite.
         saveItems(mergeInto(loadItems(), incoming));
         render();
       })
       .catch(function () {
-        // network/server error -> keep local state, do not render.
+        // Network/server error -> keep the local state, do not render, and
+        // retry with backoff so an offline change is not left unsynchronized
+        // until an unrelated event happens to fire.
+        scheduleRetry();
       })
       .then(function () {
         syncing = false;
@@ -801,6 +833,7 @@
 
   document.addEventListener("DOMContentLoaded", init);
   window.addEventListener("online", function () {
+    resetRetry(); // fresh connection -> fresh retry budget
     sync();
     refreshFavoriteNeeds();
   });
