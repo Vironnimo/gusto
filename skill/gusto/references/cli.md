@@ -244,10 +244,23 @@ server; direct live-store edits are not a supported client path.
   current-user background service locally. `start` and `restart` return only
   after the health endpoint becomes ready. `--app-root` explicitly selects a
   managed installation for diagnosis or recovery.
+  JSON result: `ok`, `action`, `status`, `running`, `version`, `url`, and
+  `command` (null except under `--dry-run`). A real run reports `status` as
+  `running` or `stopped` (or the backend's raw state text for `status`);
+  `--dry-run` reports `"status": "dry_run"` plus the planned `command` and
+  changes nothing — do not rely on `running` in that mode.
 - `update [--check] [--app-root PATH] [--dry-run] [--json]` — compare against the public release
   manifest; normally download, verify its SHA-256 consistency, install side-by-side,
   switch the version pointer, restart and health-check. A failed health check
   rolls back to the previous version. `--check` never changes the installation.
+  JSON result always carries `ok`, `current_version`, `latest_version`,
+  `update_available`, `manifest_url`, and `status`: `current` (nothing to do),
+  `update_available`, `dry_run` (only with `--dry-run` and a pending update),
+  or `updated` (adds `previous_version`, `rollback`, `removed_versions`,
+  `python_runtime`). A failed activation returns `"status": "update_failed"`
+  (previous version restored, `rollback: true`) or `"status": "rollback_failed"`
+  (`rollback: false`), each with `ok: false`, a German `error`,
+  `attempted_version`, and exit 1.
 - `uninstall [--keep-data | --delete-data [--yes]] [--dry-run] [--json]` —
   remove a managed installed Gusto runtime. A bare interactive call offers
   **app only**, **app + all data**, or **cancel** and shows the exact runtime and
@@ -468,6 +481,19 @@ Shopping need returned by `favorites list|show|match`:
 
 The `products` array order is the preference order. `favorites match --json`
 prints one such object or `null`; it does not create an alias automatically.
+
+Service lifecycle (`status|start|stop|restart --json`), real run:
+
+```json
+{"ok": true, "action": "restart", "status": "running", "running": true,
+ "version": "0.1.9", "url": "http://127.0.0.1:8000", "command": null}
+```
+
+`--dry-run` swaps in `"status": "dry_run"` with the planned `command` array.
+`update --json` uses the keys and `status` values (`current`,
+`update_available`, `dry_run`, `updated`, and the failure statuses
+`update_failed` / `rollback_failed`) documented under the update command
+above.
 
 ## Tag facets in detail
 
