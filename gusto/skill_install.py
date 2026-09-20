@@ -155,9 +155,6 @@ def install_skill(host: str, *, dry_run: bool = False,
             os.replace(destination, backup)
         os.replace(staging, destination)
         staging = None
-        if backup is not None:
-            _remove_path(backup)
-            backup = None
     except (OSError, shutil.Error) as error:
         restore_error: OSError | None = None
         if backup is not None and _exists(backup):
@@ -178,4 +175,16 @@ def install_skill(host: str, *, dry_run: bool = False,
     finally:
         if staging is not None:
             _remove_path(staging)
+
+    # The publish succeeded, so the installation itself is complete and the
+    # rollback above must never run again: its restore path deletes the new
+    # destination and puts back the backup, which a failed rmtree may have
+    # already half-removed. Backup cleanup is therefore best-effort; on
+    # failure the half-removed backup stays under its hidden name instead of
+    # failing a successful installation.
+    if backup is not None:
+        try:
+            _remove_path(backup)
+        except (OSError, shutil.Error):
+            pass
     return result

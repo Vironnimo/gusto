@@ -107,6 +107,36 @@ def main():
               and not list((vbot / "skills").glob(".gusto-skill-*")),
               "failed publication must restore the complete previous skill")
 
+        # A failed backup cleanup after a successful publish must keep the
+        # freshly published skill instead of rolling the target back to a
+        # half-removed backup.
+        real_rmtree = skill_install.shutil.rmtree
+
+        def mangle_then_fail(target, *args, **kwargs):
+            target = Path(target)
+            if target.name.startswith(".gusto-skill-backup-"):
+                for item in target.rglob("*"):
+                    if item.is_file():
+                        item.unlink()
+                        break
+                raise OSError("forced backup cleanup failure")
+            return real_rmtree(target, *args, **kwargs)
+
+        with patch.object(
+            skill_install.shutil, "rmtree", side_effect=mangle_then_fail,
+        ):
+            published = skill_install.install_skill(
+                "vbot", user_home=home, source=SOURCE,
+            )
+        check(published["status"] == "installed"
+              and snapshot(destination) == snapshot(SOURCE),
+              "a failed backup cleanup must keep the complete new skill")
+        leftovers = list((vbot / "skills").glob(".gusto-skill-backup-*"))
+        check(leftovers,
+              "a failed backup cleanup must leave its backup folder in place")
+        for leftover in leftovers:
+            real_rmtree(leftover)
+
         incomplete = root / "incomplete"
         incomplete.mkdir()
         (incomplete / "SKILL.md").write_text("x", encoding="utf-8")

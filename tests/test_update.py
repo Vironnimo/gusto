@@ -439,6 +439,47 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
           "the rollback must restore the pointer and drop the failed runtime")
 # ==== F1 end ====
 
+# ==== F2a: --json error contract ====
+    contract_app = root / "contract-app"
+    contract_app.mkdir()
+    try:
+        update.run_update(app_root=contract_app, check=True)
+    except update.UpdateError as failure:
+        contract_message = str(failure)
+        checks += 1
+    else:
+        raise AssertionError(
+            "a missing install state must surface as UpdateError, never as "
+            "a raw service error"
+        )
+    check("Installationszustand" in contract_message,
+          "the wrapped update error must keep the German service message")
+
+    service_error_manifest = fixture(root, "1.3.0")
+
+    def failing_service_error_installer(*args, **kwargs):
+        raise service.ServiceError("forced runtime ServiceError")
+
+    before_contract = service.read_current(paths)["version"]
+    try:
+        update.run_update(
+            app_root=app, manifest_url=os.fspath(service_error_manifest),
+            runtime_installer=failing_service_error_installer,
+            service_controller=lambda *args, **kwargs: {"ok": True},
+            service_installer=lambda *args, **kwargs: {"ok": True},
+            health_waiter=lambda *args, **kwargs: {"ok": True},
+        )
+    except update.UpdateError:
+        checks += 1
+    else:
+        raise AssertionError(
+            "a runtime ServiceError must surface as UpdateError"
+        )
+    check(service.read_current(paths)["version"] == before_contract
+          and not paths.version("1.3.0").exists(),
+          "a pre-activation service failure must not switch anything")
+# ==== F2a end ====
+
 # ==== F2: installer holds the app update lock ====
     installer_app = root / "installer-app"
     installer_data = root / "installer-data"

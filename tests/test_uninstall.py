@@ -81,6 +81,34 @@ with tempfile.TemporaryDirectory(prefix="gusto-uninstall-") as temporary:
     )
     service.write_current(paths, "1.2.3")
 
+    # Corrupt lifecycle state must surface as UninstallError (the CLI's
+    # --json contract), never as a raw service error.
+    paths.current.write_text("{defekt", encoding="utf-8")
+    expect_error(
+        lambda: uninstall.discover_targets(
+            prefix=runtime, package_file=package,
+            data_root=data, platform_name="win32",
+        ),
+        "a corrupt current pointer must raise UninstallError instead of a "
+        "raw service error",
+    )
+    service.write_current(paths, "1.2.3")
+    paths.state.write_text("[]", encoding="utf-8")
+    expect_error(
+        lambda: uninstall.discover_targets(
+            prefix=runtime, package_file=package,
+            data_root=data, platform_name="win32",
+        ),
+        "a corrupt install state must raise UninstallError instead of a "
+        "raw service error",
+    )
+    service.write_state(paths, {
+        "data_dir": os.fspath(data), "host": "0.0.0.0", "port": 8000,
+        "python_runtime": service.managed_python_state(
+            paths, "3.13.14", "0" * 64,
+        ),
+    })
+
     orchestration = []
     preview = uninstall.perform_uninstall(
         targets, delete_data=False, dry_run=True, interactive=False,

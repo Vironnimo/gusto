@@ -890,6 +890,10 @@ def service_action(
         status_text in {"active", "running"}
         if action == "status" else action in {"start", "restart"}
     )
+    if dry_run:
+        # A dry-run executes nothing and must not claim an observed running
+        # state; deriving it from the action type would lie for start/restart.
+        running = False
     if action == "status" and not running and not status_text:
         status_text = "stopped"
     return {

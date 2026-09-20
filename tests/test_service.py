@@ -137,6 +137,14 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
           and health_calls[0][1]["expected_version"] == "1.2.3"
           and Path(health_calls[0][1]["expected_data_path"]) == data,
           "start must verify the configured version and data store")
+    dry_started = service.service_action(
+        "start", app_root=paths.app_root, platform_name="linux", runner=runner,
+        dry_run=True,
+    )
+    check(dry_started["running"] is False
+          and dry_started["status"] == "dry_run"
+          and dry_started["command"],
+          "a dry-run start must not claim an unobserved running state")
 
     windows = service.install_user_service(
         paths, state, platform_name="win32", dry_run=True, runner=runner,

@@ -56,14 +56,22 @@ def discover_targets(
         if ((candidate / service.STATE_FILENAME).is_file()
                 and (candidate / service.CURRENT_FILENAME).is_file()
                 and runtime.is_relative_to(candidate / "versions")):
-            paths = service.managed_paths(candidate)
-            current = service.read_current(paths)
-            if Path(str(current["runtime"])).resolve() != runtime:
+            try:
+                paths = service.managed_paths(candidate)
+                current = service.read_current(paths)
+                if Path(str(current["runtime"])).resolve() != runtime:
+                    raise UninstallError(
+                        "Gusto läuft nicht aus der aktiven verwalteten Version."
+                    )
+                application = candidate
+                install_state = service.read_state(paths)
+            except service.ServiceError as error:
+                # The CLI maps only UninstallError for the --json contract;
+                # a raw ServiceError would escape as a traceback.
                 raise UninstallError(
-                    "Gusto läuft nicht aus der aktiven verwalteten Version."
-                )
-            application = candidate
-            install_state = service.read_state(paths)
+                    "Die verwaltete Installation kann nicht verifiziert "
+                    f"werden: {error}"
+                ) from error
             break
 
     if application is None or install_state is None:

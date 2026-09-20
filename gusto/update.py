@@ -553,12 +553,17 @@ def _perform_update_locked(
                 extracted = temp / "python"
                 extracted.mkdir()
                 extract_python_runtime(package, extracted)
-                base_python = service.install_managed_python(
-                    paths,
-                    extracted / "runtime",
-                    release_python_version,
-                    release_python_sha256,
-                )
+                try:
+                    base_python = service.install_managed_python(
+                        paths,
+                        extracted / "runtime",
+                        release_python_version,
+                        release_python_sha256,
+                    )
+                except service.ServiceError as error:
+                    # Still pre-activation, so a plain conversion without
+                    # rollback keeps the CLI JSON contract intact.
+                    raise UpdateError(str(error)) from error
                 new_python_root = service.managed_python_root(
                     paths, release_python_version,
                 )
@@ -590,6 +595,13 @@ def _perform_update_locked(
                 python_version=python_version,
                 server_url_value=service.server_url(updated_state),
             )
+        except service.ServiceError as error:
+            # Nothing has been switched yet, so this stays a plain
+            # conversion without rollback; the venv build and runtime checks
+            # must not escape as a raw ServiceError under --json.
+            if new_python_root is not None:
+                cleanup_python_runtimes(paths)
+            raise UpdateError(str(error)) from error
         except Exception:
             if new_python_root is not None:
                 cleanup_python_runtimes(paths)
@@ -693,9 +705,15 @@ def run_update(
     health_waiter: Callable[..., dict[str, Any]] = service.wait_for_health,
 ) -> dict[str, object]:
     """Check or atomically activate the latest verified public release."""
-    paths = service.managed_paths(app_root)
-    state = service.read_state(paths)
-    current = service.read_current(paths)
+    try:
+        paths = service.managed_paths(app_root)
+        state = service.read_state(paths)
+        current = service.read_current(paths)
+    except service.ServiceError as error:
+        # The CLI maps only UpdateError and ValueError/OSError for the
+        # --json contract; a raw ServiceError would escape as a traceback
+        # instead of the structured {ok:false, error} object.
+        raise UpdateError(str(error)) from error
     current_version = str(current["version"])
     location = manifest_url or str(
         state.get("manifest_url") or DEFAULT_MANIFEST_URL
@@ -719,7 +737,10 @@ def run_update(
     with update_lock(paths):
         # Another process may have completed the same release before this
         # caller acquired the lock.
-        locked_current = service.read_current(paths)
+        try:
+            locked_current = service.read_current(paths)
+        except service.ServiceError as error:
+            raise UpdateError(str(error)) from error
         locked_version = str(locked_current["version"])
         if service.version_key(latest) <= service.version_key(locked_version):
             return {
