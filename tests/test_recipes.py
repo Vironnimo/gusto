@@ -253,6 +253,14 @@ def main():
     fake_source = HOME / "fake.png"
     fake_source.write_bytes(b"not an image")
     expect_valueerror(core.add_recipe_image, pasta.slug, fake_source)
+    # Store hygiene: role and caption are persisted as single lines (matching
+    # normalizes whitespace anyway), so the write paths must reject breaks.
+    expect_valueerror(core.add_recipe_image, pasta.slug, second_source, role="a\nb")
+    expect_valueerror(core.add_recipe_image, pasta.slug, second_source, caption="a\nb")
+    expect_valueerror(core.update_recipe_image, pasta.slug, finished.id, caption="a\nb")
+    expect_valueerror(core.update_recipe_image, pasta.slug, finished.id, role="a\rb")
+    check(core.get_recipe_image(pasta.slug, finished.id).caption == "Fertig angerichtet",
+          "a rejected multiline caption must not mutate the stored image")
 
     recent_cook = (date.today() - timedelta(days=1)).isoformat()
     older_cook = (date.today() - timedelta(days=3)).isoformat()
@@ -368,6 +376,47 @@ def main():
         core.log_path().write_text(log_backup, encoding="utf-8")
     check(core.check()["ok"] is True,
           "restored data files must check cleanly again")
+
+    # Regression: persisted entries with broken field types must surface as
+    # integrity errors, not as raw KeyError/AttributeError loader crashes.
+    index_backup = core.index_path().read_text(encoding="utf-8")
+    try:
+        for broken_index in (
+            '[{"slug": "x", "title": null}]',
+            '[{"slug": "x", "title": "T", "images": {}}]',
+            '[{"slug": "x", "title": "T", "images": [{"id": 5, "filename": "x.png"}]}]',
+        ):
+            core.index_path().write_text(broken_index, encoding="utf-8")
+            expect_valueerror(core.load_recipes)
+            corrupted = core.check()
+            check(any("recipes.json" in message
+                      for message in corrupted["invalid_data_files"]),
+                  "broken recipe entry field types must be a data-file error")
+    finally:
+        core.index_path().write_text(index_backup, encoding="utf-8")
+    log_backup = core.log_path().read_text(encoding="utf-8")
+    try:
+        core.log_path().write_text(
+            json.dumps([{"slug": pasta.slug}]), encoding="utf-8")
+        expect_valueerror(core.load_log)
+        corrupted = core.check()
+        check(any("log.json" in message
+                  for message in corrupted["invalid_data_files"]),
+              "a log entry without 'date' must be reported as a data-file error")
+    finally:
+        core.log_path().write_text(log_backup, encoding="utf-8")
+
+    # The 150-character title cap keeps the atomic writer's ".<slug>.md.<tmp>"
+    # name inside the Windows filename limit (verified live: longer titles
+    # crashed recipe.create with a raw OSError on save).
+    long_title = "L" * 150
+    long_recipe = core.add_recipe(long_title)
+    check(long_recipe.title == long_title,
+          "a 150-character title must stay accepted")
+    expect_valueerror(core.add_recipe, "K" * 151)
+    expect_valueerror(core.update_recipe, long_recipe.slug, title="K" * 151)
+    check(core.get(long_recipe.slug).title == long_title,
+          "a rejected overlong title must not mutate the recipe")
 
     (core.recipes_dir() / "orphan.md").write_text("# Orphan\n", encoding="utf-8")
     core.recipe_file(curry.slug).unlink()

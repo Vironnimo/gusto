@@ -507,14 +507,18 @@ def _image_set(arguments: dict, _attachments: dict) -> dict:
         arguments, allowed={"slug", "id", "role", "caption"},
         required={"slug", "id"},
     )
-    if "role" not in values and "caption" not in values:
-        raise CommandError("Gib 'role' und/oder 'caption' an.")
     slug = _string(values, "slug")
+    # Null counts as absent: {"role": null} alone is no change and must be
+    # rejected like the sibling update operations, not acknowledged as a no-op.
+    role = _string(values, "role", optional=True)
+    caption = _string(values, "caption", optional=True)
+    if role is None and caption is None:
+        raise CommandError("Gib 'role' und/oder 'caption' an.")
     image = core.update_recipe_image(
         slug,
         _string(values, "id"),
-        role=_string(values, "role", optional=True),
-        caption=_string(values, "caption", optional=True),
+        role=role,
+        caption=caption,
     )
     _, cover_id = core.list_recipe_images(slug)
     return _image_dict(image, cover_id)

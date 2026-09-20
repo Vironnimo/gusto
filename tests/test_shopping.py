@@ -223,6 +223,71 @@ def main():
     check([item.text for item in imported_after_remove] == ["Pfeffer"],
           "removing the sourced item must allow a fresh recipe import")
 
+    # --- single-line hygiene -------------------------------------------------
+    # Newlines in free text would persist as store dirt (matching normalizes
+    # whitespace anyway), so the write paths must reject them.
+    count_before_newline_probe = len(core.shopping_load())
+    for multiline in ("a\nb", "a\rb"):
+        expect_valueerror(core.shopping_add, multiline)
+    expect_valueerror(core.shopping_add, "Reis", quantity="1\nkg")
+    expect_valueerror(core.shopping_add_many, ["ok", "a\nb"])
+    check(len(core.shopping_load()) == count_before_newline_probe,
+          "rejected multiline texts must not mutate the shopping list.")
+
+    # --- shopping_merge: status fields are required, not defaulted ----------
+    full_item = {
+        "id": "a" * 32, "text": "Probe-Item", "quantity": "",
+        "checked": False, "deleted": False, "source": None,
+        "created_at": "2026-09-18T10:00:00Z",
+        "updated_at": "2026-09-18T10:00:00Z",
+    }
+    merged = core.shopping_merge([dict(full_item)])
+    check(next(item for item in merged if item.id == full_item["id"]).text
+          == "Probe-Item",
+          "a complete valid item must merge unchanged.")
+    for broken in (
+        # Verified live: a minimal item was persisted with empty timestamps
+        # and an implicit deleted=False, contradicting the HTTP-400 contract.
+        {"id": "b" * 32, "text": "Probe-Item"},
+        {"id": "b" * 32, "text": "Probe-Item", "checked": False, "deleted": False,
+         "created_at": "", "updated_at": "2026-09-18T10:00:00Z"},
+        {"id": "b" * 32, "text": "Probe-Item", "checked": False, "deleted": False,
+         "created_at": "2026-09-18T10:00:00Z"},
+    ):
+        try:
+            core.shopping_merge([dict(broken)])
+            raise AssertionError(
+                f"missing status fields must be rejected: {broken!r}")
+        except ValueError as error:
+            check("Einkaufslisten-Eintrag" in str(error)
+                  and ("Status" in str(error) or "Zeitstempel" in str(error)),
+                  "a minimal item must be rejected with a clear German message.")
+    check(all(item.id != "b" * 32 for item in core.shopping_load()),
+          "a rejected minimal item must not be persisted.")
+
+    # --- favorites single-line hygiene ---------------------------------------
+    expect_valueerror(core.favorite_add_need, "a\nb")
+    need = core.favorite_add_need("Frische")
+    expect_valueerror(core.favorite_update_need, need.id, "a\nb")
+    expect_valueerror(core.favorite_add_alias, need.id, "a\nb")
+    check(core.favorite_get_need("Frische").aliases == [],
+          "rejected multiline aliases must not be stored.")
+    expect_valueerror(core.favorite_add_product, need.id, "a\nb", brand="Marke")
+    expect_valueerror(core.favorite_add_product, need.id, "Milch", brand="a\nb")
+    expect_valueerror(core.favorite_add_product, need.id, "Milch", brand="Marke",
+                      store="a\nb")
+    expect_valueerror(core.favorite_add_product, need.id, "Milch", brand="Marke",
+                      note="a\nb")
+    product = core.favorite_add_product(need.id, "Joghurt", brand="Marke")
+    expect_valueerror(core.favorite_update_product, need.id, product.id,
+                      store="a\nb")
+    expect_valueerror(core.favorite_update_product, need.id, product.id,
+                      note="a\nb")
+    stored_need = core.favorite_get_need("Frische")
+    check(stored_need.products[0].store == ""
+          and stored_need.products[0].note == "",
+          "rejected multiline product fields must not be stored.")
+
     print(f"OK - {checks} checks passed (GUSTO_HOME={core.project_root()})")
 
 

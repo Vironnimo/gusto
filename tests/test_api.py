@@ -358,6 +358,18 @@ def main():
         "role": "step", "caption": None,
     })
     check(changed_image["role"] == "step", "image.set must update metadata")
+    null_change = command(
+        "image.set", {"slug": soup["slug"], "id": image["id"], "role": None},
+        status=400,
+    )
+    check("role" in null_change["error"],
+          "image.set must reject a null-only change like its sibling updates")
+    cleared_caption = command("image.set", {
+        "slug": soup["slug"], "id": image["id"],
+        "role": None, "caption": "",
+    })
+    check(cleared_caption["role"] == "step" and cleared_caption["caption"] == "",
+          "image.set must still accept an empty caption as a real change")
     cover = command(
         "image.cover", {"slug": soup["slug"], "id": image["id"]},
     )
@@ -596,6 +608,41 @@ def main():
 
     asyncio.run(check_event_stream())
     check_compacted_event_replay()
+
+    # Regression: corrupted persisted entries must surface as German 400
+    # errors and check.run integrity findings, not as raw 500s from crashing
+    # loaders (verified live with a log entry lacking 'date' and a null
+    # index title).
+    index_backup = core.index_path().read_text(encoding="utf-8")
+    log_backup = (
+        core.log_path().read_text(encoding="utf-8")
+        if core.log_path().exists() else None
+    )
+    try:
+        core.index_path().write_text(
+            json.dumps([{"slug": "x", "title": None}]), encoding="utf-8")
+        command("catalog.list", status=400)
+        reported = command("check.run")
+        check(any("recipes.json" in message
+                  for message in reported["invalid_data_files"]),
+              "check.run must report a null-title index entry as an "
+              "integrity error")
+        core.index_path().write_text(index_backup, encoding="utf-8")
+        core.log_path().write_text(
+            json.dumps([{"slug": "x"}]), encoding="utf-8")
+        log_error = command("log.list", status=400)
+        check("log.json" in log_error["error"],
+              "log.list must map a corrupted log to a German 400 error")
+        reported = command("check.run")
+        check(any("log.json" in message
+                  for message in reported["invalid_data_files"]),
+              "check.run must report a broken log entry as an integrity error")
+    finally:
+        core.index_path().write_text(index_backup, encoding="utf-8")
+        if log_backup is None:
+            core.log_path().unlink(missing_ok=True)
+        else:
+            core.log_path().write_text(log_backup, encoding="utf-8")
 
     final_health = client.get("/api/v1/health").json()
     check(final_health["revision"] > 0,

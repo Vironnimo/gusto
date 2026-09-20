@@ -520,8 +520,21 @@ class RecipeImage:
 
     @classmethod
     def from_dict(cls, data: dict) -> "RecipeImage":
+        if not isinstance(data, dict):
+            raise ValueError(
+                "Ungültiges Bild in einem Rezept-Eintrag: JSON-Objekt erwartet."
+            )
         allowed = {f.name for f in fields(cls)}
-        return cls(**{key: value for key, value in data.items() if key in allowed})
+        filtered = {key: value for key, value in data.items() if key in allowed}
+        # api.py und check() lesen id/filename als Strings; ein gebrochener
+        # Typ im Speicher muss als Datenfehler auflaufen, nicht als Crash.
+        if (not isinstance(filtered.get("id"), str)
+                or not isinstance(filtered.get("filename"), str)):
+            raise ValueError(
+                "Ungültiges Bild in einem Rezept-Eintrag: "
+                "'id' und 'filename' müssen Texte sein."
+            )
+        return cls(**filtered)
 
 
 @dataclass
@@ -560,8 +573,16 @@ class Recipe:
     def from_dict(cls, d: dict) -> "Recipe":
         allowed = {f.name for f in fields(cls)}
         values = {k: v for k, v in d.items() if k in allowed}
-        values["images"] = [RecipeImage.from_dict(image)
-                            for image in values.get("images", [])]
+        # api.py sortiert nach title und check() liest images; ein nicht
+        # ladbarer Eintrag muss als Datenfehler sichtbar werden, statt beim
+        # Lesen mit raw KeyError/AttributeError den ganzen Aufruf zu crashen.
+        if (not isinstance(values.get("title"), str)
+                or not values["title"].strip()):
+            raise ValueError("'title' muss ein nicht-leerer Text sein.")
+        images = values.get("images", [])
+        if not isinstance(images, list):
+            raise ValueError("'images' muss eine Liste sein.")
+        values["images"] = [RecipeImage.from_dict(image) for image in images]
         return cls(**values)
 
 
@@ -664,7 +685,12 @@ def load_recipes() -> list[Recipe]:
                 f"Ungültiger Rezeptkatalog in '{p.name}': "
                 "jeder Eintrag muss ein JSON-Objekt sein."
             )
-        recipes.append(Recipe.from_dict(entry))
+        try:
+            recipes.append(Recipe.from_dict(entry))
+        except ValueError as error:
+            raise ValueError(
+                f"Ungültiger Rezeptkatalog in '{p.name}': {error}"
+            ) from error
     return recipes
 
 
@@ -860,6 +886,11 @@ def _template(title: str) -> str:
     return f"# {title}\n\n## Zutaten\n\n- \n\n## Zubereitung\n\n1. \n"
 
 
+# Slugs come straight from the title, so the title length is what keeps the
+# atomic writer's ".<slug>.md.<tmp>" name inside the Windows filename limit.
+MAX_RECIPE_TITLE_LENGTH = 150
+
+
 def _recipe_title(value: str) -> str:
     """Return a normalized non-empty, single-line recipe title."""
     if (not isinstance(value, str) or not value.strip()
@@ -867,7 +898,15 @@ def _recipe_title(value: str) -> str:
         raise ValueError(
             "Das Rezept braucht einen nicht-leeren, einzeiligen Titel."
         )
-    return value.strip()
+    title = value.strip()
+    # Der Slug entsteht aus dem Titel; der atomare Schreiber nutzt einen
+    # Temporärnamen ".<slug>.md.<tmp>", der oberhalb des Windows-Limits
+    # (255 Zeichen pro Dateinamen) zum OSError beim Schreiben führen würde.
+    if len(title) > MAX_RECIPE_TITLE_LENGTH:
+        raise ValueError(
+            f"Der Titel darf höchstens {MAX_RECIPE_TITLE_LENGTH} Zeichen lang sein."
+        )
+    return title
 
 
 def _recipe_tags(values) -> list[str]:
@@ -911,6 +950,16 @@ def _positive_recipe_number(value: int | None, label: str) -> None:
     if value is not None and (
             isinstance(value, bool) or not isinstance(value, int) or value < 1):
         raise ValueError(f"{label} muss eine positive ganze Zahl sein.")
+
+
+def _no_newlines(value: str, label: str) -> None:
+    """Reject embedded line breaks in single-line free-text fields.
+
+    Store hygiene only: matching already normalizes whitespace, so persisted
+    line breaks change nothing except rendering dirt in CLI lists and web rows.
+    """
+    if "\n" in value or "\r" in value:
+        raise ValueError(f"{label} darf keine Zeilenumbrüche enthalten.")
 
 
 # --- Categories (facets) ----------------------------------------------------
@@ -1293,6 +1342,16 @@ def load_log(days: int | None = None) -> list[dict]:
                 f"Ungültiges Kochprotokoll in '{p.name}': "
                 "JSON-Liste von Objekten erwartet."
             )
+        # 'date' treibt Filter und Sortierung; ein gebrochener Eintrag würde
+        # sonst mit raw KeyError den Loader (und check()) crashen, statt als
+        # Datenfehler gemeldet zu werden.
+        for entry in entries:
+            if (not isinstance(entry.get("date"), str)
+                    or not isinstance(entry.get("slug"), str)):
+                raise ValueError(
+                    f"Ungültiges Kochprotokoll in '{p.name}': "
+                    "jeder Eintrag braucht ein Textfeld 'date' und 'slug'."
+                )
     if days is not None:
         cutoff = (date.today() - timedelta(days=days)).isoformat()
         entries = [e for e in entries if e["date"] >= cutoff]
@@ -1676,10 +1735,13 @@ def add_recipe_image(slug: str, source: str | Path, role: str = "gallery",
             f"Datei ist kein gültiges {suffix.lstrip('.').upper()}-Bild: '{source_path}'."
         )
 
+    clean_role = role.strip() or "gallery"
+    clean_caption = caption.strip()
+    _no_newlines(clean_role, "Die Bildrolle")
+    _no_newlines(clean_caption, "Die Bildbeschreibung")
     image = RecipeImage(
-        id=uuid.uuid4().hex,
-        filename="", role=role.strip() or "gallery",
-        caption=caption.strip(), created_at=_now_iso(),
+        id=uuid.uuid4().hex, filename="", role=clean_role,
+        caption=clean_caption, created_at=_now_iso(),
     )
     make_cover = cover or recipe.cover_image is None
     image.filename = f"{image.id}{suffix}"
@@ -1709,9 +1771,13 @@ def update_recipe_image(slug: str, image_id: str, role: str | None = None,
     if image is None:
         raise ValueError(f"Kein Bild mit id '{image_id}' bei Rezept '{slug}'.")
     if role is not None:
-        image.role = role.strip() or "gallery"
+        clean_role = role.strip() or "gallery"
+        _no_newlines(clean_role, "Die Bildrolle")
+        image.role = clean_role
     if caption is not None:
-        image.caption = caption.strip()
+        clean_caption = caption.strip()
+        _no_newlines(clean_caption, "Die Bildbeschreibung")
+        image.caption = clean_caption
     _save_recipes_unlocked(recipes)
     return image
 
@@ -2146,6 +2212,7 @@ def favorite_add_need(name: str, aliases: list[str] | None = None) -> ShoppingNe
     name = (name or "").strip()
     if not name:
         raise ValueError("Der Einkaufsbedarf braucht einen Namen.")
+    _no_newlines(name, "Der Name eines Einkaufsbedarfs")
     needs = favorites_load()
     owner = _favorite_label_owner(name, needs)
     if owner is not None:
@@ -2180,6 +2247,7 @@ def favorite_update_need(identifier: str, name: str) -> ShoppingNeed:
     name = (name or "").strip()
     if not name:
         raise ValueError("Der Einkaufsbedarf braucht einen Namen.")
+    _no_newlines(name, "Der Name eines Einkaufsbedarfs")
     owner = _favorite_label_owner(name, needs, except_need_id=need.id)
     if owner is not None:
         raise ValueError(f"'{name}' gehört bereits zu '{owner.name}'.")
@@ -2203,6 +2271,7 @@ def favorite_add_alias(identifier: str, alias: str) -> ShoppingNeed:
     alias = (alias or "").strip()
     if not alias:
         raise ValueError("Der Alias darf nicht leer sein.")
+    _no_newlines(alias, "Ein Alias")
     normalized = normalize_shopping_text(alias)
     own_labels = {normalize_shopping_text(value)
                   for value in [need.name, *need.aliases]}
@@ -2267,9 +2336,13 @@ def favorite_add_product(identifier: str, name: str, *, brand: str = "",
     name = (name or "").strip()
     if not name:
         raise ValueError("Das Lieblingsprodukt braucht einen Namen.")
+    _no_newlines(name, "Der Produktname")
     brand = (brand or "").strip()
     if not brand:
         raise ValueError("Das Lieblingsprodukt braucht eine Marke.")
+    _no_newlines(brand, "Die Marke")
+    _no_newlines(store.strip(), "Das Geschäft")
+    _no_newlines(note.strip(), "Die Notiz")
     product = FavoriteProduct(
         id=new_id(), name=name, brand=brand, store=store.strip(),
         note=note.strip(), created_at=_now_iso(),
@@ -2302,16 +2375,22 @@ def favorite_update_product(identifier: str, product_id: str, *,
         cleaned_name = name.strip()
         if not cleaned_name:
             raise ValueError("Das Lieblingsprodukt braucht einen Namen.")
+        _no_newlines(cleaned_name, "Der Produktname")
         product.name = cleaned_name
     if brand is not None:
         cleaned_brand = brand.strip()
         if not cleaned_brand:
             raise ValueError("Das Lieblingsprodukt braucht eine Marke.")
+        _no_newlines(cleaned_brand, "Die Marke")
         product.brand = cleaned_brand
     if store is not None:
-        product.store = store.strip()
+        cleaned_store = store.strip()
+        _no_newlines(cleaned_store, "Das Geschäft")
+        product.store = cleaned_store
     if note is not None:
-        product.note = note.strip()
+        cleaned_note = note.strip()
+        _no_newlines(cleaned_note, "Die Notiz")
+        product.note = cleaned_note
 
     old_filename = product.image_filename
     copied: Path | None = None
@@ -2463,7 +2542,18 @@ def _shopping_append(entries: list[tuple[str, str]],
 def _shopping_text(value: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("Ein Einkaufslisten-Eintrag braucht einen Text.")
+    _no_newlines(value, "Der Text eines Einkaufslisten-Eintrags")
     return value.strip()
+
+
+def _shopping_quantity(value: str) -> None:
+    """Validate the optional single-line quantity label (text has its own
+    validator; matching normalizes whitespace, so this is store hygiene)."""
+    if (not isinstance(value, str) or "\n" in value or "\r" in value):
+        raise ValueError(
+            "Die Menge eines Einkaufslisten-Eintrags muss ein "
+            "einzeiliger Text sein."
+        )
 
 
 def shopping_add(text: str, quantity: str = "", source: str | None = None) -> ShoppingItem:
@@ -2475,6 +2565,7 @@ def shopping_add(text: str, quantity: str = "", source: str | None = None) -> Sh
     def add():
         if source is not None and get(source) is None:
             raise ValueError(f"Kein Rezept mit Slug '{source}'.")
+        _shopping_quantity(quantity)
         return _shopping_append([(_shopping_text(text), quantity)], source=source)[0]
     return _execute_locked_mutation(
         resources, add, event_resources=("shopping",),
@@ -2630,12 +2721,21 @@ def shopping_merge(remote_items: list[dict]) -> list[ShoppingItem]:
             raise ValueError("Ein Einkaufslisten-Eintrag braucht einen Text.")
         if not isinstance(remote.quantity, str):
             raise ValueError("Die Menge eines Einkaufslisten-Eintrags ist ungültig.")
-        if not isinstance(remote.checked, bool) or not isinstance(remote.deleted, bool):
-            raise ValueError("Der Status eines Einkaufslisten-Eintrags ist ungültig.")
+        # Ohne die Statusfelder blieben leere Zeitstempel stehen und eine nur
+        # implizit abwesende Tombstone-Markierung würde ein gelöschtes Item
+        # beim nächsten Sync wiederbeleben; deshalb wird Anwesenheit geprüft.
+        if (not isinstance(raw.get("checked"), bool)
+                or not isinstance(raw.get("deleted"), bool)):
+            raise ValueError(
+                "Der Status eines Einkaufslisten-Eintrags ist ungültig oder fehlt."
+            )
         if remote.source is not None and not isinstance(remote.source, str):
             raise ValueError("Die Quelle eines Einkaufslisten-Eintrags ist ungültig.")
-        if not isinstance(remote.created_at, str) or not isinstance(remote.updated_at, str):
-            raise ValueError("Der Zeitstempel eines Einkaufslisten-Eintrags ist ungültig.")
+        if (not isinstance(raw.get("created_at"), str) or not raw["created_at"]
+                or not isinstance(raw.get("updated_at"), str) or not raw["updated_at"]):
+            raise ValueError(
+                "Der Zeitstempel eines Einkaufslisten-Eintrags ist ungültig oder fehlt."
+            )
         local = merged.get(remote.id)
         # id only remote -> take it over.
         # id on both sides -> later updated_at wins;
