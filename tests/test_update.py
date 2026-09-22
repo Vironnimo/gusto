@@ -11,7 +11,7 @@ import threading
 import time
 import urllib.request
 import zipfile
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import StringIO
 from pathlib import Path
@@ -70,6 +70,35 @@ def fixture(
         },
     }), encoding="utf-8")
     return manifest
+
+
+def installable_wheel(root: Path, version: str) -> Path:
+    """Build a dependency-free wheel to exercise real venv entry points."""
+    wheel = root / f"gusto-{version}-py3-none-any.whl"
+    metadata = f"gusto-{version}.dist-info"
+    files = {
+        "gusto/__init__.py": f'__version__ = "{version}"\n',
+        "gusto/cli.py": 'def main():\n    print("Gusto fixture launcher")\n',
+        f"{metadata}/METADATA": (
+            f"Metadata-Version: 2.1\nName: gusto\nVersion: {version}\n"
+            "Provides-Extra: web\n"
+        ),
+        f"{metadata}/WHEEL": (
+            "Wheel-Version: 1.0\nGenerator: gusto-test\n"
+            "Root-Is-Purelib: true\nTag: py3-none-any\n"
+        ),
+        f"{metadata}/entry_points.txt": (
+            "[console_scripts]\ngusto = gusto.cli:main\n"
+            "[gui_scripts]\ngusto-autostart = gusto.cli:main\n"
+        ),
+    }
+    files[f"{metadata}/RECORD"] = "".join(
+        f"{name},,\n" for name in (*files, f"{metadata}/RECORD")
+    )
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for name, content in files.items():
+            archive.writestr(name, content)
+    return wheel
 
 
 with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
@@ -148,6 +177,49 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
           "current and previous versions must remain side by side")
     check(service.read_state(paths)["data_dir"] == os.fspath(data),
           "updates must preserve the data path")
+
+    # A competing update can finish while this caller fetches the manifest.
+    # The current pointer and Python state must be read together under the
+    # lock, including the state used when a later activation rolls back.
+    refreshed_paths = service.managed_paths(root / "refreshed-state-app")
+    refreshed_paths.version("1.0.0").mkdir(parents=True)
+    first_state = {
+        "data_dir": os.fspath(data), "host": "127.0.0.1", "port": 8111,
+        "python_runtime": service.system_python_state(),
+    }
+    service.write_state(refreshed_paths, first_state)
+    service.write_current(refreshed_paths, "1.0.0")
+    refreshed_state = {
+        **first_state,
+        "python_runtime": {**first_state["python_runtime"], "version": "3.14.1"},
+    }
+    download_started = False
+    recorded_states = []
+
+    def download_after_other_update(location):
+        global download_started
+        if not download_started:
+            download_started = True
+            refreshed_paths.version("1.0.1").mkdir()
+            service.write_current(refreshed_paths, "1.0.1")
+            service.write_state(refreshed_paths, refreshed_state)
+        return update.fetch_bytes(location)
+
+    def refreshed_installer(paths_arg, state):
+        recorded_states.append(dict(state))
+        return {"ok": True}
+
+    update.run_update(
+        app_root=refreshed_paths.app_root, manifest_url=os.fspath(manifest),
+        downloader=download_after_other_update,
+        runtime_installer=runtime_installer,
+        service_controller=controller,
+        service_installer=refreshed_installer,
+        health_waiter=lambda *args, **kwargs: {"ok": True},
+    )
+    check(recorded_states[0]["python_runtime"] == refreshed_state["python_runtime"],
+          "the runtime activated after a concurrent update must use the "
+          "Python state re-read under the same lock as its current pointer")
 
     bad_archive = root / "bad.zip"
     with zipfile.ZipFile(bad_archive, "w") as bundle:
@@ -323,10 +395,44 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
     check(installed == stage_paths.version("2.0.0")
           and not abandoned.exists()
           and not list(stage_paths.versions.glob(".staging-*")),
-          "runtime must publish by atomic staging rename and recover abandoned staging")
+          "runtime must use its permanent version path and recover abandoned staging")
     check(settings["server_url"] == "http://127.0.0.1:9123"
           and settings["data_dir"] == os.fspath(data.resolve()),
           "updated runtime must retain the configured server and data locations")
+
+    # A mocked pip runner cannot detect broken absolute paths in generated
+    # launchers. Exercise the real console and GUI entry points without any
+    # network dependency or service registration.
+    actual_paths = service.managed_paths(root / "real runtime app")
+    fixture_wheel = installable_wheel(root, "7.8.9")
+    offline_environment = {
+        **os.environ,
+        "PIP_NO_INDEX": "1",
+        "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+    }
+
+    def offline_runner(command, **kwargs):
+        return subprocess.run(command, env=offline_environment, cwd=root, **kwargs)
+
+    actual_runtime = update.install_runtime(
+        actual_paths, "7.8.9", fixture_wheel, data,
+        base_python=Path(sys.executable),
+        python_version=".".join(map(str, sys.version_info[:3])),
+        runner=offline_runner,
+    )
+    for launcher in (
+        service.runtime_command(actual_runtime),
+        (service.runtime_autostart(actual_runtime) if os.name == "nt"
+         else actual_runtime / "bin" / "gusto-autostart"),
+    ):
+        launched = subprocess.run(
+            [os.fspath(launcher)], cwd=root,
+            capture_output=True, text=True, encoding="utf-8",
+        )
+        check(launched.returncode == 0
+              and "Gusto fixture launcher" in launched.stdout,
+              f"the published launcher must start from its permanent venv: "
+              f"{launcher}\n{launched.stdout}{launched.stderr}")
 
     with update.update_lock(paths):
         try:
@@ -540,6 +646,56 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
           and contended_before == contended_after,
           "a concurrent update must stop the installer with a JSON error "
           "before it mutates the app root")
+
+    for concurrent_kind in ("managed", "foreign"):
+        concurrent_paths = service.managed_paths(root / f"concurrent-{concurrent_kind}")
+        concurrent_data = root / f"concurrent-{concurrent_kind}-data"
+        real_lock = update.update_lock
+        concurrent_snapshot = {}
+
+        @contextmanager
+        def finish_before_lock_acquisition(paths_arg):
+            paths_arg.app_root.mkdir(parents=True)
+            if concurrent_kind == "managed":
+                paths_arg.version(gusto.__version__).mkdir(parents=True)
+                service.write_state(paths_arg, {
+                    "data_dir": os.fspath(concurrent_data),
+                    "host": "127.0.0.1", "port": 8222,
+                    "python_runtime": service.system_python_state(),
+                })
+                service.write_current(paths_arg, gusto.__version__)
+            sentinel = paths_arg.app_root / "owned-by-other-process.txt"
+            sentinel.write_text("preserve me", encoding="utf-8")
+            concurrent_snapshot.update({
+                item.relative_to(paths_arg.app_root): item.read_bytes()
+                for item in paths_arg.app_root.rglob("*") if item.is_file()
+            })
+            with real_lock(paths_arg):
+                yield
+
+        concurrent_output = StringIO()
+        with (
+            patch.object(update, "update_lock", finish_before_lock_acquisition),
+            patch.object(install, "install_source_runtime") as unexpected_install,
+            patch.object(service, "remove_user_service") as unexpected_removal,
+            redirect_stdout(concurrent_output),
+        ):
+            concurrent_code = install.main([
+                "--install-dir", os.fspath(concurrent_paths.app_root),
+                "--data-dir", os.fspath(concurrent_data), "--json",
+            ])
+        concurrent_result = json.loads(concurrent_output.getvalue())
+        check(concurrent_code == 1 and concurrent_result["ok"] is False
+              and "zwischenzeitlich" in concurrent_result["error"]
+              and not unexpected_install.called and not unexpected_removal.called,
+              "a root claimed after preflight must be rejected before "
+              "installation or any service cleanup")
+        check(all(
+            (concurrent_paths.app_root / relative).read_bytes() == content
+            for relative, content in concurrent_snapshot.items()
+        ) and not concurrent_data.exists(),
+              "the competing installation and unrelated files must survive "
+              "without creating data directories")
 # ==== F2 end ====
 
 # ==== F4: stale update lock recovery ====

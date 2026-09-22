@@ -121,8 +121,8 @@ gusto update --check --json
 ```
 
 The update downloads and verifies the published manifest and Wheel, installs
-the new runtime in a per-app locked staging area, atomically publishes it
-side-by-side, stops the service, switches the current-version pointer, restarts,
+the new runtime at its final, inactive version path under the per-app lock,
+stops the service, atomically switches the current-version pointer, restarts,
 and checks both expected version and data path. Activation failure switches
 back and health-checks the prior version; JSON distinguishes `update_failed`
 with `rollback:true` from `rollback_failed`.

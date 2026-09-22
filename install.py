@@ -617,6 +617,27 @@ def main(argv: list[str] | None = None) -> int:
         # runtimes below app_root, so the shared lock also keeps the repair
         # decision below valid until the runtime is published.
         with gusto_update.update_lock(paths):
+            # A different installer may have completed after the preflight
+            # above. Never claim its installation as our own or let first-
+            # install error cleanup remove it using stale ownership state.
+            if (paths.state.is_file(), paths.current.is_file()) != (
+                has_state, has_current,
+            ):
+                _print_error(
+                    "Der Installationszustand wurde zwischenzeitlich verändert. "
+                    "Bitte Gusto erneut prüfen; für Updates 'gusto update' verwenden.",
+                    json_output=args.json,
+                )
+                return 1
+            if not managed_exists and any(
+                entry.name != ".update.lock" for entry in app_root.iterdir()
+            ):
+                _print_error(
+                    f"Der App-Pfad wurde zwischenzeitlich belegt: {app_root}. "
+                    "Es wurde nichts verändert.",
+                    json_output=args.json,
+                )
+                return 1
             if managed_exists and args.repair:
                 try:
                     state = service.read_state(paths)

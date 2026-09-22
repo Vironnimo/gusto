@@ -363,7 +363,7 @@ def install_runtime(
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     environment_builder: Callable[[Path], None] | None = None,
 ) -> Path:
-    """Build in staging, verify, then atomically publish one runtime."""
+    """Prepare one inactive runtime at its permanent path before activation."""
     runtime = paths.version(version)
     paths.versions.mkdir(parents=True, exist_ok=True)
     recover_staging(paths, version)
@@ -375,12 +375,14 @@ def install_runtime(
         environment_builder = lambda target: service.create_virtual_environment(
             base_python, target,
         )
-    staging = Path(tempfile.mkdtemp(
-        prefix=f".staging-{version}-", dir=paths.versions,
-    )).resolve()
+    # Virtual environments are not relocatable: pip's console/GUI launchers
+    # embed the absolute interpreter path. Build at the final version path,
+    # which remains inactive until the verified current pointer is switched.
+    # The per-app update lock protects this preparation, and an interrupted
+    # build has no verified marker so the next attempt safely rebuilds it.
     try:
-        environment_builder(staging)
-        python = service.runtime_python(staging)
+        environment_builder(runtime)
+        python = service.runtime_python(runtime)
         result = runner(
             [
                 os.fspath(python), "-m", "pip", "install",
@@ -394,11 +396,11 @@ def install_runtime(
                 + (result.stderr or result.stdout or f"Exit-Code {result.returncode}").strip()
             )
         write_runtime_settings(
-            staging, data_dir, server_url_value=server_url_value,
+            runtime, data_dir, server_url_value=server_url_value,
         )
         smoke = runner(
             [
-                os.fspath(python), "-c",
+                os.fspath(python), "-I", "-c",
                 "import gusto,sys; print(gusto.__version__); "
                 "raise SystemExit(gusto.__version__ != sys.argv[1])",
                 version,
@@ -411,7 +413,7 @@ def install_runtime(
                 + (smoke.stderr or smoke.stdout or
                    f"Exit-Code {smoke.returncode}").strip()
             )
-        marker = staging / ".gusto-runtime.json"
+        marker = runtime / ".gusto-runtime.json"
         marker.write_text(
             json.dumps({
                 "version": version,
@@ -421,9 +423,8 @@ def install_runtime(
                        ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
-        os.replace(staging, runtime)
     except Exception:
-        shutil.rmtree(staging, ignore_errors=True)
+        shutil.rmtree(runtime, ignore_errors=True)
         raise
     return runtime
 
@@ -739,6 +740,7 @@ def run_update(
         # caller acquired the lock.
         try:
             locked_current = service.read_current(paths)
+            locked_state = service.read_state(paths)
         except service.ServiceError as error:
             raise UpdateError(str(error)) from error
         locked_version = str(locked_current["version"])
@@ -755,7 +757,7 @@ def run_update(
         }
         return _perform_update_locked(
             paths,
-            state,
+            locked_state,
             locked_version,
             manifest,
             locked_result,
