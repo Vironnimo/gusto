@@ -6,10 +6,11 @@
 //                /api/...:     network-only (do not cache)
 //                recipe/archive media: network-only (moved images must stay current)
 //                favorite media: cache-first (filenames change on replacement)
-//                other GET:    cache-first (non-HTML only)
+//                static GET:   cache-first (active cache only)
+//                fetched HTML: network-only
 
 // The version bump also evicts HTML pages cached by the old fallthrough.
-const CACHE = "gusto-v12";
+const CACHE = "gusto-v15";
 
 const APP_SHELL = [
   "/shopping",
@@ -27,7 +28,9 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(CACHE)
-      .then((cache) => cache.addAll(APP_SHELL))
+      .then((cache) => cache.addAll(
+        APP_SHELL.map((url) => new Request(url, { cache: "reload" }))
+      ))
       .then(() => self.skipWaiting())
   );
 });
@@ -85,15 +88,18 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Other same-origin GET (static assets, favorite product media): cache-first.
-  // HTML responses are never cached: the live search fetches full "/?q=..."
-  // pages per keystroke, and such fetch()-mode subrequests are never read
-  // back from this cache (navigations use the network-first branch above and
-  // the app shell is precached), so caching them only grew the cache
-  // unboundedly. Non-HTML responses stay cached so favorite product photos
-  // remain recognizable offline (shopping-client also warms them via fetch).
+  // HTML fetched for live search or source metadata must be current, even
+  // when its URL is also part of the precached navigation fallback.
+  if (!url.pathname.startsWith("/static/")
+      && !url.pathname.startsWith("/media/favorite/")) {
+    event.respondWith(fetch(request));
+    return;
+  }
+
+  // Static assets and favorite product photos stay available offline. Reject
+  // HTML responses here too, e.g. an error page at a stale asset URL.
   event.respondWith(
-    caches.match(request).then(
+    caches.open(CACHE).then((cache) => cache.match(request)).then(
       (cached) =>
         cached ||
         fetch(request).then((response) => {

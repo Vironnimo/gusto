@@ -9,15 +9,17 @@ Extends scripts/browser_check.py with the phase-2 flows (PWA + offline + sync):
   SW cache
 
 Like browser_check.py everything runs against a THROWAWAY copy of the data
-(GUSTO_HOME -> .testdata-pwa); the real data stays untouched.
+(GUSTO_HOME -> a unique .testdata-pwa-* directory); real data stays untouched.
 
 Usage:  .venv/Scripts/python.exe scripts/pwa_check.py
 """
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -33,17 +35,16 @@ except Exception:
     pass
 
 ROOT = Path(__file__).resolve().parent.parent
-TESTDATA = ROOT / ".testdata-pwa"
-PORT = "8012"
+TESTDATA = Path(tempfile.mkdtemp(prefix=".testdata-pwa-", dir=ROOT))
+with socket.socket() as port_socket:
+    port_socket.bind(("127.0.0.1", 0))
+    PORT = str(port_socket.getsockname()[1])
 BASE = f"http://127.0.0.1:{PORT}"
 SHOPPING = TESTDATA / "data" / "shopping_list.json"
 FAVORITES = TESTDATA / "data" / "favorites.json"
 FAVORITE_IMAGE = "offline-spaghetti.png"
 
 # --- fresh throwaway data ---
-if TESTDATA.exists():
-    shutil.rmtree(TESTDATA)
-TESTDATA.mkdir()
 shutil.copytree(ROOT / "recipes", TESTDATA / "recipes")
 shutil.copytree(ROOT / "data", TESTDATA / "data")
 (TESTDATA / "images" / "_favorites").mkdir(parents=True)
@@ -77,10 +78,15 @@ def check(cond, msg):
 def wait_up(timeout=40):
     for _ in range(timeout * 5):
         try:
-            urllib.request.urlopen(BASE, timeout=1)
+            if srv.poll() is not None:
+                return False
+            with urllib.request.urlopen(BASE + "/api/v1/health", timeout=1) as response:
+                health = json.loads(response.read())
+            if Path(health.get("data_path", "")).resolve() != TESTDATA.resolve():
+                raise RuntimeError("Refusing to test a different Gusto data store")
             return True
-        except urllib.error.HTTPError:
-            return True
+        except RuntimeError:
+            raise
         except Exception:
             if srv.poll() is not None:
                 return False
@@ -415,7 +421,9 @@ try:
 
         # E2a: re-renders (sync/SSE) must not destroy a half-typed add input.
         reset_and_wait()
-        seed_shopping([mk("Milch", past_iso())])
+        sourced_milk = mk("Milch", past_iso())
+        sourced_milk["source"] = "rotes-linsen-dal"
+        seed_shopping([sourced_milk])
         ctx = browser.new_context()
         page = ctx.new_page()
         page.goto(BASE + "/shopping", wait_until="load")
@@ -431,6 +439,43 @@ try:
               "render survivor: foreign change re-renders the list")
         check(page.input_value("#shop-client input[name=text]") == "halb getippt",
               "render survivor: half-typed text survives the re-render")
+
+        page.evaluate("window.catalogDraftSurvived = true")
+        rename = page.request.post(BASE + "/api/v1/command", data={
+            "operation": "recipe.update",
+            "arguments": {"slug": "rotes-linsen-dal", "title": "Dal vom anderen Gerät"},
+        })
+        check(rename.ok, "catalog live: foreign recipe rename succeeds")
+        page.wait_for_function(
+            "() => [...document.querySelectorAll('.shop-source')]"
+            ".some(el => el.textContent.includes('Dal vom anderen Gerät'))")
+        check(page.evaluate("window.catalogDraftSurvived === true")
+              and page.input_value("#shop-client input[name=text]") == "halb getippt",
+              "catalog live: source title refresh preserves the draft without reloading")
+
+        milk = page.locator("#shop-client .shop-item", has_text="Milch")
+        milk.locator(".shop-box").focus()
+        page.keyboard.press("Space")
+        page.wait_for_function(
+            "() => document.activeElement.matches('.shop-item.is-done .shop-box')"
+            " && document.activeElement.closest('.shop-item').dataset.itemId === 'milch'")
+        # Inspect identity in one browser turn: a locator handle can refer to
+        # the previous row when a queued sync rebuilds it before evaluate runs.
+        check(page.evaluate(
+            "() => document.activeElement.matches('.shop-item.is-done .shop-box')"
+            " && document.activeElement.closest('.shop-item').dataset.itemId === 'milch'"),
+              "keyboard: checking an item keeps focus after moving it to completed")
+        check(wait_server(lambda its: any(i["text"] == "Milch" and i["checked"] for i in its)),
+              "keyboard: checked state reaches the server")
+        milk.locator(".shop-favorite-trigger").click()
+        page.wait_for_function("() => !document.getElementById('favorite-sheet').hidden")
+        api_sync([*api_get(), mk("Salz", now_iso())])
+        check(wait_item_once(page, "Salz"), "dialog: background list syncs while the sheet stays open")
+        page.keyboard.press("Escape")
+        check(page.evaluate(
+            "() => document.activeElement.matches('.shop-favorite-trigger')"
+            " && document.activeElement.closest('.shop-item').dataset.itemId === 'milch'"),
+              "dialog: closing restores focus even after the opener was re-rendered")
         ctx.close()
 
         # E2b: after adding, focus must land on the same, still-connected input.

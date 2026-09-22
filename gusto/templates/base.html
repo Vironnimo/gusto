@@ -21,6 +21,7 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body data-gusto-live data-gusto-revision="{{ gusto_change_state().revision }}">
+  <a class="skip-link" href="#main-content">Zum Inhalt</a>
   <header class="masthead">
     <a class="brand" href="/">
       <span class="brand-mark">❖</span>
@@ -47,7 +48,7 @@
       </a>
     </nav>
   </header>
-  <main class="wrap">
+  <main class="wrap" id="main-content" tabindex="-1">
     {% block content %}{% endblock %}
   </main>
   <footer class="footer">

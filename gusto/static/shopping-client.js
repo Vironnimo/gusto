@@ -143,6 +143,7 @@
   // Builds a <li class="shop-item"> exactly like the server version.
   function renderItem(item) {
     var li = el("li", "shop-item" + (item.checked ? " is-done" : ""));
+    li.dataset.itemId = item.id;
 
     // Checkbox "form" (just a button on the client, same classes).
     var check = el("div", "shop-check");
@@ -220,10 +221,35 @@
     return li;
   }
 
+  function rememberListFocus() {
+    var active = document.activeElement;
+    if (!clientEl.contains(active) || active.closest(".shop-add-panel")) return null;
+    var row = active.closest(".shop-item");
+    if (!row) return { index: 0, control: ".shop-box" };
+    return {
+      id: row.dataset.itemId,
+      index: Array.from(clientEl.querySelectorAll(".shop-item")).indexOf(row),
+      control: active.classList.contains("shop-x") ? ".shop-x"
+        : active.classList.contains("shop-favorite-trigger") ? ".shop-favorite-trigger"
+        : ".shop-box",
+    };
+  }
+
+  function restoreListFocus(saved) {
+    if (!saved) return;
+    var rows = Array.from(clientEl.querySelectorAll(".shop-item"));
+    var row = rows.find(function (node) { return node.dataset.itemId === saved.id; });
+    row = row || rows[Math.min(saved.index, rows.length - 1)];
+    var target = row ? row.querySelector(saved.control)
+      : clientEl.querySelector(".shop-add-panel summary");
+    if (target) target.focus({ preventScroll: true });
+  }
+
   // Render from localStorage: drop deleted, group open/done, sort by created_at
   // ascending.
   function render() {
     if (!clientEl) return;
+    var savedFocus = rememberListFocus();
 
     var items = loadItems().filter(function (it) {
       return !it.deleted;
@@ -261,6 +287,7 @@
 
     if (openItems.length === 0 && doneItems.length === 0) {
       clientEl.appendChild(renderEmpty());
+      restoreListFocus(savedFocus);
       return;
     }
 
@@ -319,6 +346,7 @@
 
     board.appendChild(renderClearAll());
     clientEl.appendChild(board);
+    restoreListFocus(savedFocus);
   }
 
   function renderAddPanel() {
@@ -368,12 +396,14 @@
     var inputText = el("input", "shop-add-text");
     inputText.type = "text";
     inputText.name = "text";
+    inputText.setAttribute("aria-label", "Artikel");
     inputText.placeholder = "Was brauchst du? z.B. 200 g Spaghetti";
     inputText.autocomplete = "off";
 
     var inputQuantity = el("input", "shop-add-quantity");
     inputQuantity.type = "text";
     inputQuantity.name = "quantity";
+    inputQuantity.setAttribute("aria-label", "Menge (optional)");
     inputQuantity.placeholder = "Menge";
     inputQuantity.autocomplete = "off";
 
@@ -544,9 +574,23 @@
     favoriteSheetContent.appendChild(grid);
   }
 
+  var favoriteBackground = [];
+  var favoriteReturnItem = null;
+
   function openFavoriteSheet(text) {
     if (!favoriteSheet || !favoriteSheetContent) return;
-    favoriteReturnFocus = document.activeElement;
+    var wasOpen = !favoriteSheet.hidden;
+    if (!wasOpen) {
+      favoriteReturnFocus = document.activeElement;
+      favoriteReturnItem = rememberListFocus();
+      favoriteBackground = Array.from(document.querySelectorAll(
+        ".masthead, .footer, .skip-link, main > :not(#favorite-sheet)"
+      )).filter(function (node) { return !node.inert; });
+      favoriteBackground.forEach(function (node) { node.inert = true; });
+    }
+    // Keep a draft in an open assignment form when another device changes
+    // the favorites catalog. Reopening the sheet picks up the new choices.
+    if (wasOpen && favoriteSheetContent.querySelector('form[data-dirty="true"]')) return;
     openFavoriteText = text;
     favoriteSheetContent.textContent = "";
     var need = findFavoriteNeed(text);
@@ -588,16 +632,22 @@
     favoriteSheet.hidden = false;
     document.body.classList.add("has-favorite-sheet");
     var closeButton = favoriteSheet.querySelector(".favorite-sheet-close");
-    if (closeButton) closeButton.focus();
+    if (closeButton && (!wasOpen || !favoriteSheet.contains(document.activeElement))) {
+      closeButton.focus();
+    }
   }
 
   function closeFavoriteSheet() {
     if (!favoriteSheet) return;
     favoriteSheet.hidden = true;
     document.body.classList.remove("has-favorite-sheet");
+    favoriteBackground.forEach(function (node) { node.inert = false; });
+    favoriteBackground = [];
     openFavoriteText = "";
-    if (favoriteReturnFocus && favoriteReturnFocus.focus) favoriteReturnFocus.focus();
+    if (favoriteReturnFocus && favoriteReturnFocus.isConnected) favoriteReturnFocus.focus();
+    else restoreListFocus(favoriteReturnItem || { index: 0, control: ".shop-favorite-trigger" });
     favoriteReturnFocus = null;
+    favoriteReturnItem = null;
   }
 
   function cacheFavoriteImages(needs) {
@@ -625,6 +675,29 @@
       .catch(function () {
         // Offline/server failure -> keep the last catalog in localStorage.
       });
+  }
+
+  var referenceRequest = 0;
+  function refreshSourceReferences() {
+    var request = ++referenceRequest;
+    // Source titles/archival links are presentation metadata in the HTML.
+    // Refresh that map without navigating away from an unfinished add form.
+    fetch("/shopping")
+      .then(function (response) {
+        if (!response.ok) throw new Error("source references unavailable");
+        return response.text();
+      })
+      .then(function (markup) {
+        if (request !== referenceRequest) return;
+        var doc = new DOMParser().parseFromString(markup, "text/html");
+        var node = doc.getElementById("shop-recipe-references");
+        if (!node) return;
+        var references = JSON.parse(node.textContent);
+        if (!references || typeof references !== "object" || Array.isArray(references)) return;
+        sourceReferences = references;
+        render();
+      })
+      .catch(function () { /* Keep the last known metadata while offline. */ });
   }
 
   // --- Mutations -------------------------------------------------------------
@@ -817,8 +890,25 @@
       });
     }
     document.addEventListener("keydown", function (event) {
-      if (event.key === "Escape" && favoriteSheet && !favoriteSheet.hidden) {
+      if (!favoriteSheet || favoriteSheet.hidden) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
         closeFavoriteSheet();
+      }
+      if (event.key === "Tab") {
+        var controls = Array.from(favoriteSheet.querySelectorAll(
+          '.favorite-sheet-panel button, .favorite-sheet-panel a[href], ' +
+          '.favorite-sheet-panel input, .favorite-sheet-panel select, .favorite-sheet-panel textarea'
+        )).filter(function (node) { return !node.disabled && node.getClientRects().length; });
+        var first = controls[0];
+        var last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     });
 
@@ -836,6 +926,7 @@
     resetRetry(); // fresh connection -> fresh retry budget
     sync();
     refreshFavoriteNeeds();
+    refreshSourceReferences();
   });
   document.addEventListener("gusto:change", function (event) {
     var resources = event.detail && Array.isArray(event.detail.resources)
@@ -843,8 +934,6 @@
       : [];
     if (resources.indexOf("shopping") !== -1) sync();
     if (resources.indexOf("favorites") !== -1) refreshFavoriteNeeds();
-    // Recipe-source titles and lifecycle links are embedded in the server page,
-    // not in the shopping sync schema. Reload only for that catalog metadata.
-    if (resources.indexOf("catalog") !== -1) window.location.reload();
+    if (resources.indexOf("catalog") !== -1) refreshSourceReferences();
   });
 })();

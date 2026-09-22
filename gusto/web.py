@@ -318,6 +318,7 @@ def index(request: Request, q: str = "", tag: list[str] = Query(default=[])):
         "recipes": recipes, "q": q,
         "tag_bar": _tag_bar(q, tag),
         "selected": bool(tag),
+        "selected_tags": tag,
         "selected_count": selected_count,
         "reset_href": _filter_href(q, []),
     })

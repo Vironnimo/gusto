@@ -1,7 +1,7 @@
 """End-to-end check of the web UI with Playwright.
 
 Starts its own uvicorn server against a THROWAWAY copy of the data
-(GUSTO_HOME -> .testdata), clicks through the app in real Chromium, takes
+(GUSTO_HOME -> a unique .testdata-browser-* directory), drives real Chromium, takes
 screenshots and checks the most important flows. The real sample data stays
 untouched.
 
@@ -10,8 +10,10 @@ Usage:  .venv/Scripts/python.exe scripts/browser_check.py
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -27,17 +29,16 @@ except Exception:
 
 ROOT = Path(__file__).resolve().parent.parent
 SHOTS = Path(__file__).resolve().parent / "shots"
-TESTDATA = ROOT / ".testdata"
-PORT = "8011"
+TESTDATA = Path(tempfile.mkdtemp(prefix=".testdata-browser-", dir=ROOT))
+with socket.socket() as port_socket:
+    port_socket.bind(("127.0.0.1", 0))
+    PORT = str(port_socket.getsockname()[1])
 BASE = f"http://127.0.0.1:{PORT}"
 PRODUCT_PHOTO = next((ROOT / "images" / "spaghetti-carbonara").glob("*.png"))
 
 SHOTS.mkdir(exist_ok=True)
 
 # --- fresh throwaway data ---
-if TESTDATA.exists():
-    shutil.rmtree(TESTDATA)
-TESTDATA.mkdir()
 shutil.copytree(ROOT / "recipes", TESTDATA / "recipes")
 shutil.copytree(ROOT / "data", TESTDATA / "data")
 if (ROOT / "images").exists():
@@ -65,10 +66,15 @@ def check(cond, msg):
 def wait_up(timeout=40):
     for _ in range(timeout * 5):
         try:
-            urllib.request.urlopen(BASE, timeout=1)
+            if srv.poll() is not None:
+                return False
+            with urllib.request.urlopen(BASE + "/api/v1/health", timeout=1) as response:
+                health = json.loads(response.read())
+            if Path(health.get("data_path", "")).resolve() != TESTDATA.resolve():
+                raise RuntimeError("Refusing to test a different Gusto data store")
             return True
-        except urllib.error.HTTPError:
-            return True  # server responds (even with an error page) -> it is up
+        except RuntimeError:
+            raise
         except Exception:
             if srv.poll() is not None:
                 return False
@@ -91,6 +97,8 @@ try:
         check(page.locator(".card").count() == 3, "3 recipe cards visible")
         check(page.locator(".card-image").count() == 3,
               "all sample recipes show their stored cover image")
+        check(page.locator(".card").first.bounding_box()["y"] < 550,
+              "desktop: compact facets leave the recipes in the first screen")
         page.screenshot(path=str(SHOTS / "01_home.png"), full_page=True)
 
         # Search (also searches ingredients in the text) -- server route (no-JS)
@@ -103,6 +111,8 @@ try:
         page.fill("input[name=q]", "kokos")
         page.wait_for_function("() => document.querySelectorAll('#results .card').length === 1")
         check(page.locator("#results .card").count() == 1, "live search 'kokos' -> 1 hit (no submit)")
+        check(page.locator("#result-count").inner_text() == "1 Rezept gefunden",
+              "live search updates the accessible result count")
         check("Linsen-Dal" in page.content(), "live search finds ingredient in text (Dal)")
         page.fill("input[name=q]", "")
         page.wait_for_function("() => document.querySelectorAll('#results .card').length === 3")
@@ -179,6 +189,21 @@ try:
               "filtered empty state invites to create a new recipe, not the first one")
         check(page.locator(".empty a", has_text="Filter zurücksetzen").count() == 1,
               "filtered empty state offers to reset the filter")
+        page.locator(".empty a", has_text="Filter zurücksetzen").click()
+        page.wait_for_load_state("load")
+        check(page.locator(".card").count() == 3
+              and page.input_value('input[name="q"]') == "",
+              "reset clears the unsuccessful text query and restores every recipe")
+
+        nojs_search = browser.new_context(java_script_enabled=False)
+        search_page = nojs_search.new_page()
+        search_page.goto(BASE + "/?tag=vegan", wait_until="load")
+        search_page.fill('input[name="q"]', "pasta")
+        search_page.locator(".search button").click()
+        search_page.wait_for_load_state("load")
+        check("tag=vegan" in search_page.url and search_page.locator(".card").count() == 0,
+              "no-JS search preserves active facets when submitting the query")
+        nojs_search.close()
 
         # Recipe page
         page.goto(BASE, wait_until="load")
@@ -510,9 +535,34 @@ try:
               "product sheet shows the complete ranked list")
         check("Barilla" in page.locator("#favorite-sheet .favorite-product-card").first.text_content(),
               "product sheet preserves the manual ranking")
+        page.keyboard.press("Shift+Tab")
+        check(page.locator(".favorite-manage-link").evaluate("el => el === document.activeElement"),
+              "product dialog: Shift+Tab wraps within the open sheet")
+        page.keyboard.press("Tab")
+        check(page.locator(".favorite-sheet-close").evaluate("el => el === document.activeElement"),
+              "product dialog: Tab returns to the close button")
         page.wait_for_timeout(350)
         page.screenshot(path=str(SHOTS / "09c_favorite_sheet.png"), full_page=True)
         page.locator("#favorite-sheet .favorite-sheet-close").click()
+        check(spaghetti_item.locator(".shop-favorite-trigger").evaluate(
+            "el => el === document.activeElement"),
+            "product dialog: closing returns focus to its shopping item")
+
+        # A foreign favorite change must leave a half-written name intact.
+        draft_page = browser.new_page()
+        draft_page.goto(BASE + "/favorites", wait_until="load")
+        draft_page.locator(".favorite-create-panel summary").click()
+        draft_page.fill('input[name="name"]', "Noch nicht gespeichert")
+        draft_page.evaluate("window.draftSurvived = true")
+        foreign = draft_page.request.post(BASE + "/api/v1/command", data={
+            "operation": "favorites.add", "arguments": {"name": "Audit Bedarf"},
+        })
+        check(foreign.ok, "foreign favorite mutation succeeds")
+        draft_page.wait_for_timeout(1600)
+        check(draft_page.evaluate("window.draftSurvived === true")
+              and draft_page.input_value('input[name="name"]') == "Noch nicht gespeichert",
+              "favorite live updates preserve an unfinished form")
+        draft_page.close()
 
         # Add manually (client form, optimistic + background sync)
         page.locator("#shop-client .shop-add-panel summary").click()
@@ -609,6 +659,14 @@ try:
               "mobile: recipe filters start collapsed")
         check(first_card is not None and first_card["y"] < 520,
               "mobile: the first recipe is visible without a long filter wall")
+        m.set_viewport_size({"width": 1280, "height": 900})
+        m.locator(".taggroup").first.wait_for(state="visible")
+        check(m.locator(".taggroup").first.is_visible(),
+              "responsive: widening a mobile page exposes its desktop filters")
+        m.set_viewport_size({"width": 390, "height": 844})
+        m.wait_for_function("() => !document.querySelector('.filter-panel').open")
+        check(m.locator(".filter-panel").get_attribute("open") is None,
+              "responsive: narrowing restores compact unselected filters")
         m.screenshot(path=str(SHOTS / "07_mobile_home.png"))
         m.goto(BASE + "/recipe/rotes-linsen-dal", wait_until="load")
         check(m.locator(".recipe-jump").is_visible(),

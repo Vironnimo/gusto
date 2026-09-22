@@ -5,8 +5,13 @@
 // damit der aktuelle Zustand nicht versteckt wird.
 (function () {
   const panel = document.querySelector(".filter-panel");
-  if (!panel || !window.matchMedia("(max-width: 720px)").matches) return;
-  if (panel.dataset.selected !== "true") panel.removeAttribute("open");
+  if (!panel) return;
+  const mobile = window.matchMedia("(max-width: 720px)");
+  function adaptFilters() {
+    panel.open = !mobile.matches || panel.dataset.selected === "true";
+  }
+  adaptFilters();
+  mobile.addEventListener("change", adaptFilters);
 })();
 
 // "/" fokussiert die Suche.
@@ -103,6 +108,9 @@ window.addEventListener("pageshow", (e) => {
       const doc = new DOMParser().parseFromString(html, "text/html");
       const neu = doc.getElementById("results");
       const neueTags = doc.getElementById("tagfilter");
+      const count = document.getElementById("result-count");
+      const newCount = doc.getElementById("result-count");
+      if (count && newCount) count.textContent = newCount.textContent;
       if (neu) {
         results.classList.add("is-live"); // Karten-Einblendung beim Tippen aus
         // No innerHTML with server data (project security rule): the already
@@ -142,6 +150,15 @@ window.addEventListener("pageshow", (e) => {
 // Die offline-fähige Einkaufsliste übernimmt ihren Merge selbst.
 (function () {
   if (!document.body.hasAttribute("data-gusto-live") || !window.EventSource) return;
+
+  // Favorites pages contain edit forms too. A foreign update must never
+  // discard a draft or a selected photo; navigation after save refreshes it.
+  function rememberDraft(event) {
+    const form = event.target.closest && event.target.closest("form");
+    if (form && form.method === "post") form.dataset.dirty = "true";
+  }
+  document.addEventListener("input", rememberDraft);
+  document.addEventListener("change", rememberDraft);
 
   const pageResources = (() => {
     const path = window.location.pathname;
@@ -191,6 +208,7 @@ window.addEventListener("pageshow", (e) => {
         document.dispatchEvent(new CustomEvent("gusto:change", { detail: change }));
         return;
       }
+      if (document.querySelector('form[data-dirty="true"]')) return;
       window.location.reload();
     };
   }

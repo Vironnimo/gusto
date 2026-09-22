@@ -21,3 +21,4 @@ TODO.md
 .clitest/
 .serve.log
 scripts/shots/
+.playwright-cli/
