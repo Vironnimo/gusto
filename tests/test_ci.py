@@ -13,7 +13,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.fspath(ROOT))
 
-from scripts import ci_smoke_install  # noqa: E402
+from scripts import ci_smoke_install, run_quality  # noqa: E402
 
 
 QUALITY = ROOT / ".github/workflows/quality.yml"
@@ -40,6 +40,12 @@ def load(path: Path) -> dict:
 quality = load(QUALITY)
 release = load(RELEASE)
 dependabot = load(DEPENDABOT)
+
+check(
+    set(run_quality.SCRIPT_CHECKS)
+    == {path.relative_to(ROOT).as_posix() for path in (ROOT / "tests").glob("test_*.py")},
+    "the shared quality runner must execute every standalone test script",
+)
 
 quality_events = quality["on"]
 check(
