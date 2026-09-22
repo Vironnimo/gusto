@@ -35,6 +35,10 @@ GLOSSARY → Rezeptarchiv defines the reversible default for recipe deletion.
   Archiving and purging do not rewrite historical log entries.
 
 The slug joins Markdown, metadata, image storage, log entries, shopping sources, and URLs. Editing a title does not rename the slug.
+Generated slugs are limited to 150 characters after transliteration and avoid
+Windows device names. Explicit slugs must also be portable filenames and may
+not claim `_favorites`. Creation refuses pre-existing Markdown/image paths,
+including files without an index entry; use `check` to diagnose these first.
 
 ## Interfaces
 
@@ -84,6 +88,8 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
 
 - JSON writes use the shared atomic writer. New catalog behavior belongs in
   Core, then API/CLI, before web presentation.
+- Atomic JSON/Markdown replacement briefly retries Windows sharing/access
+  conflicts caused by concurrent reader handles; persistent errors still fail.
 - Every catalog mutation holds the cross-process catalog lock across its full
   read-modify-write transaction. This includes the cooking log and owned recipe
   images because both also update catalog state.
@@ -103,6 +109,8 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
   shopping source, favorite, and historical log-reference issues. It does not
   repair them. Uncategorized tags and unresolved append-only log history are
   warnings; other non-empty diagnostics are hard errors.
+  Invalid categories and malformed recipe/favorite/shopping entries appear in
+  `invalid_data_files` rather than aborting the whole diagnostic report.
 
 ## Constraints & Gotchas
 

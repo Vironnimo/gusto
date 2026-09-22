@@ -1,6 +1,6 @@
 # Project Context
 
-This is the **single source of truth for project-specific knowledge**. Every agent reads it before starting work. Only the Orchestrator updates it.
+This is the **single source of truth for project-specific knowledge**. Every agent reads it before starting work and maintains it when authorized repository work changes project facts. Work as a standalone agent; no Vorch role is required.
 
 Remove sections that don't apply to your project. Keep entries short and factual — this is working notes for agents, not polished documentation.
 
@@ -72,6 +72,9 @@ Tests are standalone Python scripts rather than a pytest suite. Browser and PWA
 checks start isolated servers and drive real Chromium through Playwright.
 `python scripts/run_quality.py scripts|browser|all` is the shared
 cross-platform entry point used locally and by CI.
+The script gate covers every `tests/test_*.py`, including web rendering.
+Browser/PWA checks allocate unique throwaway stores and ports and verify the
+health endpoint's data path before testing.
 
 Quality gates:
 
@@ -217,11 +220,22 @@ Quality gates:
   runtimes needed for rollback, and uninstall removes the complete app-owned
   Python tree. Linux continues to use system Python 3.10+.
 
+- 2026-09-22: Repository audit fixed Windows atomic-write contention, sync
+  versions within the same millisecond, archive/merge source races, portable
+  recipe slugs, orphan-file protection, ingredient parsing, and malformed-data
+  diagnostics. Lost CLI replies now report uncertain outcomes; failed edits
+  retain their local copy, and stdin recipe content is UTF-8. Updates prepare
+  venvs at their final inactive path because installed launchers are not
+  relocatable; installers recheck ownership after acquiring the update lock.
+  Browser filters/search, live form preservation, keyboard focus, and fresh
+  PWA metadata were verified in real Chromium against disposable data. Audit
+  evidence and remaining platform limits: `docs/audit-2026-09-22.md`.
+
 ## Domain Maps
 
 Domain-specific documentation lives in `.vorch/domain-maps/`. A **domain** is any module or subsystem that has its own folder or clear boundary in the codebase — a chunk of code that has a distinct responsibility and that agents need context about before touching it. This includes technical modules (`hooks`, `tools`, `storage`), infrastructure modules (`server`, `channel`), and business modules (`auth`, `payments`). Size doesn't matter — what matters is that working on it without context risks misunderstanding its interfaces or conventions.
 
-The Orchestrator uses `.vorch/workflows/domain-map-workflow.md` when creating, auditing, or updating domain maps.
+Use `.vorch/workflows/domain-map-workflow.md` when creating, auditing, or updating domain maps, under the standalone-agent instructions in the project guide.
 
 **When working on a domain: read its domain map.** Your task will list which maps are relevant — treat that as a starting point, not a ceiling. Read additional maps if you need them.
 

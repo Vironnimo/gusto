@@ -38,6 +38,10 @@ explicit development entry point. Every command accepts `--json`. Expected
 failures are `{ "ok": false, "error": "..." }` on stdout with exit 1; parser
 errors remain stderr/exit 2. `check --json` deliberately returns its complete
 diagnostics object with `ok:false` and exit 1 on hard errors.
+An interrupted or invalid command response can include `outcome_unknown:true`:
+inspect the selected server's state before repeating a mutation. The client
+does not automatically replay commands. Duplicate JSON object keys are rejected
+at API dispatch before executing the request.
 
 Global `--server` overrides `GUSTO_URL`, which overrides `server_url` in the
 runtime settings; default is `http://127.0.0.1:8000`. `gusto home --json`
@@ -63,6 +67,9 @@ without making server filesystem paths part of the API.
 final content after the editor exits. Headless callers use `gusto content set
 <slug> --file|--stdin`. Both reach `recipe.content.set` and therefore preserve
 server ownership and catalog locking.
+Stdin content uses UTF-8. A failed editor round-trip retains its local file and
+returns `slug` plus `recovery_path`; successful upload is not reported as failed
+merely because deleting the temporary file failed.
 
 The FastAPI application is `gusto.web:app` and includes the API router. It
 serves active/archive catalog, log, suggestions, shopping, preferred products,
@@ -70,9 +77,11 @@ media, static assets, root-scoped service worker, and custom 404. Active entity
 URLs use `/recipe/{slug}`; archived snapshots use `/archive/{slug}`.
 
 The page shell opens `/api/v1/events` after initial load. Catalog/favorites/log
-changes reload relevant ordinary pages; shopping changes trigger the existing
-shopping sync/merge; other pages receive `gusto:change`. A body-stamped revision
-enables replay between render and SSE connection.
+changes reload relevant ordinary pages while preserving dirty POST forms.
+Recipe edit/photo pages do not auto-reload. Shopping handles relevant
+`gusto:change` events through sync, favorite refresh, or source-reference refresh
+without navigation. A body-stamped revision enables replay between render and
+SSE connection.
 
 The shopping PWA remains offline-first. Its service worker caches the app shell,
 uses the shopping page as navigation fallback, and leaves every `/api/` request
@@ -134,7 +143,7 @@ formats.
   existing managed state and may reconstruct a damaged runtime only from a
   payload of the same active version. `gusto update` is the normal update path:
   acquire the per-app lock, download and verify the direct Wheel, publish a venv
-  from the recorded Python in staging side-by-side, stop, switch current
+  from the recorded Python at its permanent inactive version path, stop, switch current
   pointer, reinstall the user service, and health-check the expected version
   and data path. A Windows Python version change is staged and recorded in the
   same activation; runtimes referenced by the retained previous Gusto version
@@ -159,6 +168,9 @@ formats.
 - Preserve German product copy and English code identifiers.
 - Starlette template calls pass request first.
 - Browser and PWA checks always use throwaway `GUSTO_HOME` data.
+- Browser/PWA checks create unique data directories and choose unused loopback
+  ports; their health probe must match that exact data path before any action.
+  The script gate is checked against every standalone `tests/test_*.py` file.
 - Update the service-worker cache version whenever a cached asset/offline shell
   changes.
 
@@ -181,6 +193,11 @@ formats.
   hash passes. Safely validate the Windows Python package before extraction;
   keep the previous verified Gusto and referenced Python runtimes until the new
   version passes health.
+- Virtual environments must never be renamed after installing entry points:
+  generated launchers embed absolute interpreter paths. The current pointer
+  activates a prepared version only after verification. Installation and update
+  re-read ownership/state under the app lock before using cleanup authority or
+  choosing the Python runtime.
 - Never let the release workflow rebuild per operating system or publish an
   untested copy. Both smoke jobs and the attestation/publish job must consume
   the single artifact emitted by the gated build job.

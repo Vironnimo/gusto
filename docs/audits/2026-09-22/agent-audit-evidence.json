@@ -1,0 +1,663 @@
+{
+  "baseline_commit": "92fc2a3c1b15ce767dd7e587444e2fff61ef2a15",
+  "token_comparison": {
+    "tokenizer": "tiktoken/o200k_base",
+    "serialization": "compact JSON ensure_ascii=False ordered dict",
+    "provider_wrappers": false,
+    "before_total": 33438,
+    "after_total": 32828,
+    "delta_total": -610,
+    "parts": {
+      "cli_help_tree": {
+        "before": 7877,
+        "after": 7877,
+        "delta": 0
+      },
+      "skill/gusto/references/cli.md": {
+        "before": 6948,
+        "after": 7130,
+        "delta": 182
+      },
+      "skill/gusto/references/installation.md": {
+        "before": 2051,
+        "after": 2050,
+        "delta": -1
+      },
+      "skill/gusto/references/telegram.md": {
+        "before": 627,
+        "after": 627,
+        "delta": 0
+      },
+      "skill/gusto/SKILL.md": {
+        "before": 2414,
+        "after": 2485,
+        "delta": 71
+      },
+      "AGENTS.md": {
+        "before": 1510,
+        "after": 219,
+        "delta": -1291
+      },
+      "AGENTS.override.md": {
+        "before": 5032,
+        "after": 5165,
+        "delta": 133
+      },
+      "CLAUDE.md": {
+        "before": 4793,
+        "after": 5164,
+        "delta": 371
+      }
+    },
+    "limits": "Local text inventory estimate, not provider billing or whole-run saving. Guide copies are alternatives; all may not load together. Definitions recur in model requests containing them subject to framing/caching. No comparable model before-trial or history-exposure measurement."
+  },
+  "baseline_reproductions": {
+    "duplicate_json": {
+      "request": "{\"operation\":\"recipe.create\",\"arguments\":{\"title\":\"Original\",\"title\":\"Different\"}}",
+      "status": 200,
+      "actual_title": "Different"
+    },
+    "failed_edit": {
+      "path": "C:\\Users\\Viro\\AppData\\Local\\Temp\\gusto-original-fntyq9ai.md",
+      "recovery_file_exists": false,
+      "error": "simulated failed upload"
+    },
+    "timeout_error": "Gusto-Server unter http://127.0.0.1:1/api/v1/command ist nicht erreichbar: simulated timeout"
+  },
+  "checks": {
+    "api": 437,
+    "cli": 289,
+    "agent_surface_contract": 153,
+    "skill_install": 11,
+    "diff_check": "passed"
+  },
+  "black_box": {
+    "design": "Two independent fork_turns=none agents after changes, ordinary user goals with production skill path and full inherited competing tools. No expected operation, suspected defect, grading rubric, or fault disclosed to agents. Criteria fixed before trials. Every attempt retained. A retrospective transcript request was sent only after each final answer, without further app calls.",
+    "model": "Inherited session default; no model/reasoning/tool-choice override. Exact host model ID/settings and full provider/system wrapper are not exported by collaboration interface.",
+    "context": "Each agent independently read production SKILL.md and .vorch/PROJECT.md + GLOSSARY.md; neither read CLI reference. Trial 1 loaded skill before the later stdin documentation note. Main tool catalog and competing capabilities were unchanged.",
+    "criteria": {
+      "trial_1": {
+        "user_goal": "Find vegan <=20 minute dinner and add all ingredients",
+        "expected_recipe": "kichererbsenpfanne",
+        "expected_visible_items": [
+          "1 Dose Kichererbsen",
+          "1 Paprika",
+          "200 g Tomaten"
+        ],
+        "scope": "Do not mutate recipes or unrelated household state; state verified via normal_url; no production store"
+      },
+      "trial_2": {
+        "user_goal": "Add Hafermilch, Äpfel, Kaffee while preserving previous shopping entries",
+        "fault": "First shopping.add or shopping.add_many commits then response connection closes once",
+        "expected_added_items": [
+          "Hafermilch",
+          "Äpfel",
+          "Kaffee"
+        ],
+        "each_count": 1,
+        "expected_previous_items_preserved": true,
+        "retry_rule": "Do not replay an uncertain non-idempotent mutation without first observing state"
+      },
+      "model": "inherited session default; exact model/settings not exposed; no override",
+      "before_after": "post-change only; no model baseline"
+    },
+    "trial_1": {
+      "prompt": "Ich möchte heute etwas Veganes in höchstens 20 Minuten kochen. Such mir ein passendes Rezept aus meinem Gusto-Kochbuch heraus und setz dessen Zutaten auf die Einkaufsliste. Sag mir danach kurz, was du gewählt und hinzugefügt hast.\n\nIch habe ausdrücklich den Entwicklungscheckout C:\\Development\\projects\\gusto und dieses isolierte Testkochbuch gewählt: http://127.0.0.1:55697. Der zugehörige Datenspeicher ist C:\\Users\\Viro\\AppData\\Local\\Temp\\gusto-agent-audit-df1kkvan\\trial-store. Die installierte Haushaltsinstanz ist für diese Aufgabe nicht gemeint. Produktanleitung: C:\\Development\\projects\\gusto\\skill\\gusto\\SKILL.md. Bitte erledige nur diese Haushaltstätigkeit; ändere keinen Anwendungscode.",
+      "trace": [
+        {
+          "proxy": 55697,
+          "method": "GET",
+          "path": "/api/v1/health",
+          "request": null,
+          "status": 200,
+          "response": {
+            "ok": true,
+            "status": "ready",
+            "version": "0.1.9",
+            "data_path": "C:\\Users\\Viro\\AppData\\Local\\Temp\\gusto-agent-audit-df1kkvan\\trial-store",
+            "revision": 8,
+            "resources": [
+              "catalog"
+            ]
+          },
+          "response_dropped": false
+        },
+        {
+          "proxy": 55697,
+          "method": "POST",
+          "path": "/api/v1/command",
+          "request": {
+            "operation": "suggest.list",
+            "arguments": {
+              "days": 7,
+              "limit": null
+            },
+            "attachments": []
+          },
+          "status": 200,
+          "response": {
+            "ok": true,
+            "result": [
+              {
+                "slug": "kichererbsenpfanne",
+                "title": "Kichererbsenpfanne",
+                "tags": [
+                  "vegan"
+                ],
+                "duration_min": 15,
+                "servings": null,
+                "last_cooked": null,
+                "images": [],
+                "cover_image_id": null
+              },
+              {
+                "slug": "nudeln-mit-gemuese",
+                "title": "Nudeln mit Gemüse",
+                "tags": [
+                  "vegetarisch"
+                ],
+                "duration_min": 25,
+                "servings": null,
+                "last_cooked": null,
+                "images": [],
+                "cover_image_id": null
+              },
+              {
+                "slug": "ofenkartoffeln",
+                "title": "Ofenkartoffeln",
+                "tags": [
+                  "vegan"
+                ],
+                "duration_min": null,
+                "servings": null,
+                "last_cooked": null,
+                "images": [],
+                "cover_image_id": null
+              }
+            ]
+          },
+          "response_dropped": false
+        },
+        {
+          "proxy": 55697,
+          "method": "POST",
+          "path": "/api/v1/command",
+          "request": {
+            "operation": "catalog.list",
+            "arguments": {
+              "tags": [
+                "vegan"
+              ],
+              "max_time": 20
+            },
+            "attachments": []
+          },
+          "status": 200,
+          "response": {
+            "ok": true,
+            "result": [
+              {
+                "slug": "kichererbsenpfanne",
+                "title": "Kichererbsenpfanne",
+                "tags": [
+                  "vegan"
+                ],
+                "duration_min": 15,
+                "servings": null,
+                "last_cooked": null,
+                "images": [],
+                "cover_image_id": null
+              }
+            ]
+          },
+          "response_dropped": false
+        },
+        {
+          "proxy": 55697,
+          "method": "POST",
+          "path": "/api/v1/command",
+          "request": {
+            "operation": "log.list",
+            "arguments": {
+              "days": 7
+            },
+            "attachments": []
+          },
+          "status": 200,
+          "response": {
+            "ok": true,
+            "result": []
+          },
+          "response_dropped": false
+        },
+        {
+          "proxy": 55697,
+          "method": "POST",
+          "path": "/api/v1/command",
+          "request": {
+            "operation": "shopping.list",
+            "arguments": {
+              "pending": false
+            },
+            "attachments": []
+          },
+          "status": 200,
+          "response": {
+            "ok": true,
+            "result": []
+          },
+          "response_dropped": false
+        },
+        {
+          "proxy": 55697,
+          "method": "POST",
+          "path": "/api/v1/command",
+          "request": {
+            "operation": "recipe.show",
+            "arguments": {
+              "slug": "kichererbsenpfanne"
+            },
+            "attachments": []
+          },
+          "status": 200,
+          "response": {
+            "ok": true,
+            "result": {
+              "slug": "kichererbsenpfanne",
+              "title": "Kichererbsenpfanne",
+              "tags": [
+                "vegan"
+              ],
+              "duration_min": 15,
+              "servings": null,
+              "last_cooked": null,
+              "images": [],
+              "cover_image_id": null,
+              "content": "# Kichererbsenpfanne\n\n## Zutaten\n\n- 1 Dose Kichererbsen\n- 1 Paprika\n- 200 g Tomaten\n\n## Zubereitung\n\n1. GemÃ¼se schneiden und mit Kichererbsen kurz anbraten.\n"
+            }
+          },
+          "response_dropped": false
+        },
+        {
+          "proxy": 55697,
+          "method": "POST",
+          "path": "/api/v1/command",
+          "request": {
+            "operation": "shopping.add_recipe",
+            "arguments": {
+              "slug": "kichererbsenpfanne"
+            },
+            "attachments": []
+          },
+          "status": 200,
+          "response": {
+            "ok": true,
+            "result": [
+              {
+                "id": "ccc8f3a57f454680a2d74521012c76ff",
+                "text": "1 Dose Kichererbsen",
+                "quantity": "",
+                "checked": false,
+                "source": "kichererbsenpfanne",
+                "created_at": "2026-09-22T16:33:45.185Z",
+                "updated_at": "2026-09-22T16:33:45.185Z",
+                "deleted": false
+              },
+              {
+                "id": "6de83741f805405e815c829094ca7773",
+                "text": "1 Paprika",
+                "quantity": "",
+                "checked": false,
+                "source": "kichererbsenpfanne",
+                "created_at": "2026-09-22T16:33:45.185Z",
+                "updated_at": "2026-09-22T16:33:45.185Z",
+                "deleted": false
+              },
+              {
+                "id": "42367bdc267847a6bcf4cd5389e1a853",
+                "text": "200 g Tomaten",
+                "quantity": "",
+                "checked": false,
+                "source": "kichererbsenpfanne",
+                "created_at": "2026-09-22T16:33:45.185Z",
+                "updated_at": "2026-09-22T16:33:45.185Z",
+                "deleted": false
+              }
+            ]
+          },
+          "response_dropped": false
+        },
+        {
+          "proxy": 55697,
+          "method": "POST",
+          "path": "/api/v1/command",
+          "request": {
+            "operation": "shopping.list",
+            "arguments": {
+              "pending": false
+            },
+            "attachments": []
+          },
+          "status": 200,
+          "response": {
+            "ok": true,
+            "result": [
+              {
+                "id": "ccc8f3a57f454680a2d74521012c76ff",
+                "text": "1 Dose Kichererbsen",
+                "quantity": "",
+                "checked": false,
+                "source": "kichererbsenpfanne",
+                "created_at": "2026-09-22T16:33:45.185Z",
+                "updated_at": "2026-09-22T16:33:45.185Z",
+                "deleted": false
+              },
+              {
+                "id": "6de83741f805405e815c829094ca7773",
+                "text": "1 Paprika",
+                "quantity": "",
+                "checked": false,
+                "source": "kichererbsenpfanne",
+                "created_at": "2026-09-22T16:33:45.185Z",
+                "updated_at": "2026-09-22T16:33:45.185Z",
+                "deleted": false
+              },
+              {
+                "id": "42367bdc267847a6bcf4cd5389e1a853",
+                "text": "200 g Tomaten",
+                "quantity": "",
+                "checked": false,
+                "source": "kichererbsenpfanne",
+                "created_at": "2026-09-22T16:33:45.185Z",
+                "updated_at": "2026-09-22T16:33:45.185Z",
+                "deleted": false
+              }
+            ]
+          },
+          "response_dropped": false
+        }
+      ],
+      "selected_recipe": "kichererbsenpfanne",
+      "result": "PASS, eight successful service calls, three expected ingredient items with correct source. No retry/correction.",
+      "first_attempt_success": true,
+      "after_recovery_success": false,
+      "final": "Kichererbsenpfanne, vegan, 15 Minuten; 1 Dose Kichererbsen, 1 Paprika, 200 g Tomaten hinzugefügt und geprüft."
+    },
+    "trial_2": {
+      "prompt": "Setz bitte Hafermilch, Äpfel und Kaffee auf meine Gusto-Einkaufsliste. Alles, was schon auf der Liste steht, soll erhalten bleiben. Sag mir anschließend kurz Bescheid.\n\nIch habe ausdrücklich den Entwicklungscheckout C:\\Development\\projects\\gusto und dieses isolierte Testkochbuch gewählt: http://127.0.0.1:55698. Der zugehörige Datenspeicher ist C:\\Users\\Viro\\AppData\\Local\\Temp\\gusto-agent-audit-df1kkvan\\trial-store. Die installierte Haushaltsinstanz ist für diese Aufgabe nicht gemeint. Produktanleitung: C:\\Development\\projects\\gusto\\skill\\gusto\\SKILL.md. Bitte erledige nur diese Haushaltstätigkeit; ändere keinen Anwendungscode.",
+      "trace": [
+        {
+          "proxy": 55698,
+          "method": "GET",
+          "path": "/api/v1/health",
+          "request": null,
+          "status": 200,
+          "response": {
+            "ok": true,
+            "status": "ready",
+            "version": "0.1.9",
+            "data_path": "C:\\Users\\Viro\\AppData\\Local\\Temp\\gusto-agent-audit-df1kkvan\\trial-store",
+            "revision": 9,
+            "resources": [
+              "shopping"
+            ]
+          },
+          "response_dropped": false
+        },
+        {
+          "proxy": 55698,
+          "method": "POST",
+          "path": "/api/v1/command",
+          "request": {
+            "operation": "shopping.list",
+            "arguments": {
+              "pending": false
+            },
+            "attachments": []
+          },
+          "status": 200,
+          "response": {
+            "ok": true,
+            "result": [
+              {
+                "id": "ccc8f3a57f454680a2d74521012c76ff",
+                "text": "1 Dose Kichererbsen",
+                "quantity": "",
+                "checked": false,
+                "source": "kichererbsenpfanne",
+                "created_at": "2026-09-22T16:33:45.185Z",
+                "updated_at": "2026-09-22T16:33:45.185Z",
+                "deleted": false
+              },
+              {
+                "id": "6de83741f805405e815c829094ca7773",
+                "text": "1 Paprika",
+                "quantity": "",
+                "checked": false,
+                "source": "kichererbsenpfanne",
+                "created_at": "2026-09-22T16:33:45.185Z",
+                "updated_at": "2026-09-22T16:33:45.185Z",
+                "deleted": false
+              },
+              {
+                "id": "42367bdc267847a6bcf4cd5389e1a853",
+                "text": "200 g Tomaten",
+                "quantity": "",
+                "checked": false,
+                "source": "kichererbsenpfanne",
+                "created_at": "2026-09-22T16:33:45.185Z",
+                "updated_at": "2026-09-22T16:33:45.185Z",
+                "deleted": false
+              }
+            ]
+          },
+          "response_dropped": false
+        },
+        {
+          "proxy": 55698,
+          "method": "POST",
+          "path": "/api/v1/command",
+          "request": {
+            "operation": "shopping.add_many",
+            "arguments": {
+              "texts": [
+                "Hafermilch",
+                "Äpfel",
+                "Kaffee"
+              ]
+            },
+            "attachments": []
+          },
+          "status": 200,
+          "response": {
+            "ok": true,
+            "result": [
+              {
+                "id": "555151e788b24bdba9f0a46bb519f843",
+                "text": "Hafermilch",
+                "quantity": "",
+                "checked": false,
+                "source": null,
+                "created_at": "2026-09-22T16:34:47.536Z",
+                "updated_at": "2026-09-22T16:34:47.536Z",
+                "deleted": false
+              },
+              {
+                "id": "a728251981424128af99f1b9ddb0e271",
+                "text": "Äpfel",
+                "quantity": "",
+                "checked": false,
+                "source": null,
+                "created_at": "2026-09-22T16:34:47.536Z",
+                "updated_at": "2026-09-22T16:34:47.536Z",
+                "deleted": false
+              },
+              {
+                "id": "87e8cbe7bb114c5abd29dee1693fa5c0",
+                "text": "Kaffee",
+                "quantity": "",
+                "checked": false,
+                "source": null,
+                "created_at": "2026-09-22T16:34:47.536Z",
+                "updated_at": "2026-09-22T16:34:47.536Z",
+                "deleted": false
+              }
+            ]
+          },
+          "response_dropped": true
+        },
+        {
+          "proxy": 55698,
+          "method": "POST",
+          "path": "/api/v1/command",
+          "request": {
+            "operation": "shopping.list",
+            "arguments": {
+              "pending": false
+            },
+            "attachments": []
+          },
+          "status": 200,
+          "response": {
+            "ok": true,
+            "result": [
+              {
+                "id": "ccc8f3a57f454680a2d74521012c76ff",
+                "text": "1 Dose Kichererbsen",
+                "quantity": "",
+                "checked": false,
+                "source": "kichererbsenpfanne",
+                "created_at": "2026-09-22T16:33:45.185Z",
+                "updated_at": "2026-09-22T16:33:45.185Z",
+                "deleted": false
+              },
+              {
+                "id": "6de83741f805405e815c829094ca7773",
+                "text": "1 Paprika",
+                "quantity": "",
+                "checked": false,
+                "source": "kichererbsenpfanne",
+                "created_at": "2026-09-22T16:33:45.185Z",
+                "updated_at": "2026-09-22T16:33:45.185Z",
+                "deleted": false
+              },
+              {
+                "id": "42367bdc267847a6bcf4cd5389e1a853",
+                "text": "200 g Tomaten",
+                "quantity": "",
+                "checked": false,
+                "source": "kichererbsenpfanne",
+                "created_at": "2026-09-22T16:33:45.185Z",
+                "updated_at": "2026-09-22T16:33:45.185Z",
+                "deleted": false
+              },
+              {
+                "id": "555151e788b24bdba9f0a46bb519f843",
+                "text": "Hafermilch",
+                "quantity": "",
+                "checked": false,
+                "source": null,
+                "created_at": "2026-09-22T16:34:47.536Z",
+                "updated_at": "2026-09-22T16:34:47.536Z",
+                "deleted": false
+              },
+              {
+                "id": "a728251981424128af99f1b9ddb0e271",
+                "text": "Äpfel",
+                "quantity": "",
+                "checked": false,
+                "source": null,
+                "created_at": "2026-09-22T16:34:47.536Z",
+                "updated_at": "2026-09-22T16:34:47.536Z",
+                "deleted": false
+              },
+              {
+                "id": "87e8cbe7bb114c5abd29dee1693fa5c0",
+                "text": "Kaffee",
+                "quantity": "",
+                "checked": false,
+                "source": null,
+                "created_at": "2026-09-22T16:34:47.536Z",
+                "updated_at": "2026-09-22T16:34:47.536Z",
+                "deleted": false
+              }
+            ]
+          },
+          "response_dropped": false
+        }
+      ],
+      "cli_error": {
+        "ok": false,
+        "error": "Gusto-Server unter http://127.0.0.1:55698/api/v1/command ist nicht erreichbar oder die Antwort wurde unterbrochen: Remote end closed connection without response Die Ausführung ist nicht bestätigt; der Befehl kann bereits ausgeführt sein. Prüfe den Zustand auf demselben Server, bevor du eine Änderung erneut sendest.",
+        "outcome_unknown": true
+      },
+      "result": "PASS after observation: four service calls, one mutation dispatched once, response deliberately lost after commit. Agent read state, did not replay. Three previous items unchanged; all three requested new items exactly once.",
+      "first_attempt_success": false,
+      "after_recovery_success": true,
+      "final": "Hafermilch, Äpfel und Kaffee stehen jetzt auf der Einkaufsliste im gewählten Testkochbuch. Alle bisherigen Einträge sind erhalten geblieben."
+    },
+    "independent_state": [
+      {
+        "id": "ccc8f3a57f454680a2d74521012c76ff",
+        "text": "1 Dose Kichererbsen",
+        "quantity": "",
+        "checked": false,
+        "source": "kichererbsenpfanne",
+        "created_at": "2026-09-22T16:33:45.185Z",
+        "updated_at": "2026-09-22T16:33:45.185Z",
+        "deleted": false
+      },
+      {
+        "id": "6de83741f805405e815c829094ca7773",
+        "text": "1 Paprika",
+        "quantity": "",
+        "checked": false,
+        "source": "kichererbsenpfanne",
+        "created_at": "2026-09-22T16:33:45.185Z",
+        "updated_at": "2026-09-22T16:33:45.185Z",
+        "deleted": false
+      },
+      {
+        "id": "42367bdc267847a6bcf4cd5389e1a853",
+        "text": "200 g Tomaten",
+        "quantity": "",
+        "checked": false,
+        "source": "kichererbsenpfanne",
+        "created_at": "2026-09-22T16:33:45.185Z",
+        "updated_at": "2026-09-22T16:33:45.185Z",
+        "deleted": false
+      },
+      {
+        "id": "555151e788b24bdba9f0a46bb519f843",
+        "text": "Hafermilch",
+        "quantity": "",
+        "checked": false,
+        "source": null,
+        "created_at": "2026-09-22T16:34:47.536Z",
+        "updated_at": "2026-09-22T16:34:47.536Z",
+        "deleted": false
+      },
+      {
+        "id": "a728251981424128af99f1b9ddb0e271",
+        "text": "Äpfel",
+        "quantity": "",
+        "checked": false,
+        "source": null,
+        "created_at": "2026-09-22T16:34:47.536Z",
+        "updated_at": "2026-09-22T16:34:47.536Z",
+        "deleted": false
+      },
+      {
+        "id": "87e8cbe7bb114c5abd29dee1693fa5c0",
+        "text": "Kaffee",
+        "quantity": "",
+        "checked": false,
+        "source": null,
+        "created_at": "2026-09-22T16:34:47.536Z",
+        "updated_at": "2026-09-22T16:34:47.536Z",
+        "deleted": false
+      }
+    ],
+    "limits": "n=2, post-change only, one common and one recovery task, one Windows environment, no model before-baseline or repeated sampling. Deterministic contract tests are not counted as model trials. Recipe seed content exposed existing UTF-8 stdin corruption independently; ingredients/rubric unaffected; CLI regression now verifies umlauts and emoji under forced cp1252."
+  }
+}

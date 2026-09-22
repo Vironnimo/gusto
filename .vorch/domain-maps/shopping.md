@@ -107,15 +107,20 @@ with a 1920 px maximum edge before invoking the existing core product mutation.
 - Items present on only one side are retained, so every exchange uploads and returns full state rather than a delta.
 - Tombstones participate like any other version and are never hard-deleted by shopping operations.
 - Both legacy second-precision and current millisecond timestamps are accepted. Valid timestamps outrank malformed legacy values on the server.
+- Compare the clock at persisted millisecond precision before advancing it;
+  consecutive mutations within one wall-clock millisecond need distinct versions.
 - The browser merges a response into its current state instead of overwriting it, preserving mutations made while a request was in flight. A queued follow-up sync handles changes during an active sync.
 - Every server-side list mutation and full-state merge holds the shopping
   transaction lock across load, change, and atomic save. Ingredient import also
-  holds the catalog lock while reading its recipe snapshot; locks are acquired
-  in a stable order.
+  holds the catalog lock while reading its recipe snapshot. A merge containing
+  visible recipe sources also holds the catalog lock so archive/restore cannot
+  temporarily hide a valid source; locks are acquired in a stable order.
 
 ## Constraints & Gotchas
 
 - Ingredient import recognizes only non-empty `-` or `*` bullets under the exact `## Zutaten` heading and stops at the next H2.
+  A bullet marker requires following whitespace; bold notes and thematic
+  breaks are excluded.
 - Idempotency follows each owner's contract rather than command spelling.
   Shopping tombstones and explicit check states support safe sync retries;
   repeating an alias on the same Einkaufsbedarf is also safe. Creating an
@@ -138,7 +143,14 @@ with a 1920 px maximum edge before invoking the existing core product mutation.
   camera as a hint; the separate library control remains the fallback.
 - The service worker uses network-only handling for every `/api/` request and
   active/archive recipe media. Navigations are network-first with the cached
-  shopping page as fallback; other same-origin static GETs are cache-first.
+  shopping page as fallback; static assets and preferred-product media use the
+  active version's cache. Non-navigation HTML fetches always use the network,
+  including `/shopping` when refreshing recipe-source metadata. Precache
+  installation bypasses the browser HTTP cache to fetch the new asset versions.
+- Catalog events refresh shopping source references without reloading the
+  page or dropping unfinished input. List refreshes preserve keyboard focus;
+  the product dialog traps focus, disables background interaction, and returns
+  focus to the matching current item even if synchronization rebuilt its row.
 - Update the cache version when changing cached assets or offline shell behavior.
 - Verify Core behavior with `tests/test_shopping.py`, `tests/test_favorites.py`,
   and `tests/test_merge.py`; verify API revision behavior with
