@@ -534,6 +534,9 @@ class RecipeImage:
                 "Ungültiges Bild in einem Rezept-Eintrag: "
                 "'id' und 'filename' müssen Texte sein."
             )
+        if any(not isinstance(filtered.get(key, ""), str)
+               for key in ("role", "caption", "created_at")):
+            raise ValueError("Ungültige Textfelder in einem Rezeptbild.")
         return cls(**filtered)
 
 
@@ -571,6 +574,8 @@ class Recipe:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Recipe":
+        if not isinstance(d, dict):
+            raise ValueError("Ein Rezept-Eintrag muss ein JSON-Objekt sein.")
         allowed = {f.name for f in fields(cls)}
         values = {k: v for k, v in d.items() if k in allowed}
         # api.py sortiert nach title und check() liest images; ein nicht
@@ -579,6 +584,16 @@ class Recipe:
         if (not isinstance(values.get("title"), str)
                 or not values["title"].strip()):
             raise ValueError("'title' muss ein nicht-leerer Text sein.")
+        if not isinstance(values.get("slug"), str) or not values["slug"]:
+            raise ValueError("'slug' muss ein nicht-leerer Text sein.")
+        tags = values.get("tags", [])
+        if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+            raise ValueError("'tags' muss eine Liste von Texten sein.")
+        for key in ("duration_min", "servings"):
+            _positive_recipe_number(values.get(key), f"'{key}'")
+        for key in ("last_cooked", "cover_image_id"):
+            if values.get(key) is not None and not isinstance(values[key], str):
+                raise ValueError(f"'{key}' muss ein Text oder null sein.")
         images = values.get("images", [])
         if not isinstance(images, list):
             raise ValueError("'images' muss eine Liste sein.")
@@ -636,8 +651,17 @@ class FavoriteProduct:
 
     @classmethod
     def from_dict(cls, data: dict) -> "FavoriteProduct":
+        if not isinstance(data, dict):
+            raise ValueError("Ein Lieblingsprodukt muss ein JSON-Objekt sein.")
         allowed = {f.name for f in fields(cls)}
-        return cls(**{key: value for key, value in data.items() if key in allowed})
+        values = {key: value for key, value in data.items() if key in allowed}
+        if any(not isinstance(values.get(key), str) or not values[key]
+               for key in ("id", "name")):
+            raise ValueError("Ein Lieblingsprodukt braucht 'id' und 'name' als Text.")
+        if any(not isinstance(values.get(key, ""), str)
+               for key in ("brand", "store", "note", "image_filename", "created_at")):
+            raise ValueError("Die Textfelder eines Lieblingsprodukts sind ungültig.")
+        return cls(**values)
 
 
 @dataclass
@@ -654,9 +678,22 @@ class ShoppingNeed:
 
     @classmethod
     def from_dict(cls, data: dict) -> "ShoppingNeed":
+        if not isinstance(data, dict):
+            raise ValueError("Ein Einkaufsbedarf muss ein JSON-Objekt sein.")
         allowed = {f.name for f in fields(cls)}
         values = {key: value for key, value in data.items() if key in allowed}
-        values["aliases"] = list(values.get("aliases", []))
+        if any(not isinstance(values.get(key), str) or not values[key]
+               for key in ("id", "name")):
+            raise ValueError("Ein Einkaufsbedarf braucht 'id' und 'name' als Text.")
+        aliases = values.get("aliases", [])
+        if (not isinstance(aliases, list)
+                or not all(isinstance(alias, str) for alias in aliases)):
+            raise ValueError("Die Aliasse eines Einkaufsbedarfs müssen eine Textliste sein.")
+        if not isinstance(values.get("products", []), list):
+            raise ValueError("Die Produkte eines Einkaufsbedarfs müssen eine Liste sein.")
+        if not isinstance(values.get("created_at", ""), str):
+            raise ValueError("Der Zeitstempel eines Einkaufsbedarfs muss ein Text sein.")
+        values["aliases"] = list(aliases)
         values["products"] = [FavoriteProduct.from_dict(product)
                               for product in values.get("products", [])]
         return cls(**values)
@@ -775,6 +812,23 @@ def recipe_references() -> dict[str, dict]:
     return references
 
 
+def _replace_atomic(temporary: Path, path: Path) -> None:
+    """Replace a complete file, allowing short-lived Windows reader handles."""
+    deadline = time.monotonic() + 1.0
+    while True:
+        try:
+            temporary.replace(path)
+            return
+        except OSError as error:
+            # Windows readers do not generally grant FILE_SHARE_DELETE.
+            # A concurrent catalog/SSE read can therefore block the atomic
+            # rename briefly even though the writer holds its resource lock.
+            if (os.name != "nt" or getattr(error, "winerror", None) not in {5, 32, 33}
+                    or time.monotonic() >= deadline):
+                raise
+            time.sleep(0.01)
+
+
 def _write_json(path: Path, data, *, track_mutation: bool = True) -> bool:
     """Write changed JSON atomically; return whether the file was replaced."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -792,7 +846,7 @@ def _write_json(path: Path, data, *, track_mutation: bool = True) -> bool:
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(content)
-        temporary.replace(path)
+        _replace_atomic(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
     if track_mutation:
@@ -816,7 +870,7 @@ def _write_text(path: Path, content: str) -> bool:
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(content)
-        temporary.replace(path)
+        _replace_atomic(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
     _mark_mutation()
@@ -825,11 +879,37 @@ def _write_text(path: Path, content: str) -> bool:
 
 # --- Create -----------------------------------------------------------------
 
+MAX_RECIPE_SLUG_LENGTH = 150
+_WINDOWS_DEVICE_NAMES = {
+    "con", "prn", "aux", "nul",
+    *(f"com{number}" for number in range(1, 10)),
+    *(f"lpt{number}" for number in range(1, 10)),
+}
+
+
 def slugify(title: str) -> str:
     s = title.strip().lower()
     s = s.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
     s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")
-    return s or "recipe"
+    s = s[:MAX_RECIPE_SLUG_LENGTH].rstrip("-") or "recipe"
+    return f"recipe-{s}" if s in _WINDOWS_DEVICE_NAMES else s
+
+
+def _recipe_slug(slug: str) -> str:
+    """Keep recipe-owned paths portable across Windows and Linux."""
+    if (not isinstance(slug, str) or not slug
+            or len(slug) > MAX_RECIPE_SLUG_LENGTH
+            or slug.startswith(".") or slug.endswith((".", " "))
+            or slug.casefold() == "_favorites"
+            or slug.split(".", 1)[0].casefold() in _WINDOWS_DEVICE_NAMES
+            or any(ord(character) < 32 or character in '<>:"/\\|?*'
+                   for character in slug)):
+        raise ValueError(
+            "Der Rezept-Slug muss ein nicht-leerer, portabler Dateiname "
+            f"mit höchstens {MAX_RECIPE_SLUG_LENGTH} Zeichen sein; "
+            "Pfadanteile, führende Punkte und reservierte Namen sind nicht erlaubt."
+        )
+    return slug
 
 
 @_locked_mutation("catalog")
@@ -839,14 +919,7 @@ def add_recipe(title: str, tags=None, duration_min=None, servings=None,
     tags = _recipe_tags(tags or [])
     _positive_recipe_number(duration_min, "Die Dauer")
     _positive_recipe_number(servings, "Die Portionszahl")
-    if slug is not None and (
-            not isinstance(slug, str) or not slug
-            or Path(slug).name != slug or slug.startswith(".")):
-        raise ValueError(
-            "Der Rezept-Slug muss ein nicht-leerer Name ohne Pfadanteile "
-            "und ohne führenden Punkt sein."
-        )
-    slug = slug or slugify(title)
+    slug = _recipe_slug(slugify(title) if slug is None else slug)
     recipes = load_recipes()
     if any(r.slug == slug for r in recipes):
         raise ValueError(f"Es gibt bereits ein Rezept mit dem Slug '{slug}'.")
@@ -855,15 +928,17 @@ def add_recipe(title: str, tags=None, duration_min=None, servings=None,
             f"Der Slug '{slug}' liegt im Archiv. Stelle das Rezept wieder her "
             "oder lösche den Archiveintrag endgültig."
         )
+    markdown_path = recipe_file(slug)
+    if markdown_path.exists() or recipe_images_dir(slug).exists():
+        raise ValueError(
+            f"Dateien für Rezept '{slug}' sind bereits vorhanden. "
+            "Prüfe den Datenbestand mit 'gusto check', bevor du ein neues "
+            "Rezept mit diesem Slug anlegst."
+        )
     recipes_dir().mkdir(parents=True, exist_ok=True)
     recipe_content = (
         _content_with_title(content, title) if content is not None
         else _template(title)
-    )
-    markdown_path = recipe_file(slug)
-    previous_content = (
-        markdown_path.read_text(encoding="utf-8")
-        if markdown_path.is_file() else None
     )
     _write_text(markdown_path, recipe_content)
     r = Recipe(slug=slug, title=title, tags=tags,
@@ -874,10 +949,7 @@ def add_recipe(title: str, tags=None, duration_min=None, servings=None,
     except Exception:
         # Without the index entry the .md would stay behind as an orphaned
         # file (a hard check error), so roll the Markdown back as well.
-        if previous_content is None:
-            markdown_path.unlink(missing_ok=True)
-        else:
-            _write_text(markdown_path, previous_content)
+        markdown_path.unlink(missing_ok=True)
         raise
     return r
 
@@ -886,8 +958,8 @@ def _template(title: str) -> str:
     return f"# {title}\n\n## Zutaten\n\n- \n\n## Zubereitung\n\n1. \n"
 
 
-# Slugs come straight from the title, so the title length is what keeps the
-# atomic writer's ".<slug>.md.<tmp>" name inside the Windows filename limit.
+# Generated slugs have their own bound after umlaut expansion; display titles
+# retain the existing independent limit.
 MAX_RECIPE_TITLE_LENGTH = 150
 
 
@@ -899,9 +971,6 @@ def _recipe_title(value: str) -> str:
             "Das Rezept braucht einen nicht-leeren, einzeiligen Titel."
         )
     title = value.strip()
-    # Der Slug entsteht aus dem Titel; der atomare Schreiber nutzt einen
-    # Temporärnamen ".<slug>.md.<tmp>", der oberhalb des Windows-Limits
-    # (255 Zeichen pro Dateinamen) zum OSError beim Schreiben führen würde.
     if len(title) > MAX_RECIPE_TITLE_LENGTH:
         raise ValueError(
             f"Der Titel darf höchstens {MAX_RECIPE_TITLE_LENGTH} Zeichen lang sein."
@@ -1057,9 +1126,11 @@ def load_categories() -> dict[str, dict]:
         return {}
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"Ungültige Tag-Kategorien: {error}") from error
-    return _validated_categories(value)
+        return _validated_categories(value)
+    except (OSError, ValueError) as error:
+        raise ValueError(
+            f"Ungültige Tag-Kategorien in '{path.name}': {error}"
+        ) from error
 
 
 def _category_dict(key: str, category: dict) -> dict:
@@ -1836,9 +1907,13 @@ def check() -> dict:
         recipe.slug for recipe in recipes
         if sum(item.slug == recipe.slug for item in recipes) > 1
     })
-    uncategorized = uncategorized_tags([
-        tag for recipe in recipes for tag in recipe.tags
-    ])
+    try:
+        uncategorized = uncategorized_tags([
+            tag for recipe in recipes for tag in recipe.tags
+        ])
+    except ValueError as error:
+        uncategorized = []
+        invalid_data_files.append(str(error))
     title_mismatches: list[str] = []
     for recipe in recipes:
         path = recipe_file(recipe.slug)
@@ -2063,8 +2138,24 @@ class ShoppingItem:
 
     @classmethod
     def from_dict(cls, d: dict) -> "ShoppingItem":
+        if not isinstance(d, dict):
+            raise ValueError("Ein Einkaufslisten-Eintrag muss ein JSON-Objekt sein.")
         allowed = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in d.items() if k in allowed})
+        values = {k: v for k, v in d.items() if k in allowed}
+        if any(not isinstance(values.get(key), str) or not values[key]
+               for key in ("id", "text")):
+            raise ValueError("Ein Einkaufslisten-Eintrag braucht 'id' und 'text' als Text.")
+        if not isinstance(values.get("quantity", ""), str):
+            raise ValueError("Die Menge eines Einkaufslisten-Eintrags ist ungültig.")
+        if any(not isinstance(values.get(key, False), bool)
+               for key in ("checked", "deleted")):
+            raise ValueError("Der Status eines Einkaufslisten-Eintrags ist ungültig.")
+        if values.get("source") is not None and not isinstance(values["source"], str):
+            raise ValueError("Die Quelle eines Einkaufslisten-Eintrags ist ungültig.")
+        if any(not isinstance(values.get(key, ""), str)
+               for key in ("created_at", "updated_at")):
+            raise ValueError("Der Zeitstempel eines Einkaufslisten-Eintrags ist ungültig.")
+        return cls(**values)
 
 
 def _parse_iso(value: str) -> datetime | None:
@@ -2096,6 +2187,10 @@ def _now_iso(after: str | None = None) -> str:
     indistinguishable versions while remaining compatible with old timestamps.
     """
     now = datetime.now(timezone.utc)
+    # Compare at the same precision that is actually persisted. Comparing the
+    # original microseconds could make a same-millisecond change look newer
+    # here, only to serialize it back to the previous identical sync version.
+    now = now.replace(microsecond=(now.microsecond // 1000) * 1000)
     previous = _parse_iso(after or "")
     if previous is not None and now <= previous:
         now = previous + timedelta(milliseconds=1)
@@ -2141,7 +2236,10 @@ def favorites_load() -> list[ShoppingNeed]:
             f"Ungültige Favoriten in '{path.name}': "
             "'needs' muss eine Liste von Objekten sein."
         )
-    return [ShoppingNeed.from_dict(need) for need in needs]
+    try:
+        return [ShoppingNeed.from_dict(need) for need in needs]
+    except ValueError as error:
+        raise ValueError(f"Ungültige Favoriten in '{path.name}': {error}") from error
 
 
 def _favorites_save_unlocked(needs: list[ShoppingNeed]) -> None:
@@ -2474,10 +2572,13 @@ def parse_ingredients(content: str) -> list[str]:
             continue
         if s.startswith("## "):       # next heading ends the section
             break
-        if s.startswith("-") or s.startswith("*"):
-            entry = s[1:].strip()
-            if entry:                 # skip empty bullets
-                ingredients.append(entry)
+        # A Markdown bullet needs whitespace after its marker. Bold notes and
+        # thematic breaks ("**Optional**", "---", "* * *") are not ingredients.
+        if re.fullmatch(r"(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}", s):
+            continue
+        bullet = re.match(r"[-*][ \t]+(.+)", s)
+        if bullet:
+            ingredients.append(bullet.group(1).strip())
     return ingredients
 
 
@@ -2506,7 +2607,10 @@ def shopping_load() -> list[ShoppingItem]:
             f"Ungültige Einkaufsliste in '{p.name}': "
             "'items' muss eine Liste von Objekten sein."
         )
-    return [ShoppingItem.from_dict(item) for item in items]
+    try:
+        return [ShoppingItem.from_dict(item) for item in items]
+    except ValueError as error:
+        raise ValueError(f"Ungültige Einkaufsliste in '{p.name}': {error}") from error
 
 
 def _shopping_save_unlocked(items: list[ShoppingItem]) -> None:
@@ -2685,7 +2789,6 @@ def shopping_clear() -> int:
 
 # --- Sync -------------------------------------------------------------------
 
-@_locked_mutation("shopping")
 def shopping_merge(remote_items: list[dict]) -> list[ShoppingItem]:
     """Full-state sync: merge remote_items (raw item dicts from the client) into
     the local list, save the result and return it (incl. tombstones).
@@ -2699,6 +2802,21 @@ def shopping_merge(remote_items: list[dict]) -> list[ShoppingItem]:
     deliberately unvalidated sources so that a purge of the referenced recipe
     never blocks a legitimate sync.
     """
+    # Source validation needs a stable active/archive snapshot. In particular,
+    # restoring a recipe temporarily hides its archive before writing the
+    # active catalog. Unsourced shopping mutations remain independent.
+    has_visible_sources = isinstance(remote_items, list) and any(
+        isinstance(raw, dict) and raw.get("source") and not raw.get("deleted")
+        for raw in remote_items
+    )
+    resources = ("catalog", "shopping") if has_visible_sources else ("shopping",)
+    return _execute_locked_mutation(
+        resources, lambda: _shopping_merge_unlocked(remote_items),
+        event_resources=("shopping",),
+    )
+
+
+def _shopping_merge_unlocked(remote_items: list[dict]) -> list[ShoppingItem]:
     # Local state (incl. tombstones) as the source of truth, indexed by id.
     merged: dict[str, ShoppingItem] = {i.id: i for i in shopping_load()}
     known_sources: set[str] | None = None

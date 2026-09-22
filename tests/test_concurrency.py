@@ -20,7 +20,10 @@ import time
 import traceback
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from pathlib import Path
+from threading import Event
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -207,6 +210,80 @@ def main() -> None:
           "parallel image imports must retain every owned file")
     check(photos.cover_image_id in {image.id for image in photos.images},
           "parallel image imports must leave a valid selected cover")
+
+    restored_source = core.add_recipe("Sync during restore")
+    core.archive_recipe(restored_source.slug)
+    restore_parked = Event()
+    finish_restore = Event()
+    sync_started = Event()
+    save_catalog = core._save_recipes_unlocked
+
+    def pause_restore_before_index(recipes):
+        restore_parked.set()
+        if not finish_restore.wait(5):
+            raise AssertionError("restore barrier timed out")
+        save_catalog(recipes)
+
+    def sync_restored_source():
+        sync_started.set()
+        return core.shopping_merge([core.ShoppingItem(
+            id="during-restore", text="Mehl", source=restored_source.slug,
+            created_at="2026-07-21T12:00:00.000Z",
+            updated_at="2026-07-21T12:00:00.000Z",
+        ).to_dict()])
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        with patch.object(core, "_save_recipes_unlocked", pause_restore_before_index):
+            restoring = executor.submit(core.restore_archived_recipe, restored_source.slug)
+            try:
+                check(restore_parked.wait(5), "restore must reach its transient catalog gap")
+                syncing = executor.submit(sync_restored_source)
+                check(sync_started.wait(5), "the parallel sync must start")
+                try:
+                    syncing.result(timeout=0.05)
+                except FutureTimeout:
+                    pass
+            finally:
+                finish_restore.set()
+            restoring.result(timeout=5)
+            synced = syncing.result(timeout=5)
+    check(any(item.id == "during-restore" and item.source == restored_source.slug
+              for item in synced),
+          "sync must wait for restore and retain its still-valid recipe source")
+
+    if os.name == "nt":
+        # Real Windows open-reader handles deny atomic replacement until they
+        # close. Readers such as SSE must not make an otherwise valid mutation
+        # fail after its business data has already been committed.
+        for filename, writer, initial, changed in (
+            ("reader.json", core._write_json, {"old": True}, {"new": True}),
+            ("reader.md", core._write_text, "# Alt\n", "# Neu\n"),
+        ):
+            target = home / filename
+            writer(target, initial)
+            started = Event()
+
+            def replace_while_reading():
+                started.set()
+                return writer(target, changed)
+
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                reader = target.open(encoding="utf-8")
+                try:
+                    future = executor.submit(replace_while_reading)
+                    check(started.wait(5), "the replacement worker must start")
+                    try:
+                        future.result(timeout=0.05)
+                    except FutureTimeout:
+                        pass
+                    check(bool(reader.read()),
+                          "the open reader must retain its complete original snapshot")
+                finally:
+                    reader.close()
+                check(future.result(timeout=5) is True,
+                      "atomic replacement must recover once the Windows reader closes")
+            check(not list(home.glob(f".{filename}.*.tmp")),
+                  "a recovered replacement must leave no temporary file behind")
 
     print(f"OK - {checks} concurrency checks passed (GUSTO_HOME={home})")
 

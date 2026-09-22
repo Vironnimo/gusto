@@ -65,12 +65,32 @@ def main():
     expect_valueerror(core.add_recipe, "Hungrige Runde", servings=-1)
     # An explicitly given slug must stay a plain, non-hidden file name:
     # path parts or a leading dot could write Markdown outside recipes/.
-    for invalid_slug in ("../evil", "a/b", ".versteckt", "..", ""):
+    for invalid_slug in (
+        "../evil", "a/b", "a\\b", ".versteckt", "..", "",
+        "con", "NUL", "com1", "a:b", "trailing.", "trailing ",
+        "_favorites", "a" * 151,
+    ):
         expect_valueerror(core.add_recipe, "Böser Slug", slug=invalid_slug)
     expect_valueerror(core.add_recipe, "Falscher Typ", slug=5)
     check(core.get("evil") is None
           and not (core.project_root() / "evil.md").exists(),
           "a rejected path slug must not write outside the recipes folder")
+
+    orphan = core.recipe_file("geschuetzte-datei")
+    orphan_content = "# Handschriftlich übertragen\n\nDiesen Inhalt erhalten.\n"
+    orphan.write_text(orphan_content, encoding="utf-8")
+    expect_valueerror(core.add_recipe, "Geschützte Datei")
+    check(orphan.read_text(encoding="utf-8") == orphan_content
+          and core.get("geschuetzte-datei") is None,
+          "creating a recipe must never overwrite an unindexed Markdown file")
+    orphan.unlink()
+    orphan_images = core.recipe_images_dir("geschuetzte-bilder")
+    orphan_images.mkdir(parents=True)
+    expect_valueerror(core.add_recipe, "Geschützte Bilder")
+    check(orphan_images.is_dir() and core.get("geschuetzte-bilder") is None
+          and not core.recipe_file("geschuetzte-bilder").exists(),
+          "creating a recipe must not adopt unrelated existing image storage")
+    orphan_images.rmdir()
 
     check([r.slug for r in core.search("kokosmilch")] == [curry.slug],
           "full-text search must include recipe content")
@@ -209,7 +229,7 @@ def main():
 
     # Every slug that slugify produces must remain a valid explicit slug.
     for sample in ("Käse-Soufflé", "Übungs-ß-Rezept", "100% Curry!!",
-                   "Nur Punkt-Slug", "..."):
+                   "Nur Punkt-Slug", "...", "CON", "NUL", "LPT1"):
         derived = core.slugify(sample)
         created = core.add_recipe(f"Beliebiger Titel für {sample}", slug=derived)
         check(created.slug == derived,
@@ -377,12 +397,36 @@ def main():
     check(core.check()["ok"] is True,
           "restored data files must check cleanly again")
 
+    categories_backup = core.categories_path().read_text(encoding="utf-8")
+    try:
+        for broken_categories in (
+            "[kein json]", "[]",
+            '{"diet": {"label": "Ernährung", "tags": "vegan"}}',
+        ):
+            core.categories_path().write_text(broken_categories, encoding="utf-8")
+            expect_valueerror(core.load_categories)
+            corrupted = core.check()
+            check(corrupted["ok"] is False
+                  and any("categories.json" in message
+                          for message in corrupted["invalid_data_files"]),
+                  "broken categories must return full check diagnostics instead of crashing")
+            check(corrupted["recipe_count"] == len(core.load_recipes()),
+                  "category errors must not hide the remaining catalog diagnostics")
+    finally:
+        core.categories_path().write_text(categories_backup, encoding="utf-8")
+
     # Regression: persisted entries with broken field types must surface as
     # integrity errors, not as raw KeyError/AttributeError loader crashes.
     index_backup = core.index_path().read_text(encoding="utf-8")
     try:
         for broken_index in (
             '[{"slug": "x", "title": null}]',
+            '[{"title": "T"}]',
+            '[{"slug": [], "title": "T"}]',
+            '[{"slug": "x", "title": "T", "tags": null}]',
+            '[{"slug": "x", "title": "T", "tags": [5]}]',
+            '[{"slug": "x", "title": "T", "duration_min": "schnell"}]',
+            '[{"slug": "x", "title": "T", "last_cooked": []}]',
             '[{"slug": "x", "title": "T", "images": {}}]',
             '[{"slug": "x", "title": "T", "images": [{"id": 5, "filename": "x.png"}]}]',
         ):
@@ -417,6 +461,13 @@ def main():
     expect_valueerror(core.update_recipe, long_recipe.slug, title="K" * 151)
     check(core.get(long_recipe.slug).title == long_title,
           "a rejected overlong title must not mutate the recipe")
+    expanded = core.add_recipe("Ä" * 150)
+    check(expanded.title == "Ä" * 150 and len(expanded.slug) <= 150,
+          "umlaut expansion must not exceed the portable slug filename bound")
+    core.archive_recipe(expanded.slug)
+    restored_expanded = core.restore_archived_recipe(expanded.slug)
+    check(restored_expanded.content().startswith("# " + "Ä" * 150),
+          "a maximum-length expanded slug must survive archive and restore")
 
     (core.recipes_dir() / "orphan.md").write_text("# Orphan\n", encoding="utf-8")
     core.recipe_file(curry.slug).unlink()

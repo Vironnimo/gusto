@@ -12,6 +12,8 @@ under recipes/ and data/ would be modified -- which is forbidden.
 import os
 import sys
 import tempfile
+from datetime import datetime, timezone
+from unittest.mock import patch
 
 # --- Hermetic: GUSTO_HOME to a throwaway directory, BEFORE the import -------
 os.environ["GUSTO_HOME"] = tempfile.mkdtemp(prefix="gusto-merge-test-")
@@ -160,18 +162,37 @@ check(changed.updated_at == "2099-01-01T00:00:00.001Z",
 check(changed.checked is True, "rapid mutation must preserve the actual change")
 
 
+class SameMillisecond(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return cls(2026, 9, 22, 12, 0, 0, 123500, tzinfo=timezone.utc)
+
+
+with patch.object(core, "datetime", SameMillisecond):
+    reset_local([item("rapid", "2026-09-22T12:00:00.123Z")])
+    changed = core.shopping_toggle("rapid", checked=True)
+    check(changed.updated_at == "2026-09-22T12:00:00.124Z",
+          "a mutation in the same wall-clock millisecond must get a new version")
+    removed_before = changed.updated_at
+    core.shopping_remove("rapid")
+    removed = by_id(core.shopping_load())["rapid"]
+    check(core._version_key(removed.updated_at) > core._version_key(removed_before),
+          "a subsequent removal in that millisecond must advance again")
+
+
 # --- 11) robustness: unknown/missing fields in the remote dict --------------
 reset_local([])
-# 'extra_field' is unknown and must be ignored; missing fields -> defaults from
-# ShoppingItem (from_dict).
+# Unknown fields are ignored; quantity/source remain optional. Status and
+# version fields are required so an incomplete payload cannot revive an item.
 result = core.shopping_merge([
     {"id": "x", "text": "Brot", "updated_at": "2026-06-23T18:00:00Z",
+     "created_at": "2026-06-23T18:00:00Z", "checked": False, "deleted": False,
      "extra_field": "ignore me"},
 ])
 m = by_id(result)
 check(m["x"].text == "Brot", "robust: known fields taken over")
-check(m["x"].quantity == "" and m["x"].checked is False and m["x"].deleted is False,
-      "robust: missing fields fall back to defaults")
+check(m["x"].quantity == "" and m["x"].source is None,
+      "robust: optional fields fall back to defaults")
 
 
 # --- 12) malformed remote state is rejected before it reaches persistence --
@@ -180,6 +201,12 @@ expect_valueerror(["not-an-object"])
 expect_valueerror([{}])
 expect_valueerror([item([], "2026-06-23T18:00:00Z")])
 expect_valueerror([item("x", 123)])
+for required_field in ("checked", "deleted", "created_at", "updated_at"):
+    incomplete = item("incomplete", "2026-06-23T18:00:00Z")
+    del incomplete[required_field]
+    expect_valueerror([incomplete])
+check("incomplete" not in by_id(core.shopping_load()),
+      "missing status/version fields must leave the persisted state untouched")
 
 
 core.add_recipe("Syncquelle", content="# Syncquelle\n", slug="syncquelle")

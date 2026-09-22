@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import sys
 import tempfile
@@ -46,6 +47,30 @@ def main():
           "corrupted favorites data must be reported by the integrity check")
     check(corrupted["ok"] is False,
           "corrupted favorites data must be a hard error")
+    for broken_need in (
+        {"name": "Milch"},
+        {"id": "x", "name": "Milch", "aliases": None},
+        {"id": "x", "name": "Milch", "aliases": [5]},
+        {"id": "x", "name": "Milch", "products": None},
+        {"id": "x", "name": "Milch", "products": [None]},
+        {"id": "x", "name": "Milch", "products": [{"name": "Produkt"}]},
+    ):
+        core.favorites_path().write_text(
+            json.dumps({"needs": [broken_need]}), encoding="utf-8")
+        expect_valueerror(core.favorites_load)
+        corrupted = core.check()
+        check(corrupted["ok"] is False
+              and any("favorites.json" in message
+                      for message in corrupted["invalid_data_files"]),
+              "broken favorite entries must return a named diagnostic instead of crashing")
+    core.favorites_path().write_text(json.dumps({"needs": [{
+        "id": "legacy", "name": "Milch",
+        "products": [{"id": "legacy-product", "name": "Produkt"}],
+    }]}), encoding="utf-8")
+    legacy = core.favorites_load()[0]
+    check(legacy.aliases == [] and legacy.created_at == ""
+          and legacy.products[0].brand == "" and legacy.products[0].image_filename == "",
+          "omitted optional fields in older favorites must keep their defaults")
     os.remove(core.favorites_path())
     check(core.favorites_load() == [],
           "a removed favorites file must load as an empty catalog")

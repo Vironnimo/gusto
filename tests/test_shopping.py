@@ -7,6 +7,7 @@ gusto.core is imported or any function is called. Otherwise the real data
 under recipes/ and data/ would be modified -- which is forbidden.
 """
 import os
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -70,6 +71,12 @@ def main():
              "- do not count\n")
     check(core.parse_ingredients(mixed) == ["Mehl", "Zucker"],
           "parse_ingredients: empty bullets/second section/'*' handled wrong.")
+    formatted = (
+        "## Zutaten\n**Für die Sauce**\n- Tomaten\n---\n* * *\n- - -\n"
+        "* **Basilikum**\n***optional***\n## Zubereitung\n- Nicht importieren\n"
+    )
+    check(core.parse_ingredients(formatted) == ["Tomaten", "**Basilikum**"],
+          "bold notes and Markdown separators must not become shopping items.")
 
     # Create a recipe (via the public core path, in the temp home).
     core.add_recipe("T", content=RECIPE_MD, slug="t")
@@ -89,6 +96,26 @@ def main():
           "corrupted shopping data must be reported as an integrity error.")
     check(corrupted["ok"] is False,
           "corrupted shopping data must be a hard error.")
+    for broken_item in (
+        {"text": "Milch"},
+        {"id": "x", "text": "Milch", "source": {}},
+        {"id": "x", "text": "Milch", "checked": "false"},
+        {"id": "x", "text": "Milch", "created_at": None},
+    ):
+        core.shopping_path().write_text(
+            json.dumps({"items": [broken_item]}), encoding="utf-8")
+        expect_valueerror(core.shopping_load)
+        corrupted = core.check()
+        check(corrupted["ok"] is False
+              and any("shopping_list.json" in message
+                      for message in corrupted["invalid_data_files"]),
+              "broken shopping entries must produce a named diagnostic instead of crashing")
+    core.shopping_path().write_text(
+        '{"items": [{"id": "legacy", "text": "Milch"}]}', encoding="utf-8")
+    legacy = core.shopping_load()[0]
+    check(legacy.checked is False and legacy.deleted is False
+          and legacy.created_at == "" and legacy.source is None,
+          "omitted optional fields in older stored items must keep their defaults")
     os.remove(core.shopping_path())
     check(core.shopping_load() == [],
           "a removed shopping file must load as an empty list.")
