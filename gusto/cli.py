@@ -22,6 +22,20 @@ from pathlib import Path
 from . import client
 
 
+class EditError(client.ClientError):
+    """An unfinished editor round-trip with a recoverable local copy."""
+
+    def __init__(self, error: Exception, *, slug: str, path: Path):
+        super().__init__(
+            f"{error} Lokale Rezeptkopie bleibt erhalten: '{path}'. "
+            f"Prüfe zuerst 'show {slug}' auf demselben Server; zum Fortsetzen "
+            f"nutze 'content set {slug} --file <recovery_path>' mit dieser Datei.",
+            outcome_unknown=getattr(error, "outcome_unknown", False),
+        )
+        self.slug = slug
+        self.recovery_path = os.fspath(path)
+
+
 def _dump(data) -> None:
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
@@ -306,7 +320,8 @@ def cmd_new(args):
         except (OSError, ValueError) as error:
             raise client.ClientError(
                 f"Rezept wurde bereits angelegt (Slug '{recipe['slug']}'); "
-                f"der Editor-Aufruf schlug fehl: {error}"
+                f"die Bearbeitung wurde nicht abgeschlossen: {error}",
+                outcome_unknown=getattr(error, "outcome_unknown", False),
             ) from error
     if args.json:
         result = dict(recipe)
@@ -343,8 +358,16 @@ def _edit_remote(args, slug: str) -> dict:
         _remote(
             args, "recipe.content.set", {"slug": slug, "content": content},
         )
-    finally:
-        temporary.unlink(missing_ok=True)
+    except (OSError, ValueError) as error:
+        if temporary.is_file():
+            raise EditError(error, slug=slug, path=temporary) from error
+        raise
+    else:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            # The upload succeeded; local cleanup must not invite a replay.
+            editor_result["retained_path"] = os.fspath(temporary)
     editor_result["slug"] = slug
     return editor_result
 
@@ -357,7 +380,13 @@ def cmd_edit(args):
 
 def cmd_content_set(args):
     if args.stdin:
-        content = sys.stdin.read()
+        try:
+            content = sys.stdin.read()
+        except UnicodeDecodeError as error:
+            raise client.ClientError(
+                "Rezepttext auf stdin konnte nicht gelesen werden "
+                "(erwartet wird UTF-8)."
+            ) from error
     else:
         try:
             content = Path(args.file).expanduser().read_text(encoding="utf-8")
@@ -1702,7 +1731,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> None:
-    for stream in (sys.stdout, sys.stderr):
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8")  # robust umlauts/JSON on Windows
         except Exception:
@@ -1712,7 +1741,14 @@ def main(argv=None) -> None:
         args.func(args)
     except (client.ClientError, ValueError) as error:
         if args.json:
-            _dump({"ok": False, "error": str(error)})
+            result = {"ok": False, "error": str(error)}
+            if getattr(error, "outcome_unknown", False):
+                result["outcome_unknown"] = True
+            recovery = error if isinstance(error, EditError) else error.__cause__
+            if isinstance(recovery, EditError):
+                result["slug"] = recovery.slug
+                result["recovery_path"] = recovery.recovery_path
+            _dump(result)
         else:
             print(str(error), file=sys.stderr)
         raise SystemExit(1) from None

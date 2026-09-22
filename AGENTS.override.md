@@ -110,9 +110,18 @@ select the server. Expected command failures write
 `{ "ok": false, "error": "..." }` to stdout and exit 1. `check --json` returns
 full diagnostics; `check --offline` is the explicit local recovery exception.
 `edit` downloads a temporary copy and uploads it after the editor exits;
-headless agents use `content set --file` or `content set --stdin`. Lifecycle
+headless agents send UTF-8 with `content set --file` or `content set --stdin`. Lifecycle
 commands (`serve`, `home`, `status`, `start`, `stop`, `restart`, `update`,
 `uninstall`, `install-skill`) remain local.
+
+Lost responses and server failures may return `outcome_unknown:true`: the
+command may already have applied. Never automatically retry a mutation after
+an uncertain response; inspect its state on the same verified server first.
+Read-only calls and documented idempotent operations are safe to retry.
+Failed `edit`/`new --edit` calls preserve the local recipe copy and report
+`slug` plus `recovery_path`. Read `show` before continuing with
+`content set <slug> --file <recovery_path> --json`; a confirmed upload removes
+the temporary copy, or reports `retained_path` if local cleanup fails.
 
 ```
 gusto list   [--tag T ...] [--max-time N]    Positive cap; unknown durations fail it

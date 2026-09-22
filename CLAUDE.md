@@ -5,6 +5,12 @@ reachable from any device on the local network. A Raspberry Pi is the first
 Linux deployment target, not an exclusive platform. Built to replace paper
 recipes and to enable e.g. meal suggestions based on the last few days.
 
+You work in this repository as a standalone agent with your normal tools and skills. You are not a managed node in the Vorch orchestrator system: do not invoke or impersonate its roles under `.opencode/agents/`, and perform investigation, implementation, testing, review, documentation, and git work yourself.
+
+## Read at Session Start
+
+Before doing anything else in every Session, read `.vorch/PROJECT.md` and `.vorch/GLOSSARY.md` completely. Use and maintain the Vorch knowledge base as a standalone agent whenever the work changes Project facts, contracts, terminology, or decisions. Immediately before Domain Map work, read `.vorch/workflows/domain-map-workflow.md` completely.
+
 ## Guiding principles (important!)
 
 1. **Agent-first.** Every feature must be fully usable via the CLI, so agents
@@ -24,14 +30,19 @@ recipes and to enable e.g. meal suggestions based on the last few days.
    not build it.
 5. **Ask first, then build.** Do not implement new features / larger steps
    without an explicit go. Present the concept → ask → only then code.
-6. **Verify in a real browser.** Check web changes with `scripts/browser_check.py`
-   (Playwright) against a throwaway copy of the data and produce screenshots.
-   Tests must never modify the real data.
+6. **Verify in a real browser through the local `playwright-cli` skill.** Never
+   use the internal Codex in-app browser or the Codex Browser plugin for this
+   project; it is unstable in this workspace and can crash the Codex app. Use
+   `.agents/skills/playwright-cli/SKILL.md` for all browser interaction and
+   visual verification. Run `scripts/browser_check.py` and
+   `scripts/pwa_check.py` where relevant, always against a throwaway copy of
+   the data, and produce screenshots. Tests must never modify the real data.
 7. **Show it live, don't just describe it.** When something runs, start the
    server yourself and give a clickable link — don't just explain how to start it.
 8. **Keep every agent guide and the skill in sync.** The usage documentation
-   deliberately lives here and under `skill/gusto/`. When the CLI, service or
-   installation behavior changes, update every copy immediately.
+   deliberately lives in the agent guides and under `skill/gusto/`. When the
+   CLI, service or installation behavior changes, update **every copy**
+   immediately — none of the agent-facing references may go stale.
 
 ## Data model
 
@@ -99,9 +110,18 @@ select the server. Expected command failures write
 `{ "ok": false, "error": "..." }` to stdout and exit 1. `check --json` returns
 full diagnostics; `check --offline` is the explicit local recovery exception.
 `edit` downloads a temporary copy and uploads it after the editor exits;
-headless agents use `content set --file` or `content set --stdin`. Lifecycle
+headless agents send UTF-8 with `content set --file` or `content set --stdin`. Lifecycle
 commands (`serve`, `home`, `status`, `start`, `stop`, `restart`, `update`,
 `uninstall`, `install-skill`) remain local.
+
+Lost responses and server failures may return `outcome_unknown:true`: the
+command may already have applied. Never automatically retry a mutation after
+an uncertain response; inspect its state on the same verified server first.
+Read-only calls and documented idempotent operations are safe to retry.
+Failed `edit`/`new --edit` calls preserve the local recipe copy and report
+`slug` plus `recovery_path`. Read `show` before continuing with
+`content set <slug> --file <recovery_path> --json`; a confirmed upload removes
+the temporary copy, or reports `retained_path` if local cleanup fails.
 
 ```
 gusto list   [--tag T ...] [--max-time N]    Positive cap; unknown durations fail it
@@ -170,12 +190,12 @@ edits. `edit` and `content set` also write through the server.
 Explicit `shopping check`/`uncheck` and repeated removal of the same tombstone
 are idempotent without advancing `updated_at`. `shopping add-recipe` rejects an
 empty ingredient section and refuses a repeat while any visible item from that
-recipe remains; the error reports their count. `shopping add --source
-<slug>` accepts only an existing recipe and its item participates in the same
-guard. It never merges same-looking ingredients or guesses quantities.
-`shopping remove-done` tombstones all checked items; `shopping clear`
-tombstones every visible item, whether open or checked. Both operations sync
-through tombstones and have no CLI restore.
+recipe remains; the error reports their count. `shopping add --source <slug>`
+accepts only an existing recipe and its item participates in the same guard. It
+never merges same-looking ingredients or guesses quantities. `shopping
+remove-done` tombstones all checked items; `shopping clear` tombstones every
+visible item, whether open or checked. Both operations sync through tombstones
+and have no CLI restore.
 
 `gusto delete` means **archive**, not destruction. It moves the recipe Markdown,
 full metadata, and every owned recipe image together under `archive/<slug>/`.

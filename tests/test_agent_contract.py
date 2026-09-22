@@ -113,11 +113,21 @@ def main():
             "gusto categories assign",
             "gusto install-skill vbot",
             "gusto/skill_install.py",
+            "outcome_unknown:true",
+            "recovery_path",
         ):
             check(required in guide,
                   f"{guide_name} is stale: missing {required}")
         check("sort the tag into `categories.json`" not in guide,
               f"{guide_name} still instructs agents to bypass the service")
+
+    entry = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    check("AGENTS.override.md" in entry and "standalone" in entry,
+          "the agent entry point must route to the standalone project guide")
+    codex_guide = (ROOT / "AGENTS.override.md").read_text(encoding="utf-8")
+    claude_guide = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
+    check(codex_guide.splitlines()[1:] == claude_guide.splitlines()[1:],
+          "the full project guides must share the same operating contract")
 
     print(f"OK - {checks} fresh-agent contract checks passed")
 

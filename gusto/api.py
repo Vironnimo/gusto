@@ -53,6 +53,19 @@ def _error(message: str, status_code: int = 400) -> JSONResponse:
     )
 
 
+def _json_object(pairs: list[tuple[str, object]]) -> dict:
+    """Reject repeated fields before JSON decoding can discard an instruction."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise CommandError(
+                f"JSON-Feld '{key}' wurde mehrfach angegeben; "
+                "gib jedes Feld genau einmal an."
+            )
+        result[key] = value
+    return result
+
+
 def _not_found_error(error: ValueError) -> int:
     message = str(error)
     prefixes = (
@@ -840,7 +853,9 @@ async def command(request: Request):
                 413,
             )
     try:
-        body = await request.json()
+        body = json.loads(await request.body(), object_pairs_hook=_json_object)
+    except CommandError as error:
+        return _error(str(error), error.status_code)
     except Exception:
         return _error("Ungültiges JSON.")
     if not isinstance(body, dict):

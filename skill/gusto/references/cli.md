@@ -29,6 +29,12 @@ Expected command failures with `--json` return
 `1` when it finds hard integrity errors. Argument and usage errors from the
 parser remain plain stderr and exit `2`.
 
+A lost response or server failure adds `"outcome_unknown":true`: the command
+may already have applied. Never automatically replay a mutation after that
+error. Read its state on the same verified server (`show`, `shopping list`,
+`log`, or the relevant list/show command) before deciding whether to retry.
+Read-only queries and documented idempotent operations can be retried safely.
+
 ## Contents
 
 - [Commands](#commands)
@@ -94,11 +100,17 @@ parser remain plain stderr and exit `2`.
   Download Markdown to a temporary file, open it in `$EDITOR`, then upload the
   completed content through the server. JSON waits until the editor exits and
   returns `slug`, temporary absolute `path`, `editor`, and `exit_code`.
+  The temporary `path` is removed after a confirmed upload; if cleanup fails,
+  success includes `retained_path`. A failed edit keeps its local copy and adds
+  `slug` and `recovery_path` to the JSON error, also for `new --edit`. Inspect
+  `show` on the same server first; if the intended content is not already
+  saved, continue with `content set <slug> --file <recovery_path> --json`.
   Without `EDITOR` set, Windows opens notepad and Linux nano — headless agents
   must set `EDITOR` to a scriptable editor or use `content set` instead.
 - `content set <slug> (--file PATH | --stdin) [--json]`
-  Replace the complete Markdown body through the server from a local UTF-8 file
-  or stdin. Use this for headless agents; never edit the live data directory.
+  Replace the complete Markdown body through the server from a local file
+  or stdin, both encoded as UTF-8. Use this for headless agents; never edit the
+  live data directory.
 - `cooked <slug> [--date YYYY-MM-DD] [--json]`
   Add a log entry (default: today) and bump `last_cooked`. An explicit date
   must be a valid calendar date in that exact format and cannot be in the future.

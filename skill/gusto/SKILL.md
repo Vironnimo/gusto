@@ -42,6 +42,8 @@ German.
    `{"ok":false,"error":"..."}` on stdout and exit 1. Parser/usage failures
    remain stderr and exit 2. `check --json` returns its full diagnostics object
    with `ok:false` and exit 1 for integrity errors.
+   If a response is lost, `outcome_unknown:true` means the command may already
+   have applied. Read the state on the same server before repeating a mutation.
 6. Never edit live recipe Markdown or JSON directly. Use `new`, `set`,
    `content set`, `categories ...`, and the other CLI mutations so Core locking,
    invariants, events, and browser state stay correct.
@@ -108,7 +110,7 @@ Search covers title, tags, and complete recipe Markdown, including ingredients.
 3. Run `gusto new "<title>" --tags a,b --duration 25 --servings 2 --json`.
    Use the returned slug. This creates both Markdown and catalog metadata.
 4. Send the complete recipe through `gusto content set <slug> --stdin --json`
-   (or `--file`). Use `# <title>`, `## Zutaten` with bullets, and `##
+   (or `--file`); both inputs use UTF-8. Use `# <title>`, `## Zutaten` with bullets, and `##
    Zubereitung` with numbered steps. Add no frontmatter. Core rewrites the first
    H1 to the stored title.
 5. Inspect every useful supplied image and add it with `gusto image add <slug>
@@ -129,7 +131,8 @@ Use `--cover` while adding or `image cover <slug> <id>` later. Roles such as
 - Body, headless: read with `show`, then send the complete replacement through
   `content set --stdin` or `--file`. Re-read with `show` and run `check`.
 - Body, interactive human editor: `gusto edit <slug>` downloads a temporary
-  copy and uploads it after the editor exits.
+  copy and uploads it after the editor exits. A failed edit preserves the copy
+  at `recovery_path`; inspect `show` before resuming with `content set --file`.
 - Cooking history: `gusto cooked <slug> [--date YYYY-MM-DD] --json`. Explicit
   dates must be valid and not in the future.
 

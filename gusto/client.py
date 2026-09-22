@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import os
 import socket
@@ -20,6 +21,22 @@ SETTINGS_FILENAME = "gusto.settings.json"
 
 class ClientError(ValueError):
     """An expected transport or remote-command failure."""
+
+    def __init__(self, message: str, *, outcome_unknown: bool = False):
+        super().__init__(message)
+        self.outcome_unknown = outcome_unknown
+
+
+def _response_failure(message: str, method: str) -> ClientError:
+    """A lost command response does not prove the command was not applied."""
+    unknown = method != "GET"
+    if unknown:
+        message += (
+            " Die Ausführung ist nicht bestätigt; der Befehl kann bereits "
+            "ausgeführt sein. Prüfe den Zustand auf demselben Server, bevor "
+            "du eine Änderung erneut sendest."
+        )
+    return ClientError(message, outcome_unknown=unknown)
 
 
 def default_settings_path(
@@ -119,7 +136,7 @@ def encode_attachment(
 def _decode_response(response, *, url: str) -> Any:
     try:
         raw = response.read()
-    except OSError as exc:
+    except (OSError, http.client.HTTPException) as exc:
         raise ClientError(f"Antwort von Gusto konnte nicht gelesen werden: {exc}") from exc
     try:
         payload = json.loads(raw.decode("utf-8"))
@@ -154,17 +171,24 @@ def _request_json(
         try:
             decoded = _decode_response(exc, url=url)
         except ClientError:
-            raise ClientError(
-                f"Gusto-Server unter {url} antwortete mit HTTP {exc.code}."
+            raise _response_failure(
+                f"Gusto-Server unter {url} antwortete mit HTTP {exc.code}.",
+                method,
             ) from None
         message = decoded.get("error") if isinstance(decoded, dict) else None
         if not isinstance(message, str) or not message:
             message = f"Gusto-Server antwortete mit HTTP {exc.code}."
+        if exc.code >= 500:
+            raise _response_failure(message, method) from None
         raise ClientError(message) from None
-    except (error.URLError, TimeoutError, socket.timeout, OSError) as exc:
+    except ClientError as exc:
+        raise _response_failure(str(exc), method) from exc
+    except (error.URLError, TimeoutError, socket.timeout, OSError,
+            http.client.HTTPException) as exc:
         reason = getattr(exc, "reason", exc)
-        raise ClientError(
-            f"Gusto-Server unter {url} ist nicht erreichbar: {reason}"
+        raise _response_failure(
+            f"Gusto-Server unter {url} ist nicht erreichbar "
+            f"oder die Antwort wurde unterbrochen: {reason}", method,
         ) from exc
     return decoded
 
@@ -199,11 +223,16 @@ def command(
     )
     if response.get("ok") is not True:
         message = response.get("error")
-        if not isinstance(message, str) or not message:
-            message = "Gusto-Server meldete einen unbekannten Fehler."
+        if (response.get("ok") is not False
+                or not isinstance(message, str) or not message):
+            raise _response_failure(
+                "Gusto-Server lieferte keine gültige Befehlsbestätigung.", "POST",
+            )
         raise ClientError(message)
     if "result" not in response:
-        raise ClientError("Gusto-Serverantwort enthält kein 'result'-Feld.")
+        raise _response_failure(
+            "Gusto-Serverantwort enthält kein 'result'-Feld.", "POST",
+        )
     return response["result"]
 
 

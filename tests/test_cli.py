@@ -11,9 +11,11 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, timedelta
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -44,11 +46,11 @@ def check(condition, message):
     checks += 1
 
 
-def run(*arguments, expect=0, input_text=None):
+def run(*arguments, expect=0, input_text=None, server_url=SERVER_URL):
     result = subprocess.run(
         [
             sys.executable, "-m", "gusto", *arguments,
-            "--server", SERVER_URL,
+            "--server", server_url,
         ],
         cwd=ROOT, env=ENV, input=input_text,
         text=True, encoding="utf-8", capture_output=True,
@@ -58,12 +60,12 @@ def run(*arguments, expect=0, input_text=None):
     return result
 
 
-def as_json(*arguments):
-    return json.loads(run(*arguments, "--json").stdout)
+def as_json(*arguments, server_url=SERVER_URL):
+    return json.loads(run(*arguments, "--json", server_url=server_url).stdout)
 
 
-def as_json_error(*arguments):
-    result = run(*arguments, "--json", expect=1)
+def as_json_error(*arguments, server_url=SERVER_URL):
+    result = run(*arguments, "--json", expect=1, server_url=server_url)
     check(result.stderr == "", "JSON command errors must not emit plain stderr text")
     payload = json.loads(result.stdout)
     check(payload.get("ok") is False and isinstance(payload.get("error"), str),
@@ -445,7 +447,10 @@ def check_lifecycle_contract():
 def check_edit_readback_contract():
     from gusto import cli
 
+    edited_paths = []
+
     def non_utf8_editor(path, *, quiet=False):
+        edited_paths.append(Path(path))
         Path(path).write_bytes(b"# Kaputt\n\n- Zutat \xe4\n")
         return {"editor": "fake", "path": os.fspath(Path(path)), "exit_code": 0}
 
@@ -463,12 +468,113 @@ def check_edit_readback_contract():
             except cli.client.ClientError as error:
                 check("UTF-8" in str(error) and "codec" not in str(error),
                       "edit must report a non-UTF-8 editor result in German")
+                check(isinstance(error, cli.EditError)
+                      and error.recovery_path == os.fspath(edited_paths[-1])
+                      and edited_paths[-1].read_bytes().endswith(b"Zutat \xe4\n"),
+                      "invalid editor encoding must preserve the exact local copy")
             except UnicodeDecodeError:
                 raise AssertionError(
                     "edit leaked a raw UnicodeDecodeError for non-UTF-8 content"
                 ) from None
             else:
                 raise AssertionError("non-UTF-8 editor content was accepted")
+    for path in edited_paths:
+        path.unlink()
+
+
+def check_uncertain_delivery_contract():
+    """Lose a response after the real service commits, then recover via the CLI."""
+    from gusto import cli
+
+    received = []
+    drop_operations = {"shopping.add", "recipe.content.set"}
+
+    class LostResponseProxy(BaseHTTPRequestHandler):
+        def do_GET(self):
+            with request.urlopen(f"{SERVER_URL}{self.path}") as upstream:
+                payload = upstream.read()
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            operation = json.loads(body)["operation"]
+            received.append(operation)
+            outgoing = request.Request(
+                f"{SERVER_URL}{self.path}", data=body,
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            with request.urlopen(outgoing) as upstream:
+                payload = upstream.read()
+            if operation in drop_operations:
+                self.close_connection = True
+                return
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *_args):
+            pass
+
+    with HTTPServer(("127.0.0.1", 0), LostResponseProxy) as proxy:
+        worker = threading.Thread(target=proxy.serve_forever, daemon=True)
+        worker.start()
+        proxy_url = f"http://127.0.0.1:{proxy.server_port}"
+        recovered_paths = []
+        try:
+            home = as_json("home", server_url=proxy_url)
+            check(home["server_reachable"] and home["server_url"] == proxy_url
+                  and Path(home["server_data_path"]).resolve() == HOME.resolve(),
+                  "fault fixture must identify the same disposable live store")
+            failed = as_json_error(
+                "shopping", "add", "Verbindungsabbruch-Test", server_url=proxy_url,
+            )
+            check(failed.get("outcome_unknown") is True
+                  and "demselben Server" in failed["error"],
+                  "lost POST responses need explicit uncertainty and recovery guidance")
+            applied = [item for item in as_json("shopping", "list")
+                       if item["text"] == "Verbindungsabbruch-Test"]
+            check(len(applied) == 1 and received.count("shopping.add") == 1,
+                  "a committed command with a lost response must never be replayed")
+            as_json("shopping", "remove", applied[0]["id"])
+
+            recipe = as_json("new", "Editor Wiederaufnahme")
+            content = "# Editor Wiederaufnahme\n\n## Zutaten\n\n- Bohnen\n"
+
+            def edit_copy(path, *, quiet=False):
+                recovered_paths.append(Path(path))
+                Path(path).write_text(content, encoding="utf-8")
+                return {"editor": "fixture", "path": str(path), "exit_code": 0}
+
+            output = io.StringIO()
+            with patch.object(cli, "_open_editor", side_effect=edit_copy):
+                with redirect_stdout(output):
+                    try:
+                        cli.main([
+                            "--server", proxy_url, "edit", recipe["slug"], "--json",
+                        ])
+                    except SystemExit as error:
+                        check(error.code == 1, "failed edit must exit 1")
+                    else:
+                        raise AssertionError("lost edit response was accepted")
+            failure = json.loads(output.getvalue())
+            check(failure.get("outcome_unknown") is True
+                  and failure.get("slug") == recipe["slug"]
+                  and failure.get("recovery_path") == str(recovered_paths[-1])
+                  and recovered_paths[-1].read_text(encoding="utf-8") == content,
+                  "edit JSON must expose its intact local recovery copy and target")
+            saved = as_json("show", recipe["slug"])
+            check(saved["content"] == content
+                  and received.count("recipe.content.set") == 1,
+                  "readback must reveal the committed edit without replaying the upload")
+            as_json("delete", recipe["slug"])
+            as_json("archive", "purge", recipe["slug"], "--yes")
+        finally:
+            for path in recovered_paths:
+                path.unlink(missing_ok=True)
+            proxy.shutdown()
+            worker.join(timeout=5)
 
 
 def main():
@@ -489,6 +595,7 @@ def main():
           and isinstance(home["server_revision"], int)
           and home["server_version"],
           "home --json must identify the reachable server-owned store/version")
+    check_uncertain_delivery_contract()
     check_serve_json_contract()
     check_serve_dependency_preflight()
     invalid_port = run("serve", "--port", "70000", expect=2)
@@ -658,13 +765,30 @@ def main():
     )
     check(content_result["slug"] == slug,
           "content set --file must transfer Markdown through the API")
-    stdin_content = "# Neue Suppe\n\n## Zutaten\n\n- Wasser\n- Salz\n"
-    stdin_result = json.loads(run(
+    stdin_content = (
+        "# Neue Suppe\n\n## Zutaten\n\n- Wasser\n- Salz\n\n"
+        "## Zubereitung\n\n1. Gemüse, Käse und Öl hinzufügen. 🥣\n"
+    )
+    stdin_call = [
+        sys.executable, "-m", "gusto", "--server", SERVER_URL,
         "content", "set", slug, "--stdin", "--json",
-        input_text=stdin_content,
-    ).stdout)
-    check(stdin_result["slug"] == slug,
-          "content set --stdin must support headless agents")
+    ]
+    stdin_result = subprocess.run(
+        stdin_call, cwd=ROOT,
+        env={**ENV, "PYTHONIOENCODING": "cp1252"},
+        input=stdin_content.encode("utf-8"), capture_output=True,
+    )
+    check(stdin_result.returncode == 0
+          and json.loads(stdin_result.stdout)["content"] == stdin_content
+          and as_json("show", slug)["content"] == stdin_content,
+          "UTF-8 stdin must retain umlauts and emoji even with a legacy console encoding")
+    invalid_stdin = subprocess.run(
+        stdin_call, cwd=ROOT, env=ENV, input=b"# Invalid\n\xff", capture_output=True,
+    )
+    check(invalid_stdin.returncode == 1 and not invalid_stdin.stderr
+          and "UTF-8" in json.loads(invalid_stdin.stdout)["error"]
+          and as_json("show", slug)["content"] == stdin_content,
+          "invalid UTF-8 stdin must return a structured error before mutation")
     conflicting_content = run(
         "content", "set", slug, "--stdin", "--file", os.fspath(recipe_source),
         expect=2,
@@ -852,6 +976,10 @@ def main():
           "new --edit must name the already-created slug when the editor fails")
     check(as_json("show", "editorfail-test")["title"] == "Editorfail Test",
           "a failed new --edit must leave the created recipe in place")
+    recovery_copy = Path(editor_failure["recovery_path"])
+    check(editor_failure["slug"] == "editorfail-test" and recovery_copy.is_file(),
+          "new --edit must identify its existing target and retained copy")
+    recovery_copy.unlink()
 
     deleted = as_json("delete", slug)
     check(deleted["slug"] == slug and deleted["archived"] is True

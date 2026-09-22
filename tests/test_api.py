@@ -180,6 +180,26 @@ def main():
         "unexpected": True,
     })
     check(response.status_code == 400, "unknown envelope fields must fail")
+    for raw in (
+        '{"operation":"recipe.create","operation":"shopping.clear",'
+        '"arguments":{}}',
+        '{"operation":"recipe.create","arguments":{"title":"First",'
+        '"title":"Second"}}',
+        '{"operation":"shopping.add","arguments":{"text":"First"},'
+        '"arguments":{"text":"Second"}}',
+    ):
+        before = core.change_state()
+        response = client.post(
+            "/api/v1/command", content=raw,
+            headers={"Content-Type": "application/json"},
+        )
+        check(response.status_code == 400
+              and response.json()["ok"] is False
+              and "mehrfach" in response.json()["error"],
+              "duplicate JSON fields must not silently choose the last value")
+        check(core.change_state() == before and core.load_recipes() == []
+              and core.shopping_list() == [],
+              "ambiguous JSON must be rejected before any durable effect")
     invalid_after = client.get("/api/v1/events?after=-1")
     check(
         invalid_after.status_code == 400
