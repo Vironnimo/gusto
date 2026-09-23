@@ -146,6 +146,33 @@ def main():
     check(not core.favorite_image_path(updated.image_filename).exists(),
           "removing image metadata must remove the owned file")
 
+    everywhere = core.favorite_add_product(need.id, "Hausmarke", brand="Ja!")
+    several = core.favorite_add_product(
+        need.id, "Bio-Teig", brand="Alnatura", store=" Edeka ,  dm ",
+    )
+    ranking = core.favorite_get_need(need.id)
+    at_rewe = core.favorite_for_store(ranking, "  rewe ")
+    check(at_rewe["store"] == "rewe"
+          and [p["id"] for p in at_rewe["products"]]
+          == [second.id, first.id, everywhere.id]
+          and [p["id"] for p in at_rewe["other_products"]] == [several.id],
+          "a store view must keep the ranking of products sold there or anywhere")
+    at_dm = core.favorite_for_store(ranking, "DM")
+    check([p["id"] for p in at_dm["products"]]
+          == [second.id, everywhere.id, several.id]
+          and [p["id"] for p in at_dm["other_products"]] == [first.id],
+          "comma-separated stores must each match exactly, ignoring case")
+    check([p["id"] for p in core.favorite_for_store(ranking, "Aldi")["products"]]
+          == [second.id, everywhere.id],
+          "an unknown store must only offer products without a store")
+    check(core.favorite_for_store(ranking, "REW")["other_products"][0]["id"] == first.id,
+          "store matching must not use substrings")
+    expect_valueerror(core.favorite_for_store, ranking, "   ")
+    check(len(core.favorite_get_need(need.id).products) == 4,
+          "a store view must not change the stored ranking")
+    core.favorite_remove_product(need.id, everywhere.id)
+    core.favorite_remove_product(need.id, several.id)
+
     consistent = core.check()
     check(not consistent["duplicate_favorite_aliases"]
           and not consistent["missing_favorite_image_files"]

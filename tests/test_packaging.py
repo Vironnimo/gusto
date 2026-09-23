@@ -132,6 +132,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
         "share/gusto/skill/gusto/references/cli.md",
         "share/gusto/skill/gusto/references/installation.md",
         "share/gusto/skill/gusto/references/telegram.md",
+        "share/gusto/skill/gusto/references/shopping-trip.md",
     ):
         check(any(name.endswith(required) for name in packaged),
               f"wheel agent-skill asset missing: {required}")

@@ -561,20 +561,27 @@ def _favorites_list(arguments: dict, _attachments: dict) -> list[dict]:
 
 
 def _favorites_show(arguments: dict, _attachments: dict) -> dict:
-    values = _arguments(arguments, allowed={"need"}, required={"need"})
+    values = _arguments(arguments, allowed={"need", "store"}, required={"need"})
     identifier = _string(values, "need")
     need = core.favorite_get_need(identifier)
     if need is None:
         raise CommandError(
             f"Kein Einkaufsbedarf mit id oder Name '{identifier}'.", 404,
         )
-    return need.to_dict()
+    return _favorite_result(need, _string(values, "store", optional=True))
 
 
 def _favorites_match(arguments: dict, _attachments: dict):
-    values = _arguments(arguments, allowed={"text"}, required={"text"})
+    values = _arguments(arguments, allowed={"text", "store"}, required={"text"})
     need = core.favorite_match(_string(values, "text"))
-    return need.to_dict() if need is not None else None
+    if need is None:
+        return None
+    return _favorite_result(need, _string(values, "store", optional=True))
+
+
+def _favorite_result(need, store: str | None) -> dict:
+    """Full need, or its ranking narrowed to one store when one is given."""
+    return need.to_dict() if store is None else core.favorite_for_store(need, store)
 
 
 def _favorites_add(arguments: dict, _attachments: dict) -> dict:

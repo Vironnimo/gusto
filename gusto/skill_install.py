@@ -17,6 +17,7 @@ REQUIRED_SKILL_FILES = (
     Path("references/cli.md"),
     Path("references/installation.md"),
     Path("references/telegram.md"),
+    Path("references/shopping-trip.md"),
 )
 
 

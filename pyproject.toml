@@ -38,4 +38,5 @@ gusto = [
     "skill/gusto/references/cli.md",
     "skill/gusto/references/installation.md",
     "skill/gusto/references/telegram.md",
+    "skill/gusto/references/shopping-trip.md",
 ]

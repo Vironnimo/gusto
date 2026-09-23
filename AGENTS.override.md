@@ -157,8 +157,8 @@ gusto image set <slug> <id> [--role R] [--caption TEXT]
 gusto image cover <slug> <id>                 Select the top image
 gusto image remove <slug> <id>                Delete one stored image
 
-gusto favorites list|show <need>              List shared shopping needs / one ranking
-gusto favorites match "<text>"                 Match only an exact known name or alias
+gusto favorites list|show <need> [--store S]   List shared shopping needs / one ranking
+gusto favorites match "<text>" [--store S]     Match only an exact known name or alias
 gusto favorites add "<name>" [--alias TEXT ...]
 gusto favorites set <need> --name N            Rename; old name becomes an alias
 gusto favorites remove <need>
@@ -238,7 +238,18 @@ array is already ordered from most preferred to fallback. Matching only folds
 case and whitespace: never infer quantities or substrings. To teach a known
 formulation use `favorites alias-add`; create and rank product cards through
 `favorites product-add|product-set|product-move|product-remove`. Product images
-are copied into Gusto and may be shown offline by the shopping PWA.
+are copied into Gusto and may be shown offline by the shopping PWA. A product's
+`store` says where it is sold (comma-separated for several, empty = everywhere);
+`--store REWE` on `match`/`show` keeps only the cards available at REWE in
+`products` (ranking unchanged) and moves the rest to `other_products`.
+
+**Shopping trip for a named store:** "wir fahren zu REWE" → read `gusto shopping
+list --pending --json`, order the items on the fly along that store's route
+(the route the user described, else the typical supermarket route: Obst &
+Gemüse → Brot → Kühlregal → Fleisch/Fisch → Trockensortiment → Frühstück →
+Süßes → Getränke → Tiefkühl → Drogerie), and name each item's pick from
+`favorites match "<text>" --store REWE --json`. Gusto persists no store layout;
+the route lives only in the agent's answer or the Telegram checklist order.
 
 **Shopping list as a Telegram checklist:** the agent posts the list via vBot's
 `channel_send` tool (inline-keyboard) — one `chk:<id>` button per item (leading
@@ -279,7 +290,8 @@ Full round-trip in the on-demand skill reference
   test used only on fresh GitHub-hosted runners
 - `deploy/install-systemd.sh`, `deploy/install-windows-task.ps1` — compatibility adapters
 - `skill/gusto/` — canonical self-contained skill (`SKILL.md` plus CLI,
-  installation, and Telegram references). Every app runtime carries it;
+  installation, Telegram, and store shopping-trip references). Every app
+  runtime carries it;
   `gusto install-skill vbot` explicitly installs/replaces the vBot copy.
 
 ## Commits

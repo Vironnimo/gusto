@@ -81,8 +81,13 @@ def main():
         "archive purge",
         "install-skill vbot",
         "references/telegram.md",
+        "references/shopping-trip.md",
     ):
         check(required in skill, f"main skill lost critical guidance: {required}")
+    trip = (skill_root / "references/shopping-trip.md").read_text(encoding="utf-8")
+    check("--store" in trip and "no store layout" in trip
+          and "references/telegram.md" in trip,
+          "the store trip reference must keep the on-the-fly route contract")
     check("chk:" not in skill and "chk:" in telegram and "run:done" in telegram,
           "host-specific Telegram detail must stay routed out of the main skill")
 

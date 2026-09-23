@@ -520,6 +520,20 @@ def main():
         and stored["store"] == "Edeka",
         "favorites.product.set must still apply one single effective field",
     )
+    at_edeka = command("favorites.match", {"text": "Haferdrink", "store": "edeka"})
+    check(at_edeka["store"] == "edeka"
+          and [p["id"] for p in at_edeka["products"]]
+          == [first_product["id"], second_product["id"]]
+          and at_edeka["other_products"] == [],
+          "favorites.match with store must keep products sold there or anywhere")
+    at_rewe = command("favorites.show", {"need": need["id"], "store": "REWE"})
+    check([p["id"] for p in at_rewe["products"]] == [second_product["id"]]
+          and [p["id"] for p in at_rewe["other_products"]] == [first_product["id"]],
+          "favorites.show with store must move other stores' products aside")
+    check("store" not in command("favorites.show", {"need": need["id"]}),
+          "favorites.show without store must keep the full ranking shape")
+    command("favorites.match", {"text": "Haferdrink", "store": " "}, status=400)
+    command("favorites.match", {"text": "Haferdrink", "store": 1}, status=400)
     blanked = command("favorites.product.set", {
         "need": need["id"], "id": first_product["id"],
         "name": None, "brand": None, "store": "", "note": None,

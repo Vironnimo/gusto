@@ -921,6 +921,19 @@ def main():
     shown_need = as_json("favorites", "show", need["id"])
     check(len(shown_need["products"]) == 2,
           "favorites show --json must include ranked products")
+    at_edeka = as_json("favorites", "match", "1 Rolle Pizzateig", "--store", "Edeka")
+    check([product["id"] for product in at_edeka["products"]] == [fallback["id"]]
+          and [product["id"] for product in at_edeka["other_products"]]
+          == [favorite["id"]],
+          "favorites match --store --json must narrow the ranking to that store")
+    at_rewe = as_json("favorites", "show", need["id"], "--store", "rewe")
+    check([product["id"] for product in at_rewe["products"]]
+          == [fallback["id"], favorite["id"]],
+          "favorites show --store --json must keep products sold there or anywhere")
+    store_text = run("favorites", "match", "1 Rolle Pizzateig", "--store", "Edeka")
+    check("1. Pizza-Kit" in store_text.stdout
+          and "Anderswo: Frischer Pizzateig (REWE)" in store_text.stdout,
+          "favorites match --store must print the store's ranking for humans")
     renamed_need = as_json(
         "favorites", "set", need["id"], "--name", "Frischer Pizzateig",
     )

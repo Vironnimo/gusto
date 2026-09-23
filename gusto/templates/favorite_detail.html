@@ -66,7 +66,7 @@
           <form class="favorite-form favorite-product-form" method="post" enctype="multipart/form-data" action="/favorites/{{ need.id }}/product/{{ product.id }}/set">
             <label>Produktname<input name="name" value="{{ product.name }}" required></label>
             <label>Marke<input name="brand" value="{{ product.brand }}" required></label>
-            <label>Bevorzugter Laden<input name="store" value="{{ product.store }}"></label>
+            <label>Erhältlich bei<input name="store" value="{{ product.store }}" placeholder="leer = überall; mehrere mit Komma"></label>
             <label class="favorite-form-wide">Notiz<textarea name="note" rows="2">{{ product.note }}</textarea></label>
             <div class="favorite-form-wide">
               <span class="photo-field-label">Neues Foto <span class="hint">optional</span></span>
@@ -92,7 +92,7 @@
       <form class="favorite-form favorite-product-form" method="post" enctype="multipart/form-data" action="/favorites/{{ need.id }}/product/add">
         <label>Produktname<input name="name" placeholder="z.B. Frischer Pizzateig 400 g" required></label>
         <label>Marke<input name="brand" placeholder="z.B. Tante Fanny" required></label>
-        <label>Bevorzugter Laden<input name="store" placeholder="z.B. REWE"></label>
+        <label>Erhältlich bei<input name="store" placeholder="z.B. REWE, Edeka – leer = überall"></label>
         <label class="favorite-form-wide">Notiz<textarea name="note" rows="2" placeholder="z.B. wird besonders knusprig"></textarea></label>
         <div class="favorite-form-wide">
           <span class="photo-field-label">Foto <span class="hint">optional</span></span>

@@ -22,6 +22,9 @@ German.
   `references/cli.md`.
 - **Need a tappable Telegram shopping checklist:** read
   `references/telegram.md` completely before posting it.
+- **Shopping at a named store** ("wir fahren zu REWE"): read
+  `references/shopping-trip.md` completely; order the list along that store's
+  route on the fly and name store-specific preferred products.
 
 ## Non-negotiable operating contract
 
@@ -169,6 +172,10 @@ Use `--cover` while adding or `image cover <slug> <id>` later. Roles such as
   name or learned alias after case/whitespace normalization. Never infer
   substrings, alternatives, or quantities.
 - The returned `products` array is already ordered from preferred to fallback.
+- Add `--store <Laden>` when the store is known: `products` then keeps only the
+  cards sold there or everywhere (empty `store`), in ranking order;
+  `other_products` shows what is preferred elsewhere. A product's `store` is
+  where it is sold and may list several stores separated by commas.
 - Use `alias-add|alias-remove` to teach exact wording and
   `product-add|product-set|product-move|product-remove` for ranked product
   cards. Images are copied into Gusto. Exact flags are in `references/cli.md`.
@@ -206,3 +213,4 @@ skill, including removal of stale files. It does not install vBot itself.
 - `references/installation.md` — app install, repair, service, update, skill
   delivery, and uninstall lifecycle.
 - `references/telegram.md` — exact vBot Telegram checklist round-trip.
+- `references/shopping-trip.md` — store-ordered list with store-specific picks.

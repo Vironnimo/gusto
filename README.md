@@ -159,6 +159,7 @@ gusto image set <slug> <id> --role step --caption "Nach dem Anbraten"
 gusto image cover <slug> <id>       # select the top image
 gusto image remove <slug> <id>
 gusto favorites match "200 g Spaghetti"  # show the ranked household choice
+gusto favorites match "Marmelade" --store REWE  # only what we buy at REWE
 gusto favorites add "Spaghetti" --alias "200 g Spaghetti"
 gusto favorites product-add Spaghetti "De Cecco n. 12" --brand "De Cecco" --image photo.png
 gusto favorites product-move Spaghetti <id> 1

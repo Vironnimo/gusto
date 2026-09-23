@@ -687,14 +687,15 @@ def cmd_favorites_list(args):
         print(f"  {need['id']}  {need['name']}  ({count} {noun})")
 
 
-def cmd_favorites_show(args):
-    need = _remote(args, "favorites.show", {"need": args.need})
-    if args.json:
-        _dump(need)
-        return
-    print(need["name"])
-    if need["aliases"]:
-        print("  Aliasse: " + ", ".join(need["aliases"]))
+def _store_arguments(args, arguments: dict) -> dict:
+    if args.store is not None:
+        arguments["store"] = args.store
+    return arguments
+
+
+def _print_favorite_products(need: dict) -> None:
+    if "store" in need and not need["products"]:
+        print(f"  Kein Lieblingsprodukt bei {need['store']}.")
     for position, product in enumerate(need["products"], 1):
         details = " · ".join(
             value for value in [product["brand"], product.get("store")] if value
@@ -703,16 +704,36 @@ def cmd_favorites_show(args):
             f"  {position}. {product['name']}"
             + (f"  [{details}]" if details else "")
         )
+    elsewhere = need.get("other_products") or []
+    if elsewhere:
+        print("  Anderswo: " + ", ".join(
+            f"{product['name']} ({product['store']})" for product in elsewhere
+        ))
+
+
+def cmd_favorites_show(args):
+    need = _remote(args, "favorites.show",
+                   _store_arguments(args, {"need": args.need}))
+    if args.json:
+        _dump(need)
+        return
+    print(need["name"] + (f"  (bei {need['store']})" if "store" in need else ""))
+    if need["aliases"]:
+        print("  Aliasse: " + ", ".join(need["aliases"]))
+    _print_favorite_products(need)
 
 
 def cmd_favorites_match(args):
-    need = _remote(args, "favorites.match", {"text": args.text})
+    need = _remote(args, "favorites.match",
+                   _store_arguments(args, {"text": args.text}))
     if args.json:
         _dump(need)
     elif need is None:
         print("Keine Zuordnung gefunden.")
     else:
         print(f"{args.text} -> {need['name']}")
+        if args.store is not None:
+            _print_favorite_products(need)
 
 
 def cmd_favorites_add(args):
@@ -1506,6 +1527,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("favorites", help="Lieblingsprodukte verwalten.")
     fsub = sp.add_subparsers(dest="favorites_command", required=True)
 
+    store_filter_help = (
+        "Nur Produkte zeigen, die es in diesem Laden gibt "
+        "(Produkte ohne Laden gelten ueberall)."
+    )
     fp = fsub.add_parser("list", parents=[base],
                          help="Alle Einkaufsbedarfe anzeigen.")
     fp.set_defaults(func=cmd_favorites_list)
@@ -1513,11 +1538,13 @@ def build_parser() -> argparse.ArgumentParser:
     fp = fsub.add_parser("show", parents=[base],
                          help="Einen Einkaufsbedarf mit Produkten anzeigen.")
     fp.add_argument("need", help="Id oder exakter Name des Einkaufsbedarfs.")
+    fp.add_argument("--store", help=store_filter_help)
     fp.set_defaults(func=cmd_favorites_show)
 
     fp = fsub.add_parser("match", parents=[base],
                          help="Freien Einkaufstext eindeutig zuordnen.")
     fp.add_argument("text")
+    fp.add_argument("--store", help=store_filter_help)
     fp.set_defaults(func=cmd_favorites_match)
 
     fp = fsub.add_parser("add", parents=[base],
@@ -1560,7 +1587,7 @@ def build_parser() -> argparse.ArgumentParser:
     fp.add_argument("need")
     fp.add_argument("name")
     fp.add_argument("--brand", required=True, help="Marke.")
-    fp.add_argument("--store", help="Bevorzugter Laden.")
+    fp.add_argument("--store", help="Laden(e), kommagetrennt; leer = ueberall.")
     fp.add_argument("--note", help="Kurze persoenliche Notiz.")
     fp.add_argument("--image", help="Lokales Produktbild.")
     fp.set_defaults(func=cmd_favorites_product_add)

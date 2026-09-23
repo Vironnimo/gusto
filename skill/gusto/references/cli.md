@@ -175,10 +175,18 @@ and browser clients see the same facet order and assignment.
 
 - `favorites list [--json]` — all shared household shopping needs and their
   already-ranked `products` arrays.
-- `favorites show <need> [--json]` — one need by id or exact canonical name.
-- `favorites match "<shopping text>" [--json]` — the need whose canonical name
-  or explicit alias matches after case/whitespace normalization; `null` when
-  there is no match. Quantities, punctuation, and words are never guessed.
+- `favorites show <need> [--store S] [--json]` — one need by id or exact
+  canonical name.
+- `favorites match "<shopping text>" [--store S] [--json]` — the need whose
+  canonical name or explicit alias matches after case/whitespace
+  normalization; `null` when there is no match. Quantities, punctuation, and
+  words are never guessed.
+- `--store S` on `show`/`match` narrows the ranking to one store: `products`
+  keeps the manual order but only lists cards whose `store` names S or is
+  empty (empty = available everywhere); cards tied only to other stores move to
+  `other_products`. Store names match exactly after case/whitespace folding; a
+  product's `store` may list several stores separated by commas. The stored
+  ranking is not changed.
 - `favorites add "<name>" [--alias TEXT ...] [--json]` — create a need with
   optional repeatable exact aliases.
 - `favorites set <need> --name "<name>" [--json]` — rename a need. The old name
@@ -191,7 +199,8 @@ and browser clients see the same facet order and assignment.
   an idempotent retry; creating an already existing need remains an error.
 - `favorites product-add <need> "<name>" --brand B [--store S] [--note N]
   [--image PATH] [--json]` — append a product at the end of the ranking; images
-  are validated and copied into Gusto.
+  are validated and copied into Gusto. `--store` names where the product is
+  sold (`"REWE, Edeka"` for several; omit it when it is sold everywhere).
 - `favorites product-set <need> <id> [--name N] [--brand B] [--store S]
   [--note N] [--image PATH] [--remove-image] [--json]` — update a product or
   replace/remove its owned image.
@@ -493,6 +502,11 @@ Shopping need returned by `favorites list|show|match`:
 
 The `products` array order is the preference order. `favorites match --json`
 prints one such object or `null`; it does not create an alias automatically.
+
+With `--store REWE`, the same object additionally carries `"store": "REWE"`,
+`products` holds only the cards sold at REWE or everywhere (still ranked), and
+`"other_products"` holds the remaining cards in ranking order. An empty
+`products` array means no preferred product is known for that store.
 
 Service lifecycle (`status|start|stop|restart --json`), real run:
 

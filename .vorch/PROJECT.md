@@ -231,6 +231,14 @@ Quality gates:
   PWA metadata were verified in real Chromium against disposable data. Audit
   evidence and remaining platform limits: `docs/audit-2026-09-22.md`.
 
+- 2026-09-23: Store-aware shopping. A preferred-product card's `store` names
+  where it is sold (comma-separated, empty = everywhere); `favorites
+  match|show --store S` returns the ranking narrowed to S plus
+  `other_products`. Walking-route order through a store is deliberately not
+  persisted: agents order the list on the fly per the skill's
+  `references/shopping-trip.md` (user-described route, else a typical German
+  supermarket route) and use that order for answers and Telegram checklists.
+
 ## Domain Maps
 
 Domain-specific documentation lives in `.vorch/domain-maps/`. A **domain** is any module or subsystem that has its own folder or clear boundary in the codebase — a chunk of code that has a distinct responsibility and that agents need context about before touching it. This includes technical modules (`hooks`, `tools`, `storage`), infrastructure modules (`server`, `channel`), and business modules (`auth`, `payments`). Size doesn't matter — what matters is that working on it without context risks misunderstanding its interfaces or conventions.

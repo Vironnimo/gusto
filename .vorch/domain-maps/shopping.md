@@ -93,7 +93,11 @@ preference catalog. The revision is replayable after reconnect.
 Core also owns deterministic favorite matching, need/alias CRUD, ranked-product
 CRUD and movement, image ownership, and consistency checks. The CLI exposes
 these as `gusto favorites list|show|match|add|set|remove|alias-add|alias-remove`
-and `product-add|product-set|product-move|product-remove`. The web exposes
+and `product-add|product-set|product-move|product-remove`. `show` and `match`
+accept an optional store: Core's `favorite_for_store` keeps the manual ranking
+but returns only cards whose comma-separated `store` names that store (or is
+empty, meaning everywhere) as `products` and the rest as `other_products`; the
+stored ranking is unchanged. The web exposes
 central management under `/favorites`, a no-JS match page, product media, and
 `GET /api/favorites` for the offline-readable browser copy.
 
@@ -135,6 +139,9 @@ with a 1920 px maximum edge before invoking the existing core product mutation.
   collapses whitespace. It does
   not strip quantities, interpret alternatives, or use substring/fuzzy matches;
   a name or alias may belong to only one Einkaufsbedarf.
+- Gusto stores no supermarket layout. Ordering a list along a store's walking
+  route is agent judgment per answer (`skill/gusto/references/shopping-trip.md`)
+  and never reorders or rewrites shopping items.
 - Preference catalog mutations are server-side and require connectivity. The
   last successful catalog and content-specific product-image URLs remain
   readable offline; replacing an image creates a new filename.

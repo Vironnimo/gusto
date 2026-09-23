@@ -23,6 +23,10 @@ Without the final `run:done` button, no tap ever reaches the agent or Gusto.
    - label `⬜ <text>` when `checked:false`, otherwise `✅ <text>`;
    - the glyph must be the first character;
    - data `chk:<id>` using the item's 32-hex id.
+   When the user named a store, order the rows along that store's route
+   (`references/shopping-trip.md`) and optionally
+   append the store-specific pick, e.g. `⬜ Marmelade · Samt (Zentis)`. Only
+   the leading glyph and the `chk:<id>` data carry meaning.
 3. Add the final row `[{"label":"Fertig ✅","data":"run:done"}]`.
 4. Post with vBot's `channel_send`: supply `channel_id`, optional
    `platform_target`, a message such as `🛒 Einkaufsliste`, and `buttons` as rows

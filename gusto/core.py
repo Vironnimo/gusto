@@ -2272,6 +2272,33 @@ def favorite_match(text: str, needs: list[ShoppingNeed] | None = None) -> Shoppi
     return None
 
 
+def product_stores(product: FavoriteProduct) -> list[str]:
+    """The stores a product card names; comma-separated, empty = everywhere."""
+    return [store.strip() for store in product.store.split(",") if store.strip()]
+
+
+def favorite_for_store(need: ShoppingNeed, store: str) -> dict:
+    """Serialize ``need`` with its ranking narrowed to one store.
+
+    ``products`` keeps the manual order but only contains cards available at
+    ``store`` (named there, or without any store). Cards tied only to other
+    stores move to ``other_products`` in the same order. Store names match
+    like shopping text: case and whitespace only.
+    """
+    wanted = normalize_shopping_text(store)
+    if not wanted:
+        raise ValueError("Der Laden darf nicht leer sein.")
+    data = need.to_dict()
+    available, elsewhere = [], []
+    for product, product_data in zip(need.products, data["products"]):
+        stores = {normalize_shopping_text(name) for name in product_stores(product)}
+        (available if not stores or wanted in stores else elsewhere).append(product_data)
+    data["store"] = store.strip()
+    data["products"] = available
+    data["other_products"] = elsewhere
+    return data
+
+
 def _favorite_need(needs: list[ShoppingNeed], identifier: str) -> ShoppingNeed:
     normalized = normalize_shopping_text(identifier)
     need = next((item for item in needs
