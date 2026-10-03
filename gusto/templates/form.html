@@ -8,18 +8,18 @@
     <label>Titel
       <input type="text" name="title" value="{{ form.title }}" required autofocus>
     </label>
+    <label><span>Tags <span class="hint">kommagetrennt</span></span>
+      <input type="text" name="tags" value="{{ form.tags }}" placeholder="pasta, schnell, vegetarisch">
+    </label>
     <div class="form-row">
-      <label>Tags <span class="hint">kommagetrennt</span>
-        <input type="text" name="tags" value="{{ form.tags }}" placeholder="pasta, schnell, vegetarisch">
-      </label>
-      <label>Dauer <span class="hint">Minuten</span>
+      <label><span>Dauer <span class="hint">Minuten</span></span>
         <input type="number" name="duration" value="{{ form.duration }}" min="1" inputmode="numeric">
       </label>
       <label>Portionen
         <input type="number" name="servings" value="{{ form.servings }}" min="1" inputmode="numeric">
       </label>
     </div>
-    <label>Rezept <span class="hint">Markdown — Zutaten &amp; Zubereitung</span>
+    <label><span>Rezept <span class="hint">Markdown — Zutaten &amp; Zubereitung</span></span>
       <textarea name="content" rows="18" spellcheck="false">{{ form.content }}</textarea>
     </label>
     <div class="form-actions">

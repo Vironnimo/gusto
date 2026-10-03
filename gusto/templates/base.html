@@ -24,26 +24,26 @@
   <a class="skip-link" href="#main-content">Zum Inhalt</a>
   <header class="masthead">
     <a class="brand" href="/">
-      <span class="brand-mark">❖</span>
+      <span class="brand-mark" aria-hidden="true">❖</span>
       <span class="brand-text">Gusto</span>
     </a>
     <nav class="nav" aria-label="Hauptnavigation">
-      <a href="/" class="{{ 'is-active' if nav == 'recipes' else '' }}">
+      <a href="/" class="{{ 'is-active' if nav == 'recipes' else '' }}"{% if nav == 'recipes' %} aria-current="page"{% endif %}>
         <span class="nav-symbol" aria-hidden="true">⌂</span><span>Rezepte</span>
       </a>
-      <a href="/suggestions" class="{{ 'is-active' if nav == 'suggestions' else '' }}">
+      <a href="/suggestions" class="{{ 'is-active' if nav == 'suggestions' else '' }}"{% if nav == 'suggestions' %} aria-current="page"{% endif %}>
         <span class="nav-symbol" aria-hidden="true">✦</span><span>Vorschläge</span>
       </a>
-      <a href="/shopping" class="{{ 'is-active' if nav == 'shopping' else '' }}">
+      <a href="/shopping" class="{{ 'is-active' if nav == 'shopping' else '' }}"{% if nav == 'shopping' %} aria-current="page"{% endif %}>
         <span class="nav-symbol" aria-hidden="true">✓</span><span>Einkauf</span>
       </a>
-      <a href="/log" class="{{ 'is-active' if nav == 'log' else '' }}">
+      <a href="/log" class="{{ 'is-active' if nav == 'log' else '' }}"{% if nav == 'log' %} aria-current="page"{% endif %}>
         <span class="nav-symbol" aria-hidden="true">◷</span><span>Logbuch</span>
       </a>
-      <a href="/archive" class="{{ 'is-active' if nav == 'archive' else '' }}">
+      <a href="/archive" class="{{ 'is-active' if nav == 'archive' else '' }}"{% if nav == 'archive' %} aria-current="page"{% endif %}>
         <span class="nav-symbol" aria-hidden="true">▤</span><span>Archiv</span>
       </a>
-      <a href="/new" class="nav-cta {{ 'is-active' if nav == 'new' else '' }}">
+      <a href="/new" class="nav-cta {{ 'is-active' if nav == 'new' else '' }}"{% if nav == 'new' %} aria-current="page"{% endif %}>
         <span class="nav-symbol" aria-hidden="true">＋</span><span>Neu</span>
       </a>
     </nav>

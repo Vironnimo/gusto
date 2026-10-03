@@ -19,7 +19,7 @@
     <h1 class="recipe-title">{{ r.title }}</h1>
     <div class="recipe-meta">
       {% if r.duration_min %}<span><strong>{{ r.duration_min }}</strong>&nbsp;Minuten</span>{% endif %}
-      {% if r.servings %}<span><strong>{{ r.servings }}</strong>&nbsp;Portionen</span>{% endif %}
+      {% if r.servings %}<span><strong>{{ r.servings }}</strong>&nbsp;{{ 'Portion' if r.servings == 1 else 'Portionen' }}</span>{% endif %}
       <span>zuletzt&nbsp;gekocht:&nbsp;<strong>{{ r.last_cooked or 'noch nie' }}</strong></span>
     </div>
     <div class="recipe-actions">

@@ -239,6 +239,14 @@ Quality gates:
   `references/shopping-trip.md` (user-described route, else a typical German
   supermarket route) and use that order for answers and Telegram checklists.
 
+- 2026-10-03: Tag and UX polish deduplicates case-equivalent used tags across
+  recipes while retaining configured category spelling/order and stored recipe
+  spelling. Search text survives quick tag clicks; stale responses cannot
+  overwrite newer input, and unused bookmarked filters remain removable.
+  Facet grids, long text/media, narrow shopping/favorite forms, recipe links,
+  mobile captions, and keyboard/screen-reader cues were corrected. Browser
+  checks use isolated data; audit evidence: `docs/audit-2026-10-03.md`.
+
 ## Domain Maps
 
 Domain-specific documentation lives in `.vorch/domain-maps/`. A **domain** is any module or subsystem that has its own folder or clear boundary in the codebase — a chunk of code that has a distinct responsibility and that agents need context about before touching it. This includes technical modules (`hooks`, `tools`, `storage`), infrastructure modules (`server`, `channel`), and business modules (`auth`, `payments`). Size doesn't matter — what matters is that working on it without context risks misunderstanding its interfaces or conventions.

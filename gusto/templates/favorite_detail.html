@@ -11,7 +11,7 @@
   <div class="favorite-admin-section favorite-name-section">
     <h2>Name</h2>
     <form class="favorite-inline-form" method="post" action="/favorites/{{ need.id }}/set">
-      <input name="name" value="{{ need.name }}" required>
+      <input name="name" value="{{ need.name }}" aria-label="Name des Einkaufsbedarfs" required>
       <button class="btn-ghost" type="submit">Umbenennen</button>
     </form>
   </div>
@@ -31,7 +31,7 @@
       {% endfor %}
     </div>
     <form class="favorite-inline-form" method="post" action="/favorites/{{ need.id }}/alias/add">
-      <input name="alias" placeholder="Weitere exakte Formulierung" required>
+      <input name="alias" placeholder="Weitere exakte Formulierung" aria-label="Weitere exakte Formulierung" required>
       <button class="btn-ghost" type="submit">Alias hinzufügen</button>
     </form>
   </div>

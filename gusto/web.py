@@ -207,14 +207,29 @@ def _tag_bar(q: str, selected: list[str]) -> list[dict]:
     selection and the search stay intact."""
     sel = {t.lower() for t in selected}
     bar = []
+    displayed = set()
     for g in core.tag_groups(only_used=True):
         chips = []
         for name in g["tags"]:
+            displayed.add(name.lower())
             on = name.lower() in sel
             new = ([t for t in selected if t.lower() != name.lower()]
                    if on else selected + [name])
             chips.append({"name": name, "on": on, "href": _filter_href(q, new)})
         bar.append({"label": g["label"], "chips": chips})
+    # Bookmarks can retain a tag after the last recipe using it was archived
+    # or retagged. Keep that active filter visible and individually removable.
+    remaining = []
+    for name in selected:
+        if name.lower() in displayed:
+            continue
+        displayed.add(name.lower())
+        remaining.append({
+            "name": name, "on": True,
+            "href": _filter_href(q, [t for t in selected if t.lower() != name.lower()]),
+        })
+    if remaining:
+        bar.append({"label": "Weitere Filter", "chips": remaining})
     return bar
 
 

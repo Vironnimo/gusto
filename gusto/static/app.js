@@ -88,6 +88,19 @@ window.addEventListener("pageshow", (e) => {
 
   let seq = 0;
   let timer = null;
+  let latestQuery = input.value;
+
+  function syncFilterLinks() {
+    // Tag links must use the current text even before its debounced search
+    // completes. This also keeps opening a filter in a new tab consistent.
+    for (const link of form.querySelectorAll("a[href]")) {
+      const url = new URL(link.href, window.location.href);
+      if (url.origin !== window.location.origin || url.pathname !== "/") continue;
+      if (input.value) url.searchParams.set("q", input.value);
+      else url.searchParams.delete("q");
+      link.href = url.pathname + url.search;
+    }
+  }
 
   async function update(fallbackToSubmit = false) {
     const params = new URLSearchParams(window.location.search); // aktive Tags behalten
@@ -135,6 +148,14 @@ window.addEventListener("pageshow", (e) => {
   }
 
   function schedule() {
+    // Chromium also emits "search" after submitting the same text. It must
+    // not supersede Enter's request (and its normal-navigation fallback).
+    if (input.value === latestQuery) return;
+    latestQuery = input.value;
+    // Invalidate in-flight responses as soon as the text changes, not only
+    // when the next debounced request starts.
+    seq += 1;
+    syncFilterLinks();
     clearTimeout(timer);
     timer = setTimeout(update, 150);
   }

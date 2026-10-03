@@ -15,6 +15,8 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 from PIL import Image
 from starlette.datastructures import UploadFile
@@ -143,6 +145,26 @@ def test_shopping_error_notice_is_fixed_text():
           "foreign/unknown error parameters must render nothing")
 
 
+def test_tag_filters_keep_stale_selections_removable():
+    # A bookmark can outlive the last recipe carrying its tag. Every active
+    # tag must retain a removal link, including case-duplicate query values.
+    groups = [{"key": "cuisine", "label": "Küche", "tags": ["italienisch"]}]
+    selected = ["Italienisch", "nicht mehr da", "NICHT MEHR DA"]
+    with patch.object(web.core, "tag_groups", return_value=groups):
+        bar = web._tag_bar("Salz & Pfeffer", selected)
+    check(len(bar) == 2, "stale selected tags must have a visible filter group")
+    active = [chip for group in bar for chip in group["chips"] if chip["on"]]
+    check(len(active) == 2, "case-equivalent active tags must have one control")
+    for chip in active:
+        params = parse_qs(urlsplit(chip["href"]).query)
+        check(params["q"] == ["Salz & Pfeffer"], "removing a tag must preserve the query")
+        check(chip["name"].lower() not in [tag.lower() for tag in params.get("tag", [])],
+              "removal link must clear every spelling of that tag")
+        check(bool(params.get("tag")), "removing one tag must retain the other selection")
+    check(selected == ["Italienisch", "nicht mehr da", "NICHT MEHR DA"],
+          "building filter controls must not modify the selected tags")
+
+
 def test_prepared_photo_translates_only_preparation_errors():
     # Consumer-body failures (e.g. a full/locked target during the later copy
     # in core) must propagate unchanged, not as the "unreadable photo" notice.
@@ -175,6 +197,7 @@ def main():
     test_attribute_allowlist()
     test_dropped_tags_keep_children()
     test_shopping_error_notice_is_fixed_text()
+    test_tag_filters_keep_stale_selections_removable()
     test_prepared_photo_translates_only_preparation_errors()
     print(f"OK: {checks} checks passed")
 

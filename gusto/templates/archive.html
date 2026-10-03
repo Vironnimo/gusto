@@ -26,7 +26,7 @@
       <h2 class="card-title">{{ r.title }}</h2>
       <div class="card-meta">
         <span>{{ entry.archived_at[:10] }}</span>
-        {% if r.images %}<span>· {{ r.images|length }} {{ 'Bild' if r.images|length == 1 else 'Bilder' }}</span>{% endif %}
+        {% if r.images %}<span>{{ r.images|length }} {{ 'Bild' if r.images|length == 1 else 'Bilder' }}</span>{% endif %}
       </div>
     </a>
   </li>

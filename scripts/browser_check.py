@@ -143,6 +143,60 @@ try:
                   "search fallback: server-rendered list appears after failed live fetch")
         fb_ctx.close()
 
+        # A filter click within the search debounce must preserve the newly
+        # typed query. Freeze browser timers to exercise that short window
+        # deterministically instead of depending on the machine's speed.
+        race_ctx = browser.new_context(service_workers="block")
+        race = race_ctx.new_page()
+        race.clock.install(time=1_700_000_000_000)
+        race.goto(BASE, wait_until="load")
+        race.clock.pause_at(1_700_000_060_000)
+        race.fill("input[name=q]", "kokos")
+        race.locator(".tagchip", has_text="vegan").first.click()
+        race.wait_for_load_state("load")
+        check("q=kokos" in race.url and "tag=vegan" in race.url
+              and race.input_value("input[name=q]") == "kokos",
+              "filter click preserves a query whose debounce has not completed")
+
+        # An older response must not replace results/URL after the user has
+        # already changed the query, even before the next request starts.
+        race.goto(BASE, wait_until="load")
+        held_search = {}
+
+        def hold_old_search(route):
+            if (route.request.resource_type in ("fetch", "xhr")
+                    and "q=kokos" in route.request.url):
+                held_search["route"] = route
+                held_search["response"] = route.fetch()
+            else:
+                route.continue_()
+
+        race.route("**/*", hold_old_search)
+        race.fill("input[name=q]", "kokos")
+        with race.expect_request(
+                lambda request: request.resource_type in ("fetch", "xhr")
+                and "q=kokos" in request.url, timeout=3000):
+            race.clock.run_for(150)
+        held_deadline = time.monotonic() + 3
+        while "response" not in held_search and time.monotonic() < held_deadline:
+            race.wait_for_timeout(20)
+        check("response" in held_search, "delayed-search fixture intercepted the old response")
+        if "response" in held_search:
+            race.fill("input[name=q]", "pasta")
+            with race.expect_response(lambda response: "q=kokos" in response.url) as old_reply:
+                held_search["route"].fulfill(response=held_search["response"])
+            old_reply.value.finished()
+            check("q=kokos" not in race.url
+                  and race.locator("#results .card").count() == 3,
+                  "a stale search response cannot replace results or URL for newer text")
+            race.clock.resume()
+            race.wait_for_function(
+                "() => new URLSearchParams(location.search).get('q') === 'pasta'")
+            check(race.locator("#results .card").count() == 1
+                  and "Carbonara" in race.locator("#results").inner_text(),
+                  "the newest search still completes after a stale response is ignored")
+        race_ctx.close()
+
         # --- Tag filter: facets / multi-select ---
         page.goto(BASE, wait_until="load")
         check(page.locator(".taggroup").count() >= 3, "tag bar grouped by category")
@@ -178,6 +232,19 @@ try:
         page.locator(".tagchip.is-on", has_text="indisch").first.click()
         page.wait_for_load_state("load")
         check(page.locator(".card").count() == 1, "'indisch' deselected again -> 1 hit")
+
+        # A bookmarked tag can become unused or be removed from the catalog.
+        # Its active filter must remain reachable and individually removable.
+        page.goto(BASE + "/?q=kokos&tag=veralteter-tag", wait_until="load")
+        obsolete_filter = page.get_by_role(
+            "link", name="veralteter-tag — Filter entfernen", exact=True)
+        check(obsolete_filter.count() == 1 and obsolete_filter.is_visible(),
+              "an obsolete active tag remains visible with an accessible removal action")
+        obsolete_filter.click()
+        page.wait_for_load_state("load")
+        check("tag=" not in page.url and page.input_value("input[name=q]") == "kokos"
+              and page.locator(".card").count() == 1,
+              "removing an obsolete tag restores the matching recipes and preserves search")
 
         # Empty state with active search/tag filters: recipes exist, they just
         # do not match -- the CTA must not claim a first recipe, and the
@@ -701,6 +768,20 @@ try:
         m.wait_for_timeout(350)
         m.screenshot(path=str(SHOTS / "12_mobile_favorite_sheet.png"))
         m.locator("#favorite-sheet .favorite-sheet-close").click()
+
+        # Compact phones must be able to use the expanded forms without
+        # horizontally scrolling to reach inputs or their submit buttons.
+        m.set_viewport_size({"width": 320, "height": 720})
+        m.goto(BASE + "/favorites", wait_until="load")
+        m.locator(".favorite-create-panel summary").click()
+        check(m.evaluate("() => document.documentElement.scrollWidth <= innerWidth"),
+              "320px: expanded favorite creation stays within the viewport")
+        m.screenshot(path=str(SHOTS / "12b_narrow_favorites.png"), full_page=True)
+        m.goto(BASE + "/shopping", wait_until="load")
+        m.locator("#shop-client .shop-add-panel summary").click()
+        check(m.evaluate("() => document.documentElement.scrollWidth <= innerWidth"),
+              "320px: expanded shopping form stays within the viewport")
+        m.screenshot(path=str(SHOTS / "12c_narrow_shopping.png"), full_page=True)
 
         # No-JS destructive actions use distinct routes and semantics.
         nojs_clear = browser.new_context(java_script_enabled=False)

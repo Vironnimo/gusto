@@ -10,7 +10,7 @@
 //                fetched HTML: network-only
 
 // The version bump also evicts HTML pages cached by the old fallthrough.
-const CACHE = "gusto-v15";
+const CACHE = "gusto-v16";
 
 const APP_SHELL = [
   "/shopping",

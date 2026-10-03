@@ -83,6 +83,15 @@ Recipe edit/photo pages do not auto-reload. Shopping handles relevant
 without navigation. A body-stamped revision enables replay between render and
 SSE connection.
 
+Live search invalidates older responses immediately on changed input, before
+the next debounced request starts. Tag links track the current input so quick
+filter clicks and opening another tab preserve the query. Duplicate native
+`search` events with unchanged input must not cancel Enter's submit/fallback.
+Active tag filters from stale bookmarks remain visible and individually
+removable even when no recipe uses them anymore. Filter labels/selection and
+active navigation have accessible names/state; controls and recipe Markdown
+media must fit narrow viewports.
+
 The shopping PWA remains offline-first. Its service worker caches the app shell,
 uses the shopping page as navigation fallback, and leaves every `/api/` request
 network-only. `shopping-client.js` retains optimistic local mutations,
