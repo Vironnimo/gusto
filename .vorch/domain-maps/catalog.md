@@ -65,6 +65,11 @@ the service. Category mutations validate keys/labels/tags, keep each tag in at
 most one category, preserve explicit display order, hold the catalog lock, and
 publish catalog change events.
 
+Used facet choices are deduplicated case-insensitively across recipes. Named
+categories supply their configured spelling/order; unassigned tags retain the
+first catalog spelling and sort alphabetically. Listing never rewrites recipe
+metadata.
+
 Recipe titles must be non-empty. Core always makes the first Markdown H1 match
 the metadata title when creating or setting a title, including when the same
 title is re-applied to repair drift. Duration/servings, time caps, and log/

@@ -73,6 +73,10 @@ immediately. Inspect `gusto categories list --json` and resolve it through
 `gusto categories assign <key> <tag> ... --json`; never edit the live category
 file directly.
 
+Tag matching and used-tag listings ignore case. Facet listings show one choice
+per tag across recipes, using the configured category spelling or the first
+catalog spelling for an unassigned tag; recipe metadata keeps its own spelling.
+
 ## Usage
 
 ```bash

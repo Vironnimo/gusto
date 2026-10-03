@@ -65,6 +65,9 @@ Read-only queries and documented idempotent operations can be retried safely.
 - `tags [--all] [--json]`
   Tag categories (facets). Default: only tags actually used; `--all`: every
   defined category/tag.
+  Used tags are distinct case-insensitively across recipes. Category spelling
+  wins; unassigned tags retain the first catalog spelling. Recipe metadata is
+  unchanged.
 - `log [--days N] [--json]`
   Cooking log. Human output is newest-first and labels archived recipes. `N`
   must be positive.

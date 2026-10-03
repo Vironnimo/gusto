@@ -93,6 +93,8 @@ Search covers title, tags, and complete recipe Markdown, including ingredients.
 
 - `gusto tags --json` shows used facets; `gusto tags --all --json` includes all
   configured tags.
+- Used facets deduplicate tag spellings case-insensitively across recipes.
+  Category spelling wins; unassigned tags use their first catalog spelling.
 - Repeated `--tag` values are ORed within one category and ANDed across
   categories.
 - `new` and `set --tags` may return an additive `uncategorized_tags` warning.

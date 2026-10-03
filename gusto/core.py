@@ -1323,8 +1323,16 @@ def tag_groups(only_used: bool = True) -> list[dict]:
     dropped; actually-used tags without a category come last as a "Sonstige"
     group. only_used=False: all defined categories/tags."""
     categories = load_categories()
-    used_names = sorted({t for r in load_recipes() for t in r.tags},
-                        key=str.lower) if only_used else None
+    used_names = None
+    if only_used:
+        # Facets match tags case-insensitively across recipes as well as
+        # within one recipe. Keep the first catalog spelling for unassigned
+        # tags; named categories still supply their own canonical spelling.
+        used: dict[str, str] = {}
+        for recipe in load_recipes():
+            for tag in recipe.tags:
+                used.setdefault(tag.lower(), tag)
+        used_names = sorted(used.values(), key=str.lower)
     used_lower = {t.lower() for t in used_names} if used_names is not None else None
 
     groups: list[dict] = []

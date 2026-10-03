@@ -109,6 +109,33 @@ def main():
           == ["saisonal"],
           "uncategorized tags must be distinct and category matching case-insensitive")
 
+    # Equivalent spellings from separate recipes must appear as one facet
+    # choice, while category spelling/order remain the shared presentation.
+    core.update_recipe(
+        pasta.slug, tags=["ITALIENISCH", "pasta", "Regional", "zutat-tag"],
+    )
+    core.update_recipe(quick.slug, tags=["vegan", "regional", "Apfel"])
+    groups = core.tag_groups()
+    check(groups[-1] == {
+        "key": "other", "label": "Sonstige",
+        "tags": ["Apfel", "Regional", "zutat-tag"],
+    }, "used tag groups must deduplicate equivalent spellings across recipes")
+    check(groups[0] == {
+        "key": "cuisine", "label": "Küche",
+        "tags": ["italienisch", "indisch"],
+    }, "category spelling and explicit tag order must survive mixed recipe case")
+    check([group["key"] for group in groups]
+          == ["cuisine", "dish", "diet", "other"],
+          "used tag groups must preserve category order and place unassigned tags last")
+    check([group["key"] for group in core.tag_groups(only_used=False)]
+          == ["cuisine", "dish", "diet"],
+          "all defined tag groups must not gain unassigned recipe tags")
+    check(core.get(pasta.slug).tags[0] == "ITALIENISCH"
+          and "regional" in core.get(quick.slug).tags,
+          "presenting facets must preserve each recipe's original tag spelling")
+    core.update_recipe(pasta.slug, tags=["italienisch", "pasta"])
+    core.update_recipe(quick.slug, tags=["vegan"])
+
     # Agents can maintain the complete facet assignment through Core instead
     # of editing categories.json behind the running service.
     core.update_recipe(quick.slug, tags=["vegan", "saisonal"])
