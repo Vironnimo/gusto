@@ -1,5 +1,11 @@
 # Phase 1: Server-API und Core-Vertrag
 
+> Status: historischer, abgeschlossener Umsetzungsplan. Ausgangszustand,
+> Arbeitsschritte und Agent-Aufteilung beschreiben die damalige Umsetzung;
+> sie sind keine aktuellen Arbeitsaufträge. Für Änderungen gelten der
+> [Projektstand](../../PROJECT.md) und die
+> [aktuellen Schnittstellen und Lifecycle-Verträge](../../domain-maps/surfaces.md).
+
 **Goal:** Der laufende Gusto-Server stellt eine vollständige, anonyme,
 versionierte Command-API, Health-Informationen und eine persistente
 Änderungsrevision bereit.

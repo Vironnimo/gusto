@@ -5,7 +5,10 @@ reachable from any device on the local network. A Raspberry Pi is the first
 Linux deployment target, not an exclusive platform. Built to replace paper
 recipes and to enable e.g. meal suggestions based on the last few days.
 
-You work in this repository as a standalone agent with your normal tools and skills. You are not a managed node in the Vorch orchestrator system: do not invoke or impersonate its roles under `.opencode/agents/`, and perform investigation, implementation, testing, review, documentation, and git work yourself.
+You work in this repository as a standalone agent with your normal tools and
+skills. Do not invoke or impersonate Vorch roles under `.opencode/agents/`.
+Own investigation, implementation, verification, documentation, and git work;
+delegate only when the user or applicable instructions authorize it.
 
 ## Read at Session Start
 
@@ -103,9 +106,11 @@ over or remove an unrelated Scheduled Task named `Gusto`.
 **Instance safety for agents:** normal household tasks use the installed
 `gusto` command and the running server. At the first Gusto operation in each
 task, run the exact chosen invocation with `home --json`. Before mutation,
-verify `server_url`, `server_reachable`, `path`, `source`,
-`platform_default`, and `settings_path`, then reuse that invocation. If the
-server or target is unexpected, do not write. Never fall back from a missing or
+verify `server_url`, `server_reachable`, and `server_data_path` against the
+intended instance. `path`, `source`, `platform_default`, and `settings_path`
+describe local data selection; a remote server can have a different data path.
+Reuse the verified executable and server selection. If the server or target
+is unexpected, do not write. Never fall back from a missing or
 unreachable installed service to `python -m gusto` or direct file access.
 
 All commands understand `--json`. Normal domain commands go through
@@ -114,7 +119,8 @@ select the server. Expected command failures write
 `{ "ok": false, "error": "..." }` to stdout and exit 1. `check --json` returns
 full diagnostics; `check --offline` is the explicit local recovery exception.
 `edit` downloads a temporary copy and uploads it after the editor exits;
-headless agents send UTF-8 with `content set --file` or `content set --stdin`. Lifecycle
+headless agents use `content set --file` (UTF-8 with optional BOM, or UTF-16
+with BOM) or `content set --stdin` (UTF-8). Lifecycle
 commands (`serve`, `home`, `status`, `start`, `stop`, `restart`, `update`,
 `uninstall`, `install-skill`) remain local.
 
@@ -124,8 +130,16 @@ an uncertain response; inspect its state on the same verified server first.
 Read-only calls and documented idempotent operations are safe to retry.
 Failed `edit`/`new --edit` calls preserve the local recipe copy and report
 `slug` plus `recovery_path`. Read `show` before continuing with
-`content set <slug> --file <recovery_path> --json`; a confirmed upload removes
-the temporary copy, or reports `retained_path` if local cleanup fails.
+`content set <slug> --file <recovery_path> --json`. A successful interactive
+`edit` removes its temporary copy, or reports `retained_path` if cleanup fails.
+`content set --file` keeps its input file, including a supplied recovery copy.
+
+`uninstall` can fail after removing some platform integrations. Its JSON error
+then uses `status:uninstall_failed`, names `failed_step`, and retains the
+`*_removed` results: true is confirmed removal, null means the failed
+integration step's state is uncertain, and false means no confirmed removal.
+Inspect the local installation and returned paths before retrying; failure is
+not rollback.
 
 ```
 gusto list   [--tag T ...] [--max-time N]    Positive cap; unknown durations fail it
@@ -161,7 +175,8 @@ gusto image set <slug> <id> [--role R] [--caption TEXT]
 gusto image cover <slug> <id>                 Select the top image
 gusto image remove <slug> <id>                Delete one stored image
 
-gusto favorites list|show <need> [--store S]   List shared shopping needs / one ranking
+gusto favorites list                         List all shared shopping needs
+gusto favorites show <need> [--store S]       Show one preferred-product ranking
 gusto favorites match "<text>" [--store S]     Match only an exact known name or alias
 gusto favorites add "<name>" [--alias TEXT ...]
 gusto favorites set <need> --name N            Rename; old name becomes an alias

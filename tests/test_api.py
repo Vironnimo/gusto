@@ -7,7 +7,10 @@ import json
 import os
 import sys
 import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 
 HOME = Path(tempfile.mkdtemp(prefix="gusto-api-test-"))
@@ -17,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from gusto import __version__, api, core  # noqa: E402
+from gusto import __version__, api, client as remote_client, core  # noqa: E402
 
 
 checks = 0
@@ -138,6 +141,154 @@ def check_compacted_event_replay():
         any("catalog" in event["resources"] for event in replay),
         "compacted replay must retain resources from dropped events",
     )
+
+
+def check_client_failure_recovery():
+    """Exercise lost and malformed replies through a real disposable socket."""
+    reply = {"status": 200, "body": b"", "drop": True}
+    received = []
+
+    class BrokenReplyHandler(BaseHTTPRequestHandler):
+        def log_message(self, _format, *args):
+            pass
+
+        def do_POST(self):
+            received.append(json.loads(self.rfile.read(
+                int(self.headers["Content-Length"]),
+            )))
+            if reply["drop"]:
+                return
+            body = reply["body"]
+            self.send_response(reply["status"])
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), BrokenReplyHandler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    url = f"http://127.0.0.1:{server.server_port}"
+
+    def failed(operation, *, unknown, message=None):
+        before = len(received)
+        try:
+            remote_client.command(operation, server_url=url, timeout=2)
+        except remote_client.ClientError as error:
+            check(error.outcome_unknown is unknown,
+                  f"{operation} must report its actual uncertainty")
+            if message is not None:
+                check(str(error) == message,
+                      "a confirmed rejection must preserve its API explanation")
+            elif unknown:
+                check(url in str(error) and "erneut" in str(error),
+                      "uncertain mutations must identify the same server and "
+                      "explain recovery before repeating a write")
+            else:
+                check("erneut" in str(error) and "Änderung" not in str(error),
+                      "failed read-only commands must explain that retrying "
+                      "does not repeat a mutation")
+        else:
+            raise AssertionError(f"{operation} accepted a failed response")
+        check(len(received) == before + 1,
+              "the transport must not automatically replay a lost command")
+
+    try:
+        check(remote_client.READ_ONLY_OPERATIONS <= api._OPERATIONS.keys(),
+              "the read-only allowlist must name current API operations")
+        for operation in api._OPERATIONS:
+            failed(operation,
+                   unknown=operation not in remote_client.READ_ONLY_OPERATIONS)
+        failed("future.operation", unknown=True)
+
+        for status, body, uncertain in [
+            (200, b"not json", True),
+            (200, b"[]", True),
+            (200, b'{"ok":true}', True),
+            (200, b'{"ok":false}', True),
+            (400, b'{"detail":"not a Gusto error"}', True),
+            (400, b'{"ok":true,"error":"contradictory"}', True),
+            (400, b'{"ok":false,"error":"rejected"}', False),
+            (500, b'{"ok":false,"error":"failed after saving"}', True),
+            (200, b'{"ok":false,"error":"lost",'
+                  b'"outcome_unknown":true}', True),
+            (409, b'{"ok":false,"error":"lost",'
+                  b'"outcome_unknown":true}', True),
+        ]:
+            reply.update(status=status, body=body, drop=False)
+            failed("shopping.add", unknown=uncertain,
+                   message=None if uncertain else "rejected")
+            failed("shopping.list", unknown=False,
+                   message=None if uncertain else "rejected")
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)
+
+
+def check_post_mutation_failures():
+    journal = core.changes_path().read_text(encoding="utf-8")
+    try:
+        core.changes_path().write_text("{broken", encoding="utf-8")
+        failure = command("shopping.add", {"text": "Journal failure"}, status=500)
+        check(failure.get("outcome_unknown") is True
+              and any(item.text == "Journal failure" for item in core.shopping_list()),
+              "a broken journal must not turn a persisted add into a "
+              "confirmed rejection")
+    finally:
+        core.changes_path().write_text(journal, encoding="utf-8")
+
+    with patch.object(core, "_record_change", side_effect=OSError("journal locked")):
+        failure = command("shopping.add", {"text": "Journal locked"}, status=500)
+    check(failure.get("outcome_unknown") is True
+          and any(item.text == "Journal locked" for item in core.shopping_list()),
+          "a journal I/O failure must preserve structured uncertainty "
+          "after committing the item")
+
+    categories = core.categories_path().read_text(encoding="utf-8")
+    try:
+        core.categories_path().write_text("{broken", encoding="utf-8")
+        failure = command("recipe.create", {
+            "title": "Post-save warning", "tags": ["new-tag"],
+        }, status=500)
+        recipe = core.get("post-save-warning")
+        check(failure.get("outcome_unknown") is True and recipe is not None,
+              "failed tag warnings must not hide a created recipe")
+        failure = command("recipe.update", {
+            "slug": recipe.slug, "tags": ["changed-tag"],
+        }, status=500)
+        check(failure.get("outcome_unknown") is True
+              and core.get(recipe.slug).tags == ["changed-tag"],
+              "failed tag warnings must not hide a saved recipe update")
+    finally:
+        core.categories_path().write_text(categories, encoding="utf-8")
+
+    with patch.object(core.Recipe, "content", side_effect=ValueError("unreadable body")):
+        failure = command("recipe.content.set", {
+            "slug": recipe.slug, "content": "# Ignored title\n\nSaved body.\n",
+        }, status=500)
+    check(failure.get("outcome_unknown") is True
+          and "Saved body." in core.get(recipe.slug).content(),
+          "a failed content reread must not hide a saved replacement")
+
+    with patch.object(core, "list_recipe_images", side_effect=ValueError("reread failed")):
+        failure = command("image.add", {"slug": recipe.slug}, [
+            attachment("image", "image.png", png_pixel()),
+        ], status=500)
+    images, _ = core.list_recipe_images(recipe.slug)
+    check(failure.get("outcome_unknown") is True and len(images) == 1,
+          "a failed cover reread must not hide a saved image")
+    with patch.object(core, "list_recipe_images", side_effect=ValueError("reread failed")):
+        failure = command("image.set", {
+            "slug": recipe.slug, "id": images[0].id, "caption": "Saved caption",
+        }, status=500)
+    check(failure.get("outcome_unknown") is True
+          and core.list_recipe_images(recipe.slug)[0][0].caption == "Saved caption",
+          "a failed cover reread must not hide saved image metadata")
+
+    failure = command("shopping.add", {"text": ""}, status=400)
+    check("outcome_unknown" not in failure,
+          "pre-mutation validation errors must remain definite rejections")
 
 
 def main():
@@ -642,6 +793,8 @@ def main():
 
     asyncio.run(check_event_stream())
     check_compacted_event_replay()
+    check_client_failure_recovery()
+    check_post_mutation_failures()
 
     # Regression: corrupted persisted entries must surface as German 400
     # errors and check.run integrity findings, not as raw 500s from crashing

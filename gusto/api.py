@@ -41,16 +41,32 @@ _ATTACHMENT_OPERATIONS = {
 class CommandError(ValueError):
     """Expected transport/command failure with an HTTP status."""
 
-    def __init__(self, message: str, status_code: int = 400):
+    def __init__(self, message: str, status_code: int = 400, *,
+                 outcome_unknown: bool = False):
         super().__init__(message)
         self.status_code = status_code
+        self.outcome_unknown = outcome_unknown
 
 
-def _error(message: str, status_code: int = 400) -> JSONResponse:
-    return JSONResponse(
-        {"ok": False, "error": message},
-        status_code=status_code,
-    )
+def _error(message: str, status_code: int = 400, *,
+           outcome_unknown: bool = False) -> JSONResponse:
+    payload = {"ok": False, "error": message}
+    if outcome_unknown:
+        payload["outcome_unknown"] = True
+    return JSONResponse(payload, status_code=status_code)
+
+
+@contextmanager
+def _mutation_result():
+    """A failed read after a completed write is not a rejected command."""
+    try:
+        yield
+    except (OSError, ValueError) as error:
+        raise CommandError(
+            "Der Befehl wurde ausgeführt, aber sein Ergebnis konnte nicht "
+            f"vollständig gelesen werden: {error}",
+            500, outcome_unknown=True,
+        ) from error
 
 
 def _json_object(pairs: list[tuple[str, object]]) -> dict:
@@ -360,11 +376,12 @@ def _recipe_create(arguments: dict, _attachments: dict) -> dict:
         duration_min=_integer(values, "duration_min"),
         servings=_integer(values, "servings"),
     )
-    result = recipe.to_dict()
-    warnings = _tag_warnings(recipe.tags)
-    if warnings:
-        result["warnings"] = warnings
-    return result
+    with _mutation_result():
+        result = recipe.to_dict()
+        warnings = _tag_warnings(recipe.tags)
+        if warnings:
+            result["warnings"] = warnings
+        return result
 
 
 def _recipe_content_set(arguments: dict, _attachments: dict) -> dict:
@@ -376,7 +393,8 @@ def _recipe_content_set(arguments: dict, _attachments: dict) -> dict:
         _string(values, "slug"),
         content=_string(values, "content"),
     )
-    return _recipe_dict(recipe, include_content=True)
+    with _mutation_result():
+        return _recipe_dict(recipe, include_content=True)
 
 
 def _recipe_update(arguments: dict, _attachments: dict) -> dict:
@@ -405,12 +423,13 @@ def _recipe_update(arguments: dict, _attachments: dict) -> dict:
         clear_duration=clear_duration,
         clear_servings=clear_servings,
     )
-    result = recipe.to_dict()
-    if tags is not None:
-        warnings = _tag_warnings(recipe.tags)
-        if warnings:
-            result["warnings"] = warnings
-    return result
+    with _mutation_result():
+        result = recipe.to_dict()
+        if tags is not None:
+            warnings = _tag_warnings(recipe.tags)
+            if warnings:
+                result["warnings"] = warnings
+        return result
 
 
 def _recipe_cooked(arguments: dict, _attachments: dict) -> dict:
@@ -511,8 +530,9 @@ def _image_add(arguments: dict, attachments: dict) -> dict:
         caption=_string(values, "caption", default=""),
         cover=_boolean(values, "cover"),
     )
-    _, cover_id = core.list_recipe_images(slug)
-    return _image_dict(image, cover_id)
+    with _mutation_result():
+        _, cover_id = core.list_recipe_images(slug)
+        return _image_dict(image, cover_id)
 
 
 def _image_set(arguments: dict, _attachments: dict) -> dict:
@@ -533,8 +553,9 @@ def _image_set(arguments: dict, _attachments: dict) -> dict:
         role=role,
         caption=caption,
     )
-    _, cover_id = core.list_recipe_images(slug)
-    return _image_dict(image, cover_id)
+    with _mutation_result():
+        _, cover_id = core.list_recipe_images(slug)
+        return _image_dict(image, cover_id)
 
 
 def _image_cover(arguments: dict, _attachments: dict) -> dict:
@@ -829,6 +850,10 @@ def execute_command(operation: str, arguments: dict,
             return function(arguments, paths)
         except CommandError:
             raise
+        except core.PostMutationError as error:
+            raise CommandError(
+                str(error), 500, outcome_unknown=True,
+            ) from error
         except ValueError as error:
             raise CommandError(str(error), _not_found_error(error)) from error
 
@@ -881,7 +906,10 @@ async def command(request: Request):
             body.get("attachments", []),
         )
     except CommandError as error:
-        return _error(str(error), error.status_code)
+        return _error(
+            str(error), error.status_code,
+            outcome_unknown=error.outcome_unknown,
+        )
     return {"ok": True, "result": result}
 
 

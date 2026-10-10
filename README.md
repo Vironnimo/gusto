@@ -4,8 +4,9 @@ A small, **markdown-based recipe system** for self-hosting on **Windows or
 Linux**, reachable from any device on the local network. A Raspberry Pi is an
 important Linux deployment target, not a separate or exclusive edition.
 
-- **Recipes are plain Markdown files** in `recipes/` – directly readable and
-  editable, no lock-in, no frontmatter.
+- **Recipes are plain Markdown files** in `recipes/` – portable, with no
+  frontmatter. Edit running Gusto through the UI or CLI so metadata and
+  connected clients stay in sync.
 - **Metadata** (tags, duration, servings, last cooked, image references) live
   bundled in `data/recipes.json`; Gusto stores recipe images under `images/`,
   and the cooking log lives in `data/log.json`.
@@ -182,6 +183,13 @@ exit 1 instead; `edit --json` downloads to a temporary editor file and uploads
 the final content. `serve --json`
 validates the web runtime first and emits a startup object only when that
 validation succeeds. Parser/usage errors remain on stderr with exit code 2.
+
+A lost reply to a mutation can report `outcome_unknown:true`; inspect the
+affected state on the same server before repeating that change. Read-only
+queries can be repeated. Headless recipe replacement uses `content set --file`
+(UTF-8, optional BOM, or UTF-16 with BOM) or `--stdin` (UTF-8). Input files
+remain in place after upload. Interactive edit failures retain a recovery copy
+and report its `recovery_path`.
 
 `cooked --date` accepts only a valid `YYYY-MM-DD` no later than today.
 `--max-time`, `log --days`, and `suggest --days` must be positive;

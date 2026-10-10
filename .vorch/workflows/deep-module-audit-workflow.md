@@ -1,5 +1,11 @@
 # Deep-Module Audit Workflow
 
+This is an inactive generic audit template. Its Orchestrator/explorer roles,
+numbered pipeline, architectural philosophy, and size limits are not configured
+Gusto requirements. An explicitly requested audit uses
+[the project guide](../../AGENTS.override.md), actual domain boundaries, and
+the user's scope; the template does not establish new architectural policy.
+
 A corpus-wide pass that checks the repo against the deep-module philosophy and returns a prioritized findings report — each finding with a concrete recommended refactor. It is **diagnose-only**: the audit run never rewrites code.
 
 Run **on user request only** (e.g. "run the deep-module audit"). The Orchestrator owns it and may delegate per-dimension candidate-gathering to the **explorer**.

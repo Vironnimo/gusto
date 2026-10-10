@@ -43,8 +43,9 @@ free-text group in one transaction, import ingredients from a recipe, list
 visible entries, set or toggle checked state, tombstone entries, clear completed
 entries, clear the complete visible list, and merge a remote full state.
 
-The sync endpoint accepts only an object containing an `items` list. Core
-validates each remote item's required fields and field types before merging;
+The sync endpoint accepts an object containing an `items` list; missing or
+null `items` means an empty incoming state. Core validates each remote item's
+required fields and field types before merging;
 malformed JSON shapes return HTTP 400 and are never persisted.
 
 Under `gusto shopping`, the CLI exposes `list`, `add`, `add-many`, `add-recipe`,
@@ -134,7 +135,10 @@ with a 1920 px maximum edge before invoking the existing core product mutation.
   such as `clear` or `remove-done` with `check` still have a result determined
   by lock acquisition order and should be sequenced by the caller when order
   expresses intent.
-- Offline and failed syncs deliberately preserve local state. The browser retries on the next mutation, queued follow-up, initialization, or `online` event.
+- Offline and failed syncs preserve local state. While online, failed syncs
+  retry up to five times with increasing delays. Success or a new `online`
+  event resets that budget. Mutations, queued follow-ups, initialization, and
+  shopping change events also trigger sync.
 - Preferred-product matching only lowercases (including `ß` → `ss`) and
   collapses whitespace. It does
   not strip quantities, interpret alternatives, or use substring/fuzzy matches;

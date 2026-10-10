@@ -1,5 +1,11 @@
 # Phase 4: User-Installation, Autostart und `gusto update`
 
+> Status: historischer, abgeschlossener Umsetzungsplan. Ausgangszustand,
+> Arbeitsschritte und Agent-Aufteilung beschreiben die damalige Umsetzung;
+> sie sind keine aktuellen Arbeitsaufträge. Für Änderungen gelten der
+> [Projektstand](../../PROJECT.md) und die
+> [aktuellen Schnittstellen und Lifecycle-Verträge](../../domain-maps/surfaces.md).
+
 **Goal:** Öffentliche One-shot-Skripte installieren Gusto ohne Adminrechte als
 laufenden User-Dienst; `gusto update` wechselt geprüft und rollback-fähig auf
 das neueste Release.

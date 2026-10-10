@@ -17,6 +17,14 @@ DEFAULT_SERVER_URL = "http://127.0.0.1:8000"
 DEFAULT_TIMEOUT_SECONDS = 15.0
 REQUEST_TIMEOUT_SECONDS_PER_MB = 1.0
 SETTINGS_FILENAME = "gusto.settings.json"
+# Domain reads also use POST. HTTP method alone cannot tell whether a lost
+# command reply could hide a mutation. Unlisted operations stay conservative.
+READ_ONLY_OPERATIONS = frozenset({
+    "catalog.list", "catalog.search", "tags.list", "categories.list",
+    "recipe.show", "log.list", "suggest.list", "check.run",
+    "archive.list", "archive.show", "image.list",
+    "favorites.list", "favorites.show", "favorites.match", "shopping.list",
+})
 
 
 class ClientError(ValueError):
@@ -27,15 +35,20 @@ class ClientError(ValueError):
         self.outcome_unknown = outcome_unknown
 
 
-def _response_failure(message: str, method: str) -> ClientError:
+def _response_failure(
+    message: str, method: str, *, operation: str | None = None,
+) -> ClientError:
     """A lost command response does not prove the command was not applied."""
-    unknown = method != "GET"
+    read_only = isinstance(operation, str) and operation in READ_ONLY_OPERATIONS
+    unknown = method != "GET" and not read_only
     if unknown:
         message += (
             " Die Ausführung ist nicht bestätigt; der Befehl kann bereits "
             "ausgeführt sein. Prüfe den Zustand auf demselben Server, bevor "
             "du eine Änderung erneut sendest."
         )
+    elif read_only:
+        message += " Dieser Befehl liest nur Daten und kann erneut ausgeführt werden."
     return ClientError(message, outcome_unknown=unknown)
 
 
@@ -137,7 +150,9 @@ def _decode_response(response, *, url: str) -> Any:
     try:
         raw = response.read()
     except (OSError, http.client.HTTPException) as exc:
-        raise ClientError(f"Antwort von Gusto konnte nicht gelesen werden: {exc}") from exc
+        raise ClientError(
+            f"Antwort von Gusto unter {url} konnte nicht gelesen werden: {exc}"
+        ) from exc
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -159,6 +174,7 @@ def _request_json(
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     data = None
+    operation = payload.get("operation") if payload else None
     headers = {"Accept": "application/json"}
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -173,22 +189,28 @@ def _request_json(
         except ClientError:
             raise _response_failure(
                 f"Gusto-Server unter {url} antwortete mit HTTP {exc.code}.",
-                method,
+                method, operation=operation,
             ) from None
         message = decoded.get("error") if isinstance(decoded, dict) else None
         if not isinstance(message, str) or not message:
             message = f"Gusto-Server antwortete mit HTTP {exc.code}."
-        if exc.code >= 500:
-            raise _response_failure(message, method) from None
+        if (exc.code >= 500 or decoded.get("ok") is not False
+                or not isinstance(decoded.get("error"), str)
+                or not decoded["error"] or decoded.get("outcome_unknown") is True):
+            raise _response_failure(
+                f"Gusto-Server unter {url}: {message}", method,
+                operation=operation,
+            ) from None
         raise ClientError(message) from None
     except ClientError as exc:
-        raise _response_failure(str(exc), method) from exc
+        raise _response_failure(str(exc), method, operation=operation) from exc
     except (error.URLError, TimeoutError, socket.timeout, OSError,
             http.client.HTTPException) as exc:
         reason = getattr(exc, "reason", exc)
         raise _response_failure(
             f"Gusto-Server unter {url} ist nicht erreichbar "
             f"oder die Antwort wurde unterbrochen: {reason}", method,
+            operation=operation,
         ) from exc
     return decoded
 
@@ -226,12 +248,20 @@ def command(
         if (response.get("ok") is not False
                 or not isinstance(message, str) or not message):
             raise _response_failure(
-                "Gusto-Server lieferte keine gültige Befehlsbestätigung.", "POST",
+                f"Gusto-Server unter {base_url} lieferte keine gültige "
+                "Befehlsbestätigung.", "POST",
+                operation=operation,
+            )
+        if response.get("outcome_unknown") is True:
+            raise _response_failure(
+                f"Gusto-Server unter {base_url}: {message}", "POST",
+                operation=operation,
             )
         raise ClientError(message)
     if "result" not in response:
         raise _response_failure(
-            "Gusto-Serverantwort enthält kein 'result'-Feld.", "POST",
+            f"Gusto-Serverantwort von {base_url} enthält kein 'result'-Feld.", "POST",
+            operation=operation,
         )
     return response["result"]
 

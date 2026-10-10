@@ -247,6 +247,17 @@ Quality gates:
   mobile captions, and keyboard/screen-reader cues were corrected. Browser
   checks use isolated data; audit evidence: `docs/audit-2026-10-03.md`.
 
+- 2026-10-10: Agent-interface audit covered all 59 leaf CLI commands, the
+  operating skill, and current agent-facing contracts. Help explains arguments
+  and effects; plain output includes reusable IDs. File uploads accept Unicode
+  BOMs, while stdin remains UTF-8. Post-save API/journal failures report
+  uncertain outcomes instead of rejection; read-only calls remain retryable.
+  Partial uninstall failures preserve confirmed effects. The skill distinguishes
+  local paths from the selected server, keeps imports within the requested
+  overwrite scope, and uses successful mutation results without redundant
+  integrity scans. Historical plans are labeled as such. Evidence:
+  `docs/audit-2026-10-10.md`.
+
 ## Domain Maps
 
 Domain-specific documentation lives in `.vorch/domain-maps/`. A **domain** is any module or subsystem that has its own folder or clear boundary in the codebase — a chunk of code that has a distinct responsibility and that agents need context about before touching it. This includes technical modules (`hooks`, `tools`, `storage`), infrastructure modules (`server`, `channel`), and business modules (`auth`, `payments`). Size doesn't matter — what matters is that working on it without context risks misunderstanding its interfaces or conventions.

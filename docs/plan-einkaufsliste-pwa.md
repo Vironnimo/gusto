@@ -1,5 +1,11 @@
 # Umsetzungsplan: Einkaufsliste + PWA
 
+> Status: historischer, abgeschlossener Umsetzungsplan. Ausgangszustand,
+> Arbeitsschritte und Agent-Aufteilung beschreiben die damalige Umsetzung;
+> sie sind keine aktuellen Arbeitsaufträge. Für Änderungen gelten der
+> [Projektstand](../.vorch/PROJECT.md) und der
+> [aktuelle Sync-Vertrag](sync-kontrakt.md).
+
 ## Ziel
 Integrierte Einkaufsliste in Gusto. Zutaten eines Rezepts per Knopf (Web)
 bzw. per CLI/Agent auf die Liste setzen. Unterwegs **offline** nutzbar als

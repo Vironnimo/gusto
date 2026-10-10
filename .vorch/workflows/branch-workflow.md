@@ -1,5 +1,10 @@
 # Branch Workflow
 
+This is an inactive generic workflow template. Its branching and merge steps
+are not Gusto project policy. For repository work, follow
+[the project guide](../../AGENTS.override.md) and the user's current request;
+this template does not authorize a branch change or merge.
+
 One feature branch per task. All work happens in the main working directory.
 
 ## Setup

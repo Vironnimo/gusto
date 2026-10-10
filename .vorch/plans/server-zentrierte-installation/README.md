@@ -1,5 +1,11 @@
 # Plan: Server-zentriertes Gusto mit User-Installation und Update
 
+> Status: historischer, abgeschlossener Umsetzungsplan. Ausgangszustand,
+> Arbeitsschritte und Agent-Aufteilung beschreiben die damalige Umsetzung;
+> sie sind keine aktuellen Arbeitsaufträge. Für Änderungen gelten der
+> [Projektstand](../../PROJECT.md) und die
+> [aktuellen Schnittstellen und Lifecycle-Verträge](../../domain-maps/surfaces.md).
+
 **Größe:** Large
 
 **Goal:** Gusto wird als dauerhaft laufender, benutzerbezogener Dienst

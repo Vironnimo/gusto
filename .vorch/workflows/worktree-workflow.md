@@ -1,5 +1,11 @@
 # Worktree Workflow
 
+This is an inactive generic workflow template. Gusto has no project-specific
+worktree CLI or numbered orchestration pipeline. Follow
+[the project guide](../../AGENTS.override.md) and the tools available in the
+current session; do not infer setup, delegation, merge, or deletion authority
+from the template below.
+
 Each task runs in a dedicated git worktree — an isolated directory with its own branch. Multiple tasks can run in parallel without touching each other or the main directory.
 
 ## Setup

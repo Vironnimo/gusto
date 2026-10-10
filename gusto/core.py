@@ -230,6 +230,10 @@ def favorite_images_dir() -> Path:
 
 # --- Cross-process mutation locks ------------------------------------------
 
+class PostMutationError(ValueError):
+    """Persistence completed, but a later step could not finish the command."""
+
+
 def _resource_lock_path(resource: str) -> Path:
     """Stable advisory-lock file for one mutable source-of-truth area."""
     return data_dir() / f".gusto-{resource}.lock"
@@ -370,7 +374,13 @@ def _execute_locked_mutation(resources, function, *, event_resources=None):
             else:
                 _MUTATION_CONTEXT.changed = previous
     if changed:
-        _record_change(event_resources or resources)
+        try:
+            _record_change(event_resources or resources)
+        except (OSError, ValueError) as error:
+            raise PostMutationError(
+                "Die Änderung wurde gespeichert, aber das Änderungsjournal "
+                f"konnte nicht aktualisiert werden: {error}"
+            ) from error
     return result
 
 

@@ -1,63 +1,34 @@
 # Gusto CLI — Full Reference
 
-For normal household tasks, use the installed release: `gusto <command>` on
-Windows or `~/.local/opt/gusto/bin/gusto <command>` on Linux. If a Windows agent
-does not see the recently installed `gusto` on `PATH`, use the PowerShell prefix
-`& "$env:LOCALAPPDATA\Programs\Gusto\bin\gusto.cmd"`; never silently
-substitute the checkout. Use `python -m gusto <command>` only for explicitly
-requested development or isolated testing. Normal domain commands are HTTP
-clients of the selected running service. Every command accepts `--json` for
-machine-readable output.
-
-At the first Gusto **domain** operation in a task, run the exact chosen
-invocation with `home --json`. Before writing, verify `server_url`,
-`server_reachable`, `server_data_path`, `path`, `source`, `platform_default`,
-and `settings_path` when present, then reuse the same executable and server
-selection. A checkout server normally selects `gusto-dev`; the installed
-service selects the household store. If the server is unreachable or ambiguous,
-do not mutate it. Never fall back to local Core or direct data-file access.
-App installation and the local `install-skill`, service, update, uninstall, and
-explicit offline-recovery commands do not use this domain-instance handshake.
-
-Select a non-default server with global `--server http://host:port`; otherwise
-resolution is `GUSTO_URL`, then `server_url` in instance settings, then
-`http://127.0.0.1:8000`.
-
-Expected command failures with `--json` return
-`{ "ok": false, "error": "<German message>" }` on stdout and exit `1`.
-`check --json` instead returns its full diagnostics with `ok:false` and exit
-`1` when it finds hard integrity errors. Argument and usage errors from the
-parser remain plain stderr and exit `2`.
-
-A lost response or server failure adds `"outcome_unknown":true`: the command
-may already have applied. Never automatically replay a mutation after that
-error. Read its state on the same verified server (`show`, `shopping list`,
-`log`, or the relevant list/show command) before deciding whether to retry.
-Read-only queries and documented idempotent operations can be retried safely.
+This reference lists every command and its result shape. Prefix calls with
+the executable and server selection established by the main skill. Every
+command accepts `--json`; command-specific help describes the installed
+version's arguments. Examples with angle-bracket values require substitution
+from the request or command results.
 
 ## Contents
 
 - [Commands](#commands)
 - [JSON shapes](#json-shapes)
 - [Tag facets in detail](#tag-facets-in-detail)
-- [Server and storage contract](#server-and-storage-contract)
-- [Worked example](#worked-example--what-should-i-cook)
 
 ## Commands
 
 ### Reading
 
 - `home [--json]`
-  Local diagnosis that shows the configured store, selected `server_url`,
+  Local diagnosis that shows the configured local store, selected `server_url`,
   reachability, and — when reachable — `server_data_path`, server version and
-  revision. It remains usable while the service is down.
+  revision. It remains usable while the service is down. `path`, `source`,
+  `platform_default`, and `settings_path` are local; `server_data_path` is
+  reported by the selected server and can differ, especially across machines.
 - `list [--tag T ...] [--max-time N] [--json]`
-  List/filter recipes. `--tag` is repeatable **and** comma-separated
+  List/filter recipes. `--tag` is repeatable and comma-separated
   (`--tag a --tag b` ≡ `--tag a,b`). `--max-time` caps `duration_min` and
   excludes recipes whose duration is unknown; the cap must be positive.
   Recipes are sorted by title (A–Z, case-insensitive).
 - `search "<query>" [--match any|all] [--tag T ...] [--max-time N] [--json]`
-  Full-text over title, tags, **and the markdown body** (so ingredients match).
+  Full-text over title, tags, and the markdown body (so ingredients match).
   `any` (default) = any term present; `all` = every term present.
 - `show <slug> [--json]`
   Print a recipe. With `--json`, the object additionally carries `content` (the
@@ -71,7 +42,7 @@ Read-only queries and documented idempotent operations can be retried safely.
 - `log [--days N] [--json]`
   Cooking log. Human output is newest-first and labels archived recipes. `N`
   must be positive.
-  `--json` keeps the storage order, which is **oldest-first**; sort by `date`
+  `--json` keeps the storage order, which is oldest-first; sort by `date`
   yourself when recency matters in scripts.
 - `suggest [--days N] [--limit N] [--json]`
   Recipes not cooked in the last positive N days (default 7), longest-ago
@@ -86,17 +57,18 @@ Read-only queries and documented idempotent operations can be retried safely.
 ### Writing
 
 - `new "<title>" [--tags a,b] [--duration N] [--servings N] [--edit] [--json]`
-  Create the Markdown template **and** index entry through the server. `--edit`
+  Create the Markdown template and index entry through the server. `--edit`
   opens `$EDITOR` on a temporary downloaded copy and uploads it after exit.
   For a headless creation, run `new` and then `content set`.
-  Search for an exact existing title first to avoid duplicates. Never create a
-  recipe Markdown file or catalog entry by hand first.
+  Check a matching title before creating a duplicate; it does not authorize
+  replacing the existing recipe. Never create a live Markdown file or catalog
+  entry by hand first.
   Tags without a named category add a structured `warnings` entry to JSON and
   a warning line to human output; they are still stored in the `Sonstige` facet.
 - `set <slug> [--title ...] [--tags a,b]
   [--duration N|--clear-duration] [--servings N|--clear-servings] [--json]`
   Update metadata. `--title` also rewrites the first Markdown H1. `--tags`
-  **replaces** the whole list; the clear flags remove
+  replaces the whole list; the clear flags remove
   optional duration or serving values. At least one change is required. A
   `--tags` change uses the same uncategorized-tag warning contract as `new`.
 - `edit <slug> [--json]`
@@ -108,17 +80,20 @@ Read-only queries and documented idempotent operations can be retried safely.
   `slug` and `recovery_path` to the JSON error, also for `new --edit`. Inspect
   `show` on the same server first; if the intended content is not already
   saved, continue with `content set <slug> --file <recovery_path> --json`.
+  This manual upload retains the source file; automatic removal belongs to
+  a successful interactive `edit` round-trip.
   Without `EDITOR` set, Windows opens notepad and Linux nano — headless agents
   must set `EDITOR` to a scriptable editor or use `content set` instead.
 - `content set <slug> (--file PATH | --stdin) [--json]`
   Replace the complete Markdown body through the server from a local file
-  or stdin, both encoded as UTF-8. Use this for headless agents; never edit the
-  live data directory.
+  or stdin. Use UTF-8; files also accept UTF-8 or UTF-16 with a byte-order mark.
+  Stdin is UTF-8. Returns the recipe including the saved `content`, with its H1
+  normalized to the stored title. The local source file is retained.
 - `cooked <slug> [--date YYYY-MM-DD] [--json]`
   Add a log entry (default: today) and bump `last_cooked`. An explicit date
   must be a valid calendar date in that exact format and cannot be in the future.
 - `delete <slug> [--json]`
-  **Reversibly archive**, rather than destroy, the Markdown, full metadata, and
+  Reversibly archive, rather than destroy, the Markdown, full metadata, and
   all owned images. Log and shopping records stay in their own stores and
   resolve the archived slug. JSON returns `slug`, `archived:true`, and
   `archived_at`.
@@ -188,7 +163,7 @@ and browser clients see the same facet order and assignment.
   keeps the manual order but only lists cards whose `store` names S or is
   empty (empty = available everywhere); cards tied only to other stores move to
   `other_products`. Store names match exactly after case/whitespace folding; a
-  product's `store` may list several stores separated by commas. The stored
+  product's `store` can list several stores separated by commas. The stored
   ranking is not changed.
 - `favorites add "<name>" [--alias TEXT ...] [--json]` — create a need with
   optional repeatable exact aliases.
@@ -205,8 +180,10 @@ and browser clients see the same facet order and assignment.
   are validated and copied into Gusto. `--store` names where the product is
   sold (`"REWE, Edeka"` for several; omit it when it is sold everywhere).
 - `favorites product-set <need> <id> [--name N] [--brand B] [--store S]
-  [--note N] [--image PATH] [--remove-image] [--json]` — update a product or
-  replace/remove its owned image.
+  [--note N] [--image PATH|--remove-image] [--json]` — update a product or
+  replace/remove its owned image. Image replacement and removal are mutually
+  exclusive. Empty `--store=` clears the store restriction; empty `--note=`
+  clears the note.
 - `favorites product-move <need> <id> <position> [--json]` — move to a one-based
   position in the manual household ranking.
 - `favorites product-remove <need> <id> [--json]` — remove one product and its
@@ -214,10 +191,11 @@ and browser clients see the same facet order and assignment.
 
 ### Shopping list (`shopping`)
 
-- `shopping list [--pending] [--json]` — a **flat array** of items (checked ones
+- `shopping list [--pending] [--json]` — a flat array of items (checked ones
   included, marked `checked:true`); `--pending` = only unchecked.
 - `shopping add "<text>" [--quantity M] [--source SLUG] [--json]` — returns the
-  created item. `--source` must name an existing recipe, records its slug on the
+  created item. `--quantity` is separate free text, not parsed out of `text`.
+  `--source` must name an existing recipe, records its slug on the
   item, and makes that visible item participate in the recipe import guard.
 - `shopping add-many "<text>" ... [--json]` — add a non-empty free-text group
   in one transaction; returns the array of created items in argument order.
@@ -239,12 +217,6 @@ and browser clients see the same facet order and assignment.
   returns `{ "removed": N }`. The complete visible list is empty afterward.
   Neither bulk removal has a CLI restore operation.
 
-Mutations sharing the catalog, favorites, or shopping store are serialized by
-the server. Independent adds, image uploads, and item-specific checks may run
-in parallel without lost updates. Calls with dependencies or ordering
-semantics must stay sequential. `edit` and `content set` also write through the
-server; direct live-store edits are not a supported client path.
-
 ### Server
 
 - `serve [--host H] [--port N] [--reload] [--json]` — start the web UI
@@ -254,7 +226,8 @@ server; direct live-store edits are not a supported client path.
   Before any startup output, it validates all optional web dependencies.
   Missing packages use the normal structured JSON error contract; otherwise
   JSON emits one `{status:"starting", host, port, url, reload}` object before
-  the server begins its long-running work.
+  the server begins its long-running work. This is a startup notice, not
+  confirmation of readiness; verify health before using the server.
 - The API is intentionally anonymous on the trusted local network. No CLI,
   browser or PWA token exists. Never expose it directly to the public internet.
 - `GET /api/v1/health` reports server version, data path and change revision;
@@ -287,7 +260,7 @@ server; direct live-store edits are not a supported client path.
   `attempted_version`, and exit 1.
 - `uninstall [--keep-data | --delete-data [--yes]] [--dry-run] [--json]` —
   remove a managed installed Gusto runtime. A bare interactive call offers
-  **app only**, **app + all data**, or **cancel** and shows the exact runtime and
+  app only, app + all data, or cancel and shows the exact runtime and
   active data paths. Data deletion requires the exact interactive confirmation
   `DATEN LÖSCHEN`; non-interactive callers must use `--delete-data --yes`.
   `--keep-data` removes platform autostart and the exact Windows PATH entry but
@@ -296,9 +269,11 @@ server; direct live-store edits are not a supported client path.
   `delete_data`, cleanup booleans, and (when scheduled) `log_path`. The command
   refuses source checkouts, system Python, and unsafe/unrecognized deletion
   roots; do not invoke it without an explicit user request.
-
-For public install commands, repair behavior, exact per-user paths and update
-semantics, read `installation.md`.
+  `status:"scheduled"` means background cleanup was scheduled, not completed;
+  `log_path` records its outcome. If removal fails partway through, exit 1 and
+  `status:"uninstall_failed"` preserve confirmed `*_removed` flags and name
+  `failed_step`; a failing integration step's removal flag is null. Report this partial
+  state instead of claiming nothing changed or blindly repeating the action.
 
 ### Local agent-skill delivery
 
@@ -402,7 +377,7 @@ Removal and unassignment:
   "source": "C:\\...\\share\\gusto\\skill\\gusto",
   "destination": "C:\\Users\\Ada\\.vbot\\skills\\gusto",
   "overwritten": true,
-  "files": ["SKILL.md", "references/cli.md", "references/installation.md", "references/telegram.md"]
+  "files": ["SKILL.md", "references/cli.md", "references/installation.md", "references/shopping-trip.md", "references/telegram.md"]
 }
 ```
 
@@ -475,11 +450,10 @@ Shopping-list item:
 }
 ```
 
-`id` is 32-hex, stable and unique. `list`/`list --pending` return a **flat JSON
-array** (no `{items}` wrapper); `check`/`uncheck`/`add` return a single item;
+`id` is opaque, stable, and unique; copy it verbatim, including hyphens in ids
+created by the PWA. `list`/`list --pending` return a flat JSON array
+(no `{items}` wrapper); `check`/`uncheck`/`add` return a single item;
 `add-recipe` an array; `remove-done` and `clear` return `{ "removed": N }`.
-Rendering the list as a tappable **Telegram checklist** is documented in
-`telegram.md`.
 
 Shopping need returned by `favorites list|show|match`:
 
@@ -526,59 +500,16 @@ above.
 
 ## Tag facets in detail
 
-- Each recipe's `tags` is a **flat list**. The tag → category mapping is central
+- Each recipe's `tags` is a flat list. The tag → category mapping is central
   in `data/categories.json`.
-- Filtering: **OR within a category, AND across categories.** Selected tags with
+- Filtering: OR within a category, AND across categories. Selected tags with
   no category form one shared "Sonstige" group (OR among themselves).
 - Examples:
-  - `--tag italienisch --tag indisch` → Italian **or** Indian (both in Küche).
-  - `--tag italienisch --tag pasta` → Italian **and** a pasta dish (Küche + Art).
-  - `--tag italienisch --tag pasta --tag vegetarisch` → Italian, pasta, **and**
+  - `--tag italienisch --tag indisch` → Italian or Indian (both in Küche).
+  - `--tag italienisch --tag pasta` → Italian and a pasta dish (Küche + Art).
+  - `--tag italienisch --tag pasta --tag vegetarisch` → Italian, pasta, and
     vegetarian.
 - A new tag still stores fine but shows up in `check` as `uncategorized_tags`
   and remains filterable in `Sonstige`. `new` and `set --tags` surface this
   through `warnings`. Inspect `categories list`, then resolve a known mapping
   with `categories assign`; never bypass the service to edit the category file.
-
-## Server and storage contract
-
-Resolve and verify the server with `gusto home --json`; when it is reachable,
-`server_data_path` comes from that server's health response. The following
-paths are server-owned implementation details, not a normal editing interface.
-The checkout service selects `gusto-dev`, installed releases select the
-production store, and `GUSTO_HOME` is an explicit server/test override.
-
-| File | Content |
-|---|---|
-| `recipes/<slug>.md` | Pure markdown. First line `# Title`, then `## Zutaten` (bullets) and `## Zubereitung` (numbered). **No frontmatter.** |
-| `images/<slug>/` | Recipe images copied into and owned by Gusto. |
-| `archive/<slug>/` | Reversible snapshot: `recipe.md`, `metadata.json`, and owned `images/`. |
-| `images/_favorites/` | Preferred-product images copied into and owned by Gusto. |
-| `data/recipes.json` | Metadata array — the index, including images and selected cover. |
-| `data/categories.json` | `{ key: { label, tags[] } }`; order = display order. |
-| `data/log.json` | `[ { date, slug } ]`. |
-| `data/shopping_list.json` | `{ items: [ … ] }` (includes tombstones). |
-| `data/favorites.json` | `{ needs: [ … ] }` with exact aliases and ranked products. |
-| `data/changes.json` | Persisted bounded revision journal for browser/PWA change events. |
-
-Use CLI/API operations, including `categories ...`, for every normal read or
-write. `gusto check --offline`
-is the only deliberate direct-Core client operation and exists for diagnosis
-while the service is stopped.
-
-## Worked example — "what should I cook?"
-
-```
-$ gusto log --days 7 --json
-[ { "date": "2026-06-21", "slug": "spaghetti-carbonara" },
-  { "date": "2026-06-18", "slug": "rotes-linsen-dal" } ]
-
-$ gusto suggest --json
-[ { "slug": "ofengemuese-feta", "title": "Ofengemüse mit Feta",
-    "tags": ["vegetarisch", "ofen", "einfach"], "last_cooked": null } ]
-```
-
-Reasoning: pasta (carbonara) was just on, so steer away from it — e.g.
-*Ofengemüse mit Feta* (vegetarian, never cooked). If the user said "schnell",
-narrow with `list --max-time 25 --json` first; recipes without a duration are
-excluded from that result.

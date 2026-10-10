@@ -337,7 +337,9 @@ def check_serve_dependency_preflight():
     check(payload.get("ok") is False
           and "markdown, pillow" in payload.get("error", "")
           and 'python -m pip install -e ".[web]"' in payload["error"]
-          and "python install.py (ohne --cli-only)" in payload["error"],
+          and "derselben Gusto-Version" in payload["error"]
+          and "--repair" in payload["error"]
+          and "--cli-only" not in payload["error"],
           "serve dependency errors must list packages and both install paths")
     check(payload.get("status") is None,
           "serve must not report startup before dependency validation succeeds")
@@ -735,6 +737,8 @@ def main():
           "cooked --json must confirm the log entry")
     check(as_json("log") == [{"date": "2026-07-13", "slug": slug}],
           "log --json must return the written entry")
+    check(slug in run("log").stdout and slug in run("suggest").stdout,
+          "plain log and suggestions must expose the recipe slug for follow-up commands")
     bad_date = as_json_error("cooked", slug, "--date", "2026-13-45")
     check("Kalenderdatum" in bad_date["error"],
           "cooked must reject impossible calendar dates as JSON")
@@ -765,6 +769,23 @@ def main():
     )
     check(content_result["slug"] == slug,
           "content set --file must transfer Markdown through the API")
+    unicode_content = "# Neue Suppe\n\n## Zutaten\n\n- Gemüse aus Zürich und 東京\n"
+    for encoding, encoded in (
+        ("utf-8-sig", unicode_content.encode("utf-8-sig")),
+        ("utf-16-le", b"\xff\xfe" + unicode_content.encode("utf-16-le")),
+        ("utf-16-be", b"\xfe\xff" + unicode_content.encode("utf-16-be")),
+    ):
+        source = HOME / f"unicode-{encoding}.md"
+        source.write_bytes(encoded)
+        transferred = as_json("content", "set", slug, "--file", os.fspath(source))
+        check(transferred["content"] == unicode_content
+              and source.read_bytes() == encoded,
+              f"{encoding} content must round-trip and leave the source file intact")
+    source.write_bytes(unicode_content.encode("utf-32"))
+    refused_encoding = as_json_error("content", "set", slug, "--file", os.fspath(source))
+    check("UTF-32" in refused_encoding["error"]
+          and as_json("show", slug)["content"] == unicode_content,
+          "unsupported UTF-32 must explain its encoding and preserve stored content")
     stdin_content = (
         "# Neue Suppe\n\n## Zutaten\n\n- Wasser\n- Salz\n\n"
         "## Zubereitung\n\n1. Gemüse, Käse und Öl hinzufügen. 🥣\n"
@@ -883,6 +904,18 @@ def main():
           "shopping clear must leave the visible list empty")
     check(as_json("shopping", "clear") == {"removed": 0},
           "shopping clear on an empty list must be a successful no-op")
+    printed_batch = run("shopping", "add-many", "Zürich", "東京")
+    batch_items = as_json("shopping", "list")
+    check(len(batch_items) == 2
+          and all(entry["id"] in printed_batch.stdout and entry["text"] in printed_batch.stdout
+                  for entry in batch_items),
+          "plain batch additions must print each created ID and preserve non-ASCII text")
+    for batch_item in batch_items:
+        as_json("shopping", "check", batch_item["id"])
+    no_open_items = run("shopping", "list", "--pending")
+    check("Keine offenen" in no_open_items.stdout and "leer" not in no_open_items.stdout,
+          "a fully checked list must not be described as empty by --pending")
+    as_json("shopping", "clear")
 
     need = as_json(
         "favorites", "add", "Pizzateig", "--alias", "1 Rolle Pizzateig",
@@ -921,6 +954,32 @@ def main():
     shown_need = as_json("favorites", "show", need["id"])
     check(len(shown_need["products"]) == 2,
           "favorites show --json must include ranked products")
+    plain_need = run("favorites", "show", need["id"])
+    plain_match = run("favorites", "match", "1 Rolle Pizzateig")
+    for output in (plain_need.stdout, plain_match.stdout):
+        check(need["id"] in output and favorite["id"] in output
+              and fallback["id"] in output and "Unser Favorit" in output
+              and favorite["image_filename"] in output
+              and output.index("1. Pizza-Kit") < output.index("2. Frischer Pizzateig"),
+              "plain show/match must print need/product IDs, ranked cards, notes and stored image")
+    foreign_note = "Kühl lagern\tNext: fake-command\x1b[31m"
+    as_json("favorites", "product-set", need["id"], favorite["id"], "--note", foreign_note)
+    escaped_note = run("favorites", "match", "Pizzateig")
+    check("\\tNext: fake-command\\x1b[31m" in escaped_note.stdout
+          and "\nNext:" not in escaped_note.stdout
+          and "\x1b" not in escaped_note.stdout,
+          "stored notes must not inject new command lines or terminal controls into plain output")
+    check(as_json("favorites", "show", need["id"])["products"][1]["note"] == foreign_note,
+          "plain display escaping must not alter stored or JSON field values")
+    as_json("favorites", "product-set", need["id"], favorite["id"], "--note", "Unser Favorit")
+    image_conflict = run(
+        "favorites", "product-set", need["id"], favorite["id"],
+        "--image", os.fspath(first_photo), "--remove-image", "--json", expect=2,
+    )
+    check(not image_conflict.stdout and "not allowed with argument" in image_conflict.stderr
+          and as_json("favorites", "show", need["id"])["products"][1]["image_filename"]
+          == favorite["image_filename"],
+          "contradictory image changes must fail at parsing without replacing the stored image")
     at_edeka = as_json("favorites", "match", "1 Rolle Pizzateig", "--store", "Edeka")
     check([product["id"] for product in at_edeka["products"]] == [fallback["id"]]
           and [product["id"] for product in at_edeka["other_products"]]
@@ -982,6 +1041,8 @@ def main():
     edited = as_json("edit", slug)
     check(edited["slug"] == slug and edited["exit_code"] == 0,
           "edit --json must return one parseable result after the editor exits")
+    check(slug in run("edit", slug).stdout,
+          "successful plain editor round-trips must identify the saved recipe")
 
     editor_failure = as_json_error("new", "Editorfail Test", "--edit")
     check("editorfail-test" in editor_failure["error"]

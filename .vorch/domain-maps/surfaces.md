@@ -38,9 +38,12 @@ explicit development entry point. Every command accepts `--json`. Expected
 failures are `{ "ok": false, "error": "..." }` on stdout with exit 1; parser
 errors remain stderr/exit 2. `check --json` deliberately returns its complete
 diagnostics object with `ok:false` and exit 1 on hard errors.
-An interrupted or invalid command response can include `outcome_unknown:true`:
-inspect the selected server's state before repeating a mutation. The client
-does not automatically replay commands. Duplicate JSON object keys are rejected
+An interrupted or invalid mutation response can include `outcome_unknown:true`:
+inspect the selected server's state before repeating a mutation. Read-only
+operations remain retryable even though they use POST. A post-save failure in
+the change journal or result construction is HTTP 500 with that uncertainty
+flag, not a rejected write. The client does not automatically replay commands.
+Duplicate JSON object keys are rejected
 at API dispatch before executing the request.
 
 Global `--server` overrides `GUSTO_URL`, which overrides `server_url` in the
@@ -70,6 +73,12 @@ server ownership and catalog locking.
 Stdin content uses UTF-8. A failed editor round-trip retains its local file and
 returns `slug` plus `recovery_path`; successful upload is not reported as failed
 merely because deleting the temporary file failed.
+File input accepts UTF-8 with optional BOM and UTF-16 with BOM. `content set
+--file` never removes its source; temporary cleanup belongs to `edit`.
+Every leaf help describes its command and arguments, with exit codes. Plain
+suggestion/log, product, and bulk shopping outputs include reusable target IDs;
+stored single-line fields escape line breaks/control characters. Raw recipe
+`show` and archived `show` keep their Markdown output.
 
 The FastAPI application is `gusto.web:app` and includes the API router. It
 serves active/archive catalog, log, suggestions, shopping, preferred products,
@@ -165,6 +174,11 @@ formats.
   because Windows Python is itself app-owned; Linux uses an external system-
   Python helper. A separately installed vBot skill remains owned by the agent
   host.
+  If integration cleanup fails partway, the error retains paths, `failed_step`,
+  and completed removal flags under `status:uninstall_failed`. A failed
+  integration flag is null; false means no confirmed removal. Helper scheduling
+  confirms launch, not final file deletion; the returned log records completion
+  or failure.
 - `gusto serve` remains foreground recovery/development startup. It validates
   the full server runtime before emitting its JSON startup object.
 

@@ -2,15 +2,20 @@
 from __future__ import annotations
 
 import os
+import io
+import json
 import subprocess
 import sys
 import tempfile
+from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.fspath(ROOT))
 
-from gusto import service, uninstall  # noqa: E402
+from gusto import cli, service, uninstall  # noqa: E402
 
 checks = 0
 
@@ -144,6 +149,85 @@ with tempfile.TemporaryDirectory(prefix="gusto-uninstall-") as temporary:
     check(result["application_path"] == os.fspath(app.resolve())
           and result["data_path"] == os.fspath(data.resolve()),
           "machine result must distinguish app and preserved data")
+
+    # A failure after removing platform integration must retain those effects.
+    # The failing step itself is uncertain; later steps must not run.
+    for platform, failing_step in (
+        ("win32", "autostart_removed"),
+        ("win32", "path_entry_removed"),
+        ("win32", "registration_removed"),
+        ("win32", "schedule_removal"),
+        ("linux", "command_link_removed"),
+        ("linux", "schedule_removal"),
+    ):
+        calls = []
+        ordered = ["autostart_removed"] + (
+            ["path_entry_removed", "registration_removed"]
+            if platform == "win32" else ["command_link_removed"]
+        ) + ["schedule_removal"]
+
+        def action(step):
+            def run(*args, **kwargs):
+                calls.append(step)
+                if step == failing_step:
+                    raise OSError("fixture failure")
+                return True
+            return run
+
+        try:
+            uninstall.perform_uninstall(
+                replace(targets, platform=platform), delete_data=False,
+                dry_run=False, interactive=False,
+                autostart_remover=action("autostart_removed"),
+                path_remover=action("path_entry_removed"),
+                registration_remover=action("registration_removed"),
+                linux_link_remover=action("command_link_removed"),
+                removal_scheduler=action("schedule_removal"),
+            )
+        except uninstall.UninstallError as error:
+            partial_error = error
+            partial = error.result
+        else:
+            raise AssertionError("partial uninstall unexpectedly succeeded")
+        failed_index = ordered.index(failing_step)
+        check(calls == ordered[:failed_index + 1],
+              "uninstall must stop at the first failed step")
+        check(partial["ok"] is False
+              and partial["status"] == "uninstall_failed"
+              and partial["failed_step"] == failing_step
+              and "fixture failure" in partial["error"]
+              and "log_path" not in partial,
+              "partial failure must name its failed step without claiming scheduling")
+        check(all(partial[step] is True for step in ordered[:failed_index]),
+              "partial failure must retain every confirmed integration removal")
+        if failing_step != "schedule_removal":
+            check(partial[failing_step] is None
+                  and all(partial[step] is False
+                          for step in ordered[failed_index + 1:-1]),
+                  "failed integration state must be unknown and later steps unattempted")
+        check(app.exists() and data.exists(), "failure fixtures must preserve all files")
+
+    for json_mode in (True, False):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            patch.object(uninstall, "discover_targets", return_value=targets),
+            patch.object(uninstall, "perform_uninstall", side_effect=partial_error),
+            redirect_stdout(stdout), redirect_stderr(stderr),
+        ):
+            try:
+                cli.main(["uninstall", "--keep-data"] + (["--json"] if json_mode else []))
+            except SystemExit as error:
+                check(error.code == 1, "partial uninstall must exit 1")
+            else:
+                raise AssertionError("CLI accepted partial uninstall as success")
+        if json_mode:
+            check(json.loads(stdout.getvalue()) == partial and not stderr.getvalue(),
+                  "CLI must preserve partial uninstall as one JSON error document")
+        else:
+            check(partial["error"] in stderr.getvalue()
+                  and partial["application_path"] in stderr.getvalue()
+                  and partial["data_path"] in stderr.getvalue(),
+                  "text failure must expose partial effects and both inspection paths")
     windows_commands = []
     original_which = uninstall.shutil.which
     try:

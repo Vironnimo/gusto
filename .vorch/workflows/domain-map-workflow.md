@@ -13,9 +13,9 @@ Shorter is useful only when it removes noise. Do not remove high-signal behavior
 
 ## Ownership
 
-The Orchestrator creates and maintains domain maps. All other agents read them.
-
-If source verification is needed and your role must not read source code directly, delegate bounded exploration to `explorer` or use Builder/Reviewer findings that include concrete source/test references. Do not write factual claims from memory or intuition.
+The standalone agent doing authorized repository work maintains affected
+domain maps. Verify claims in source and tests; delegate only when the user or
+applicable instructions authorize it. Gusto does not require Vorch roles.
 
 ## Read First
 
@@ -101,7 +101,8 @@ Every factual claim should be backed by one of:
 - Existing maps or `.vorch/PROJECT.md`
 - An explicit user/project decision
 
-If a statement cannot be backed, either remove it or rewrite it as a convention/policy that the Orchestrator is intentionally establishing.
+If a statement cannot be backed, remove it or distinguish it as a proposal for
+the user; do not turn an assumption into project policy.
 
 For doc-only map work, do not run application tests unless the user asks or application/test code also changed. Verify by reading source-of-truth evidence, adjacent maps, and the diff.
 

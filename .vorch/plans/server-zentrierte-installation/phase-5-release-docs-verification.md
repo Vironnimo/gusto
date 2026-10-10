@@ -1,5 +1,11 @@
 # Phase 5: Distribution, Dokumentation und Gesamtprüfung
 
+> Status: historischer, abgeschlossener Umsetzungsplan. Ausgangszustand,
+> Arbeitsschritte und Agent-Aufteilung beschreiben die damalige Umsetzung;
+> sie sind keine aktuellen Arbeitsaufträge. Für Änderungen gelten der
+> [Projektstand](../../PROJECT.md) und die
+> [aktuellen Schnittstellen und Lifecycle-Verträge](../../domain-maps/surfaces.md).
+
 **Goal:** Alle öffentlichen Verträge, Agent-Anleitungen und Release-Artefakte
 beschreiben denselben server-zentrierten Installations-/Updatebetrieb und die
 vollständige Testmatrix besteht.

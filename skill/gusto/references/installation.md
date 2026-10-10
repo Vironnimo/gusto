@@ -1,9 +1,9 @@
 # Gusto application installation and lifecycle
 
-The managed Gusto application carries the matching agent-skill payload inside
-each versioned runtime. The app installer does not silently modify an agent
-host. Installing or refreshing the separate vBot copy is the explicit local
-`gusto install-skill vbot` workflow below.
+This reference covers installation, service control, update, recovery,
+uninstall, and installation of the bundled vBot skill on the local machine.
+The managed app carries the matching agent-skill payload; the app installer
+does not silently modify an agent host.
 
 ## Contents
 
@@ -27,6 +27,8 @@ host. Installing or refreshing the separate vBot copy is the explicit local
   directly to the public internet.
 - Windows starts it with a limited Scheduled Task at current-user logon. Linux
   starts it with `systemd --user`. Neither starts before login.
+- Lifecycle commands act on this machine's installation; `--server` does not
+  redirect them to a remote host. For a remote service, run them on its host.
 - Windows install, repair, update, service control, and uninstall refuse to
   take over or remove an unrelated Scheduled Task that is merely named
   `Gusto`; the user must resolve such a collision explicitly.
@@ -49,9 +51,9 @@ When an agent needs a machine-readable installation result, invoke the same
 bootstrap with JSON enabled instead of parsing human/pip output:
 
 ```powershell
-$script = Join-Path $env:TEMP "gusto-install.ps1"
-irm https://github.com/Vironnimo/gusto/releases/latest/download/install.ps1 -OutFile $script
-try { & $script -Json } finally { Remove-Item -LiteralPath $script -Force }
+$gustoInstaller = Join-Path $env:TEMP ("gusto-install-" + [guid]::NewGuid() + ".ps1")
+irm https://github.com/Vironnimo/gusto/releases/latest/download/install.ps1 -OutFile $gustoInstaller
+try { & $gustoInstaller -Json } finally { Remove-Item -LiteralPath $gustoInstaller -Force }
 ```
 
 ```bash
@@ -62,38 +64,32 @@ curl -fsSL https://github.com/Vironnimo/gusto/releases/latest/download/install.s
 Expect exactly one JSON object on stdout. Require `ok:true` and
 `status:"installed"`; on Windows also require `python_runtime.kind:"managed"`.
 Then run `gusto home --json` with the installed command before any domain
-mutation.
+operation. If this shell still has the old PATH, use the default stable wrapper:
+PowerShell `& "$env:LOCALAPPDATA\Programs\Gusto\bin\gusto.cmd" home --json`,
+or Linux `~/.local/opt/gusto/bin/gusto home --json`. Custom installs use their
+reported application directory's `bin` wrapper.
 
-The bootstrap downloads `gusto-release.json` plus the individually listed
-assets from the latest public GitHub release. Every asset is SHA-256 checked.
-Windows then safely extracts the pinned Python runtime, runs the verified
-installer with it, stores that Python below Gusto's app root, and creates the
-Gusto version in its own venv. Linux runs the verified installer and Wheel with
-the existing system Python. There is no outer Gusto release ZIP.
-
-A successful install:
-
-1. creates a versioned per-user runtime and stable `gusto` wrapper;
-2. includes the exact same version's Gusto agent skill in that runtime;
-3. preserves application and data as separate directories;
-4. registers per-user login autostart;
-5. starts Gusto immediately;
-6. waits for `/api/v1/health`;
-7. returns the local URL.
+The bootstrap verifies every release asset's SHA-256 against
+`gusto-release.json`. It installs the app and matching skill, registers login
+autostart, starts the service, and verifies `/api/v1/health`. App and data
+directories remain separate; Windows supplies its own pinned Python runtime.
 
 Do not report success when registration, start, or health verification failed.
-Open `http://localhost:8000` locally or `http://<host>:8000` from another LAN
-device after installation.
+Give the user the returned local URL. From another LAN device, use the service
+host's LAN address and its configured port; a loopback URL addresses that
+device itself.
 
 ## Install or refresh the vBot skill
 
 This action is explicit and local. It does not need the Gusto service and does
 not target the recipe data directory.
 
-```bash
-gusto install-skill vbot --dry-run --json
+```text
 gusto install-skill vbot --json
 ```
+
+Use `--dry-run` when the user asks to inspect the destination or replacement
+scope before installation; it is not required for an already requested install.
 
 The default vBot data directory `~/.vbot` must already exist. Gusto creates its
 `skills/` child if needed and installs to `~/.vbot/skills/gusto`. When that
@@ -110,8 +106,8 @@ clear error rather than creating `~/.vbot` or guessing another host path.
 
 Use only:
 
-```bash
-gusto update
+```text
+gusto update --json
 ```
 
 Inspect without changing anything:
@@ -134,8 +130,8 @@ still reference, so rollback remains usable.
 Never present re-running the installer as the update path.
 
 An app update refreshes the skill payload in the newly active runtime. It does
-not mutate an already installed vBot copy. Rerun `gusto install-skill vbot
---json` when the vBot skill should follow the updated Gusto version.
+not mutate an already installed vBot copy. Run `gusto install-skill vbot
+--json` when the user requests refreshing that copy as well.
 
 ## Explicit repair
 
@@ -151,17 +147,16 @@ refuses to smuggle in a newer application.
 Windows:
 
 ```powershell
-$script = Join-Path $env:TEMP "gusto-install.ps1"
-irm https://github.com/Vironnimo/gusto/releases/latest/download/install.ps1 -OutFile $script
-& $script -Repair
-Remove-Item -LiteralPath $script
+$gustoInstaller = Join-Path $env:TEMP ("gusto-install-" + [guid]::NewGuid() + ".ps1")
+irm https://github.com/Vironnimo/gusto/releases/latest/download/install.ps1 -OutFile $gustoInstaller
+try { & $gustoInstaller -Repair -Json } finally { Remove-Item -LiteralPath $gustoInstaller -Force }
 ```
 
 Linux:
 
 ```bash
 curl -fsSL https://github.com/Vironnimo/gusto/releases/latest/download/install.sh |
-  bash -s -- --repair
+  bash -s -- --repair --json
 ```
 
 Use `-DryRun` / `--dry-run` to inspect targets first. Custom `InstallDir`,
@@ -220,8 +215,16 @@ deletion is separate:
 gusto uninstall --delete-data --yes --json
 ```
 
-Use `--dry-run` first when exact targets matter. Never infer permission to
-delete data from a request to uninstall the application.
+Use `--dry-run` when the target or removal scope needs inspection. Never infer
+permission to delete data from a request to uninstall the application.
+
+`status:"scheduled"` means background file cleanup was started, not confirmed
+complete. Its `log_path` records the outcome; report a pending removal if the
+helper has not finished. If a step fails after partial removal, JSON exits 1
+with `status:"uninstall_failed"`, `failed_step`, and the completed
+`*_removed` flags. A failing integration step's flag is null when its effect is
+unknown; false means no confirmed removal (for example, already absent or not
+attempted). Report those effects before deciding how to continue.
 
 App uninstall does not remove `~/.vbot/skills/gusto`, because that is a
 separately installed agent-host copy. Remove it only through the agent host's

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -71,12 +72,26 @@ def main():
 
     check(len(skill.encode("utf-8")) <= 12_000,
           "main skill became too large for a focused fresh-agent entry point")
+    frontmatter = re.match(r"\A---\n(.*?)\n---\n", skill, re.DOTALL)
+    check(frontmatter is not None, "operating skill needs discoverable frontmatter")
+    metadata = dict(
+        line.split(":", 1) for line in frontmatter.group(1).splitlines() if ":" in line
+    )
+    check(metadata.get("name", "").strip() == skill_root.name,
+          "the installed skill name must match its folder")
+    description = metadata.get("description", "").strip()
+    check(0 < len(description) <= 250 and "Use when" in description,
+          "skill discovery needs a compact task trigger")
+    # Guard exact interface identifiers, not headings or editorial sentences.
+    # Behavioral meaning is reviewed with the skill; prose remains editable.
     for required in (
-        "Route the task before acting",
-        "Non-negotiable operating contract",
         "home --json",
+        "server_url",
+        "server_reachable",
         "server_data_path",
-        "Never silently switch",
+        "outcome_unknown",
+        "recovery_path",
+        "--file",
         "categories assign",
         "archive purge",
         "install-skill vbot",
@@ -85,18 +100,32 @@ def main():
     ):
         check(required in skill, f"main skill lost critical guidance: {required}")
     trip = (skill_root / "references/shopping-trip.md").read_text(encoding="utf-8")
-    check("--store" in trip and "no store layout" in trip
-          and "references/telegram.md" in trip,
-          "the store trip reference must keep the on-the-fly route contract")
+    check("--store" in trip and "shopping list" in trip and "products" in trip,
+          "the store trip reference must retain its CLI and ranking inputs")
     check("chk:" not in skill and "chk:" in telegram and "run:done" in telegram,
           "host-specific Telegram detail must stay routed out of the main skill")
 
+    documented_calls = re.findall(r"`([^`]+)`", cli_reference, re.DOTALL)
+    documented_calls = [" ".join(call.split()) for call in documented_calls]
+    documented_calls = [
+        verb + (" " + tail if separator else "")
+        for call in documented_calls
+        for head, separator, tail in [call.partition(" ")]
+        for verb in head.split("|")
+    ]
     for name in EXPECTED_COMMANDS:
-        check(name in cli_reference,
+        check(any(re.match(r"(?:gusto )?" + re.escape(name) + r"(?:\s|$)", call)
+                  for call in documented_calls),
               f"full CLI reference does not name command: {name}")
+    for reference in skill_root.rglob("*.md"):
+        content = reference.read_text(encoding="utf-8")
+        for relative in re.findall(r"`(references/[^`\s]+\.md)`", content):
+            check((skill_root / relative).is_file(),
+                  f"broken skill reference in {reference.name}: {relative}")
+            check(reference == skill_root / "SKILL.md",
+                  "route optional workflows from the body instead of chaining references")
     for required in (
         "~/.vbot/skills/gusto",
-        "fully replaced",
         "--app-root PATH",
         '"status": "installed"',
         '"overwritten": true',
@@ -104,10 +133,11 @@ def main():
         check(required in cli_reference,
               f"CLI reference lost a result/safety contract: {required}")
     for required in (
-        "matching agent-skill payload",
         "gusto install-skill vbot",
-        "does not silently modify an agent host",
-        "does not remove `~/.vbot/skills/gusto`",
+        "~/.vbot/skills/gusto",
+        "--keep-data",
+        "--delete-data",
+        "gusto update",
     ):
         check(required in normalized_installation,
               f"installation reference lost skill lifecycle guidance: {required}")
@@ -120,6 +150,7 @@ def main():
             "gusto/skill_install.py",
             "outcome_unknown:true",
             "recovery_path",
+            "server_data_path",
         ):
             check(required in guide,
                   f"{guide_name} is stale: missing {required}")

@@ -1,5 +1,11 @@
 # Phase 3: Live-UI und unveränderte Offline-PWA
 
+> Status: historischer, abgeschlossener Umsetzungsplan. Ausgangszustand,
+> Arbeitsschritte und Agent-Aufteilung beschreiben die damalige Umsetzung;
+> sie sind keine aktuellen Arbeitsaufträge. Für Änderungen gelten der
+> [Projektstand](../../PROJECT.md) und die
+> [aktuellen Schnittstellen und Lifecycle-Verträge](../../domain-maps/surfaces.md).
+
 **Goal:** Online geöffnete Browser reagieren automatisch auf Server-/CLI-
 Mutationen, während die Einkaufs-PWA offline unverändert weiterarbeitet und
 beim Reconnect merged.

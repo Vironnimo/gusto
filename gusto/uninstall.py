@@ -15,7 +15,11 @@ from . import service
 
 
 class UninstallError(RuntimeError):
-    """Raised when Gusto cannot prove that an uninstall target is safe."""
+    """An unsafe target or an incomplete uninstall with known partial effects."""
+
+    def __init__(self, message: str, *, result: dict | None = None):
+        super().__init__(message)
+        self.result = result
 
 
 @dataclass(frozen=True)
@@ -582,18 +586,50 @@ def perform_uninstall(
     if dry_run:
         return result
 
-    result["autostart_removed"] = autostart_remover(
-        targets, interactive=interactive,
-    )
+    steps = [
+        ("autostart_removed", "Autostart", lambda: autostart_remover(
+            targets, interactive=interactive,
+        )),
+    ]
     if targets.platform.startswith("win"):
-        result["path_entry_removed"] = path_remover(
-            targets.command_directory,
-        )
-        result["registration_removed"] = registration_remover(targets)
+        steps.extend([
+            ("path_entry_removed", "PATH-Eintrag", lambda: path_remover(
+                targets.command_directory,
+            )),
+            ("registration_removed", "App-Registrierung", lambda: registration_remover(targets)),
+        ])
     else:
-        result["command_link_removed"] = linux_link_remover(targets)
-    log_path = removal_scheduler(
-        targets, separate_data_target=separate_data,
-    )
+        steps.append((
+            "command_link_removed", "Befehlsverknüpfung", lambda: linux_link_remover(targets),
+        ))
+    step = "autostart_removed"
+    label = "Autostart"
+    removed = []
+    try:
+        for step, label, action in steps:
+            # A failing integration operation can already have changed part of
+            # its state (for example registry removal before shortcut removal).
+            result[step] = None
+            result[step] = action()
+            if result[step]:
+                removed.append(label)
+        step, label = "schedule_removal", "Dateilöschung starten"
+        log_path = removal_scheduler(
+            targets, separate_data_target=separate_data,
+        )
+    except (OSError, ValueError, UninstallError) as error:
+        message = f"Deinstallation bei '{label}' fehlgeschlagen: {error}. "
+        if removed:
+            message += "Bereits entfernt: " + ", ".join(removed) + ". "
+        message += (
+            "Der fehlgeschlagene Schritt kann teilweise ausgeführt sein. "
+            "Die Dateilöschung wurde nicht bestätigt; prüfe die Installation "
+            "und die angegebenen Pfade vor einem weiteren Versuch."
+        )
+        result.update({
+            "ok": False, "status": "uninstall_failed", "error": message,
+            "failed_step": step,
+        })
+        raise UninstallError(message, result=result) from error
     result["log_path"] = os.fspath(log_path)
     return result

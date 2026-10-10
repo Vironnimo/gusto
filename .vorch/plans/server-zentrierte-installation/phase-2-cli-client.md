@@ -1,5 +1,11 @@
 # Phase 2: CLI als Server-Client
 
+> Status: historischer, abgeschlossener Umsetzungsplan. Ausgangszustand,
+> Arbeitsschritte und Agent-Aufteilung beschreiben die damalige Umsetzung;
+> sie sind keine aktuellen Arbeitsaufträge. Für Änderungen gelten der
+> [Projektstand](../../PROJECT.md) und die
+> [aktuellen Schnittstellen und Lifecycle-Verträge](../../domain-maps/surfaces.md).
+
 **Goal:** Alle normalen Fachbefehle verwenden die Server-API; lokale
 Ausführung bleibt ausschließlich für Lifecycle und explizite Recovery.
 

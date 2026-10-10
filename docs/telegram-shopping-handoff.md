@@ -1,43 +1,91 @@
-# Handoff: Einkaufsliste als Telegram-Checkliste
+# Gusto-Einkaufsliste als Telegram-Checkliste
 
-Vertrag zwischen **Gusto** (dieses Repo, liefert Daten & Logik über die
-`gusto`-CLI) und der **Agent-/Telegram-App** (anderes Repo, baut die
-Telegram-Darstellung). Ziel: die Einkaufsliste erscheint im Telegram-Chat als
-**antippbare Checkliste** — ein Button pro Zutat, Tippen hakt ab (⬜ → ✅) und
-schreibt sofort nach Gusto zurück. Zielgruppe u. a. ältere Menschen: **mehr als
-„antippen" darf nicht nötig sein** (kein Tippen, kein Installieren).
+Gusto hält die gemeinsame Einkaufsliste; vBot stellt sie als antippbare
+Telegram-Tastatur dar. Ein Tap auf einen Artikel ändert zunächst nur dessen
+Häkchen in vBot. Erst „Fertig“ weckt den Agenten, der die sichtbaren Zustände
+über die Gusto-CLI speichert. Telegram-Tastatur und Callback-Verarbeitung
+gehören zur vBot-App, nicht zu Gusto.
 
-> **Update (gebaut):** Die „andere App" ist jetzt **vBot**, und der Agent steuert sie direkt über das `channel_send`-Tool. Item-Tipps (`chk:<id>`) haken visuell in vBots Checklist-Extension ab (kein Gusto-Schreib pro Tap); ein **„Fertig"-Button** (`run:done`) weckt den Agenten mit dem aktuellen Tastatur-Stand, der dann Gusto in einem Rutsch synchronisiert — danach schließt vBot die Tastatur. Das „bei jedem `callback_query` die CLI aufrufen"-Modell unten ist der ursprüngliche Entwurf; die operative Anleitung steht im gezielt geladenen Skill-Referenzblatt (`skill/gusto/references/telegram.md`).
+Die operative Anleitung für einen Agenten mit vBots `channel_send` steht in
+[der Telegram-Referenz des Skills](../skill/gusto/references/telegram.md).
+Dieser Vertrag beschreibt die Daten und Zustandsübergänge an der App-Grenze.
 
-## Arbeitsteilung
+## Dienst und Aufruf
 
-- **Gusto (fertig, nichts zu bauen):** Daten & Logik über `gusto shopping …`.
-- **Andere App (zu bauen):** Telegram-Inline-Keyboard senden **+** `callback_query`
-  empfangen → ruft die Gusto-CLI. Das geht **nicht** über Nachrichtentext/Markdown.
+Haushaltsaufgaben verwenden den installierten `gusto`-Befehl gegen den
+ausgewählten laufenden Dienst. Vor der ersten Fachoperation erklärt derselbe
+Aufruf mit `home --json` die Auswahl. `server_url`, `server_reachable` und
+`server_data_path` beschreiben das Ziel normaler CLI-Aufrufe; `path` und die
+lokalen Auflösungsfelder können bei einem entfernten Dienst davon abweichen.
 
-## Gusto-CLI-Kontrakt (verifiziert)
+`--server URL` beziehungsweise `GUSTO_URL` wählen einen anderen Dienst.
+`GUSTO_HOME` wählt nur den lokalen Datenpfad für Server- und Recovery-Betrieb;
+es leitet normale CLI-Befehle nicht auf einen anderen Datenspeicher um.
+`python -m gusto` ist ein ausdrücklich gewählter Entwicklungsaufruf, kein
+Fallback für einen fehlenden oder unerreichbaren Haushaltsdienst.
 
-Aufruf: `gusto shopping <cmd>` bzw. `python -m gusto shopping <cmd>`, immer mit
-`--json`. `GUSTO_HOME` kann auf dem jeweiligen Gusto-Host einen abweichenden
-Datenordner setzen; `gusto home --json` zeigt die aktive Auflösung.
+## Die Checkliste senden und abschließen
 
-| Kommando | Rückgabe (`--json`) |
+1. `gusto shopping list --json` liefert ein flaches Array aller sichtbaren
+   Items, auch der bereits gehakten. Jede Zeile erhält einen Button mit
+   führendem `⬜` bei `checked:false` oder `✅` bei `checked:true`.
+2. Die Button-Daten lauten `chk:<id>`. Die ID wird unverändert aus dem Item
+   übernommen. Artikeltext und eine optionale Produktempfehlung sind reine
+   Beschriftung; der Agent leitet daraus keine ID ab.
+3. Die letzte Zeile enthält `{"label":"Fertig ✅","data":"run:done"}`.
+   Ohne diesen Button erreichen die visuellen Änderungen weder Agent noch
+   Gusto. vBot übernimmt Versand und Telegram-Callback-Verarbeitung.
+4. Artikel-Taps ändern nur das führende Glyph in der bestehenden Tastatur.
+   Sie rufen keine Gusto-Befehle auf und wecken den Agenten nicht.
+5. „Fertig“ schließt die Tastatur und liefert dem Agenten deren aktuelle
+   Beschriftungen. Für jede `chk:`-Zeile setzt er den gewünschten Zustand:
+   `✅` mit `gusto shopping check <id> --json`, `⬜` mit
+   `gusto shopping uncheck <id> --json`. `run:done` ist kein Artikel.
+
+Die Befehle setzen Zustände explizit; es gibt keinen CLI-`toggle`-Befehl.
+Unabhängige Items können parallel geschrieben werden. Jede Antwort und jeder
+Exitcode wird geprüft; erst erfolgreiche Speicherung wird als solche
+bestätigt. Ein inzwischen entferntes oder unbekanntes Item ist ein Fehler.
+In diesem Fall wird der aktuelle Stand gelesen und die Abweichung gemeldet,
+statt den Artikel unter einer erfundenen ID neu anzulegen.
+
+Eine verlorene Antwort kann `outcome_unknown:true` melden. Dann wird der Stand
+auf demselben Dienst geprüft, bevor eine Mutation wiederholt wird. Explizite
+`check`/`uncheck`-Aufrufe sind idempotent; Hinzufügen ist es nicht.
+
+„Fertig“ entfernt keine Artikel. `shopping remove-done` folgt nur auf einen
+zusätzlichen Wunsch, gekaufte Artikel zu entfernen. „Einkaufsliste leeren“
+entspricht `shopping clear` und entfernt auch offene Items. Beide Operationen
+haben keine CLI-Wiederherstellung.
+
+Nach Hinzufügen, Entfernen oder erneutem Rezeptimport wird eine aktuelle
+Tastatur gesendet. Ein erneuter Rezeptimport erzeugt neue IDs. Wenn die Liste
+nach dem Schließen lesbar bleiben soll, stehen die Artikel zusätzlich im
+ursprünglichen Nachrichtentext. Bei einem benannten Laden wird die Reihenfolge
+gemäß [Einkaufstour-Referenz](../skill/gusto/references/shopping-trip.md) gewählt;
+Gusto speichert keinen Laufweg.
+
+## Gusto-Rückgaben
+
+Alle folgenden Befehle akzeptieren `--json`:
+
+| Kommando | JSON-Rückgabe und Wirkung |
 |---|---|
-| `shopping list` | **flaches Array** aller nicht-`deleted` Items (gehakte inklusive, mit `checked:true`) |
-| `shopping list --pending` | dasselbe Array, aber nur `checked:false` |
-| `shopping check <id>` | das Item (`checked:true`); `updated_at` nur bei Zustandswechsel |
-| `shopping uncheck <id>` | das Item (`checked:false`); `updated_at` nur bei Zustandswechsel |
-| `shopping add "<text>" [--quantity M] [--source SLUG]` | das erzeugte Item; `source` muss ein vorhandenes Rezept sein und zählt für dessen Import-Sperre |
-| `shopping add-many "<text>" ...` | alle Einträge atomar hinzufügen (Array in Argumentreihenfolge) |
-| `shopping add-recipe <slug>` | Array der erzeugten Items (`source=slug`); leerer oder bereits sichtbarer Rezeptimport ist ein Fehler, der die vorhandene Anzahl nennt |
-| `shopping remove <id>` | Tombstone; Wiederholung ist ein No-op ohne neuen Zeitstempel |
-| `shopping remove-done` | `{ "removed": N }` — tombstoned alle gehakten |
-| `shopping clear` | `{ "removed": N }` — tombstoned alle sichtbaren Einträge, offen wie gehakt |
-| erwarteter Fehler mit `--json` | `{ "ok": false, "error": "…" }` auf stdout + **exit code 1** |
+| `shopping list` | Flaches Array aller nicht gelöschten Items, gehakte eingeschlossen. |
+| `shopping list --pending` | Dasselbe Array, beschränkt auf `checked:false`. |
+| `shopping check <id>` / `uncheck <id>` | Item mit dem gesetzten `checked`-Wert; unveränderter Zustand behält `updated_at`. |
+| `shopping add "<text>" [--quantity M] [--source SLUG]` | Erzeugtes Item; `source` muss ein aktives Rezept sein und zählt für dessen Import-Sperre. |
+| `shopping add-many "<text>" ...` | Atomar erzeugte Items als Array in Argumentreihenfolge. |
+| `shopping add-recipe <slug>` | Array der erzeugten Items; lehnt leere Zutatenabschnitte und vorhandene sichtbare Items derselben Rezeptquelle ab; die Ablehnung nennt deren Anzahl. |
+| `shopping remove <id>` | `{"id":"...","deleted":true}`; wiederholtes Entfernen desselben Tombstones ändert den Zeitstempel nicht. |
+| `shopping remove-done` | `{"removed":N}`; entfernt alle sichtbaren gehakten Items. |
+| `shopping clear` | `{"removed":N}`; entfernt alle sichtbaren Items. |
 
-Beide Sammelentfernungen sind nicht per CLI wiederherstellbar.
+Ein erwarteter Befehlsfehler liefert `{"ok":false,"error":"..."}` auf
+stdout mit Exitcode 1. Parserfehler verwenden Exitcode 2. Die vollständige
+CLI-Referenz steht unter [skill/gusto/references/cli.md](../skill/gusto/references/cli.md).
 
-Item-Form:
+Ein Item enthält folgende Felder:
 
 ```json
 {
@@ -52,79 +100,9 @@ Item-Form:
 }
 ```
 
-`id` = 32-stelliges Hex, stabil und eindeutig → **der Anker für die Buttons**
-(`callback_data: "chk:<id>"` = 36 Bytes, weit unter dem 64-Byte-Limit).
-
-## Was die andere App bauen muss
-
-1. **Senden mit `reply_markup` (Inline-Keyboard):** ein Button pro Item, Label
-   `⬜ 200 g Spaghetti` bzw. `✅ 200 g Spaghetti`, `callback_data: "chk:<id>"`.
-   Beispiel-Payload (gegen die aktuelle Bot-API-Doku prüfen):
-   ```json
-   POST sendMessage
-   {
-     "chat_id": "<gruppe-oder-person>",
-     "text": "🛒 Einkaufsliste",
-     "reply_markup": { "inline_keyboard": [
-       [{ "text": "⬜ 200 g Spaghetti", "callback_data": "chk:a0438161…" }],
-       [{ "text": "✅ Eier",            "callback_data": "chk:4479aa91…" }]
-     ]}
-   }
-   ```
-2. **Empfangen von `callback_query`:** ein Tap ist **keine Chat-Nachricht**,
-   sondern ein eigener Update-Typ — wer nur `message`-Updates liest, sieht ihn
-   nicht. Beim Update:
-   - `data` parsen (`chk:<id>`),
-   - Status umschalten: `gusto shopping check <id>` bzw. `uncheck <id>`
-     (es gibt kein `toggle` — anhand des aktuellen `checked` entscheiden),
-   - **`answerCallbackQuery(callback_query_id)`** aufrufen (sonst dreht der
-     Ladekreis beim Nutzer weiter),
-   - die Nachricht per `editMessageReplyMarkup` / `editMessageText` mit dem neuen
-     ⬜/✅ aktualisieren (dazu die `message_id` der Listen-Nachricht behalten).
-
-## Ablauf (Ende-zu-Ende)
-
-1. `gusto shopping list --json` → für jedes nicht-`deleted` Item eine
-   Button-Reihe, ⬜ bei `checked:false`, ✅ bei `true`.
-2. Nachricht senden, `message_id` merken.
-3. Tap kommt als `callback_query` → `id` aus `data` → in Gusto umschalten →
-   `answerCallbackQuery` → Nachricht neu rendern & editieren.
-4. Nur auf ausdrücklichen Entfernungswunsch: „Erledigte entfernen"-Button →
-   `gusto shopping remove-done` (kein CLI-Restore). „Einkaufsliste leeren" →
-   genau ein `gusto shopping clear`, das offene und erledigte Einträge entfernt.
-   Einen neuen Eintrag per Chat („+ Milch") → `gusto shopping add`, mehrere
-   bekannte Einträge gemeinsam → `gusto shopping add-many`; danach neu rendern.
-
-## Zuerst untersuchen (bitte vor dem Bauen berichten)
-
-- Wie holt die bestehende Telegram-Integration Updates — **Webhook oder
-  Long-Polling**? (Bei Long-Polling **kein** HTTPS/offener Port nötig; der Bot
-  ruft nur ausgehend bei Telegram an — genau das wollen wir.)
-- Verarbeitet sie schon **andere Update-Typen als `message`**, insbesondere
-  `callback_query`? Falls nein: **das ist das fehlende Kernstück.**
-- Kann sie beim Senden ein `reply_markup` mitgeben und eine **bereits gesendete
-  Nachricht editieren**?
-- Vorschlag, wie sich das einfügt, **ohne** die bestehende
-  Nachrichten-Verarbeitung zu brechen.
-
-## Fallen / Details
-
-- `callback_data` max **64 Bytes** — `chk:<id>` passt locker.
-- Immer `answerCallbackQuery` aufrufen, auch wenn nichts sichtbar passiert.
-- **Toggle-Semantik:** Tap auf ✅ soll wieder abhaken (Korrektur) → je nach
-  aktuellem Status `check`/`uncheck`.
-- Unbekannte `id` → JSON-Fehler auf stdout + exit 1: beides prüfen.
-- **Gruppen-Chat** = geteilte Haushaltsliste (alle sehen/tippen dieselbe
-  Nachricht) — gewünscht. In Gruppen ggf. Bot-„Privacy Mode" beachten
-  (Button-Callbacks funktionieren unabhängig davon; nur Text-Kommandos bräuchten
-  evtl. `/cmd@bot`).
-- Wird nach Entfernen der alten, quellbezogenen Items erneut via `add-recipe`
-  importiert, entstehen **neue `id`s** → Listen-Nachricht neu senden/editieren
-  statt alte Buttons weiter zu nutzen.
-- Ein Edit pro Tap ist ok; Telegram-Rate-Limits nur im Hinterkopf behalten.
-
-## In einem Satz
-
-Gusto = Daten & Logik (fertig, über `gusto shopping …`). Andere App =
-Telegram-Darstellung (Inline-Keyboard) + Tap-Empfang (`callback_query`), das die
-Gusto-CLI aufruft.
+IDs sind opake Strings. Server-Items haben gewöhnlich 32 Hexzeichen,
+Browser-Items können Bindestriche enthalten. Die App verwendet den
+zurückgegebenen Wert unverändert als Button-Anker und als CLI-Argument.
+Archivieren eines Quellrezepts verändert bestehende Items nicht. Entfernen
+setzt Tombstones für den [PWA-Sync](sync-kontrakt.md); sie erscheinen nicht in
+`shopping list`.
