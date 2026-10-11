@@ -258,6 +258,14 @@ Quality gates:
   integrity scans. Historical plans are labeled as such. Evidence:
   `docs/audit-2026-10-10.md`.
 
+- 2026-10-11: The Telegram shopping checklist uses vBot's built-in
+  `channel_send` `checklist` parameter instead of a vBot extension plus a
+  `chk:`/`run:done` button convention. vBot toggles taps in the message and
+  reports only the items changed since posting, by Gusto item id, so the agent
+  writes `shopping check|uncheck` for those alone and changes made elsewhere in
+  the meantime survive. Contract: `docs/telegram-shopping-handoff.md`; agent
+  steps: `skill/gusto/references/telegram.md`.
+
 ## Domain Maps
 
 Domain-specific documentation lives in `.vorch/domain-maps/`. A **domain** is any module or subsystem that has its own folder or clear boundary in the codebase — a chunk of code that has a distinct responsibility and that agents need context about before touching it. This includes technical modules (`hooks`, `tools`, `storage`), infrastructure modules (`server`, `channel`), and business modules (`auth`, `payments`). Size doesn't matter — what matters is that working on it without context risks misunderstanding its interfaces or conventions.

@@ -1,10 +1,12 @@
 # Gusto-Einkaufsliste als Telegram-Checkliste
 
 Gusto hält die gemeinsame Einkaufsliste; vBot stellt sie als antippbare
-Telegram-Tastatur dar. Ein Tap auf einen Artikel ändert zunächst nur dessen
-Häkchen in vBot. Erst „Fertig“ weckt den Agenten, der die sichtbaren Zustände
-über die Gusto-CLI speichert. Telegram-Tastatur und Callback-Verarbeitung
-gehören zur vBot-App, nicht zu Gusto.
+Telegram-Checkliste dar. Ein Tap auf einen Artikel ändert nur dessen Häkchen in
+der Nachricht. Erst „Fertig“ weckt den Agenten mit den Artikeln, deren Zustand
+sich seit dem Senden geändert hat, und er speichert genau diese über die
+Gusto-CLI. Die Checkliste ist eine eingebaute Funktion von vBots
+`channel_send` (Parameter `checklist`); Tastatur, Tap-Verarbeitung und
+Änderungsbericht gehören zu vBot, nicht zu Gusto.
 
 Die operative Anleitung für einen Agenten mit vBots `channel_send` steht in
 [der Telegram-Referenz des Skills](../skill/gusto/references/telegram.md).
@@ -27,23 +29,27 @@ Fallback für einen fehlenden oder unerreichbaren Haushaltsdienst.
 ## Die Checkliste senden und abschließen
 
 1. `gusto shopping list --json` liefert ein flaches Array aller sichtbaren
-   Items, auch der bereits gehakten. Jede Zeile erhält einen Button mit
-   führendem `⬜` bei `checked:false` oder `✅` bei `checked:true`.
-2. Die Button-Daten lauten `chk:<id>`. Die ID wird unverändert aus dem Item
-   übernommen. Artikeltext und eine optionale Produktempfehlung sind reine
-   Beschriftung; der Agent leitet daraus keine ID ab.
-3. Die letzte Zeile enthält `{"label":"Fertig ✅","data":"run:done"}`.
-   Ohne diesen Button erreichen die visuellen Änderungen weder Agent noch
-   Gusto. vBot übernimmt Versand und Telegram-Callback-Verarbeitung.
-4. Artikel-Taps ändern nur das führende Glyph in der bestehenden Tastatur.
-   Sie rufen keine Gusto-Befehle auf und wecken den Agenten nicht.
-5. „Fertig“ schließt die Tastatur und liefert dem Agenten deren aktuelle
-   Beschriftungen. Für jede `chk:`-Zeile setzt er den gewünschten Zustand:
-   `✅` mit `gusto shopping check <id> --json`, `⬜` mit
-   `gusto shopping uncheck <id> --json`. `run:done` ist kein Artikel.
+   Items, auch der bereits gehakten.
+2. Der Agent ruft `channel_send` mit einem `checklist`-Eintrag pro Item auf:
+   `id` ist die unverändert übernommene Item-ID, `label` Menge und Text,
+   `checked` der `checked`-Wert des Items. `"done_label": "Fertig"` benennt
+   den Abschlussbutton, den vBot unter die Artikel setzt. Artikeltext und eine
+   optionale Produktempfehlung sind reine Beschriftung; der Agent leitet
+   daraus keine ID ab.
+3. Artikel-Taps schalten nur das Häkchen (`⬜`/`✅`) in der bestehenden
+   Nachricht um. Sie rufen keine Gusto-Befehle auf und wecken den Agenten
+   nicht.
+4. „Fertig“ schließt die Tastatur und weckt den Agenten. Die Nachricht an ihn
+   nennt nur die seit dem Senden geänderten Artikel, jeweils als `checked`
+   oder `unchecked` mit ihrer ID, und die Anzahl der unveränderten. Er ruft
+   für jede `checked`-ID `gusto shopping check <id> --json` und für jede
+   `unchecked`-ID `gusto shopping uncheck <id> --json` auf.
 
-Die Befehle setzen Zustände explizit; es gibt keinen CLI-`toggle`-Befehl.
-Unabhängige Items können parallel geschrieben werden. Jede Antwort und jeder
+Unveränderte Artikel werden nicht geschrieben. So bleiben Änderungen erhalten,
+die seit dem Senden anderswo gemacht wurden, etwa ein in der PWA gehakter
+Artikel, den die Telegram-Nachricht noch offen zeigt. Die Befehle setzen
+Zustände explizit; es gibt keinen CLI-`toggle`-Befehl. Unabhängige Items
+können parallel geschrieben werden. Jede Antwort und jeder
 Exitcode wird geprüft; erst erfolgreiche Speicherung wird als solche
 bestätigt. Ein inzwischen entferntes oder unbekanntes Item ist ein Fehler.
 In diesem Fall wird der aktuelle Stand gelesen und die Abweichung gemeldet,
@@ -58,8 +64,8 @@ zusätzlichen Wunsch, gekaufte Artikel zu entfernen. „Einkaufsliste leeren“
 entspricht `shopping clear` und entfernt auch offene Items. Beide Operationen
 haben keine CLI-Wiederherstellung.
 
-Nach Hinzufügen, Entfernen oder erneutem Rezeptimport wird eine aktuelle
-Tastatur gesendet. Ein erneuter Rezeptimport erzeugt neue IDs. Wenn die Liste
+Nach Hinzufügen, Entfernen oder erneutem Rezeptimport wird auf Wunsch eine
+neue Checkliste gesendet. Ein erneuter Rezeptimport erzeugt neue IDs. Wenn die Liste
 nach dem Schließen lesbar bleiben soll, stehen die Artikel zusätzlich im
 ursprünglichen Nachrichtentext. Bei einem benannten Laden wird die Reihenfolge
 gemäß [Einkaufstour-Referenz](../skill/gusto/references/shopping-trip.md) gewählt;
@@ -101,8 +107,9 @@ Ein Item enthält folgende Felder:
 ```
 
 IDs sind opake Strings. Server-Items haben gewöhnlich 32 Hexzeichen,
-Browser-Items können Bindestriche enthalten. Die App verwendet den
-zurückgegebenen Wert unverändert als Button-Anker und als CLI-Argument.
+Browser-Items können Bindestriche enthalten. Der Agent verwendet den
+zurückgegebenen Wert unverändert als Checklisten-ID und als CLI-Argument. vBot
+nimmt IDs bis 58 Byte an; Gusto-IDs liegen darunter.
 Archivieren eines Quellrezepts verändert bestehende Items nicht. Entfernen
 setzt Tombstones für den [PWA-Sync](sync-kontrakt.md); sie erscheinen nicht in
 `shopping list`.

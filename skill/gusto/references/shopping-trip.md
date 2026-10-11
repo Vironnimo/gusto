@@ -57,7 +57,7 @@ with the household's known product preferences for that store.
 
    If a Telegram checklist was also requested, pass these items and their order
    to the main skill's Telegram workflow. Department names can stay in its
-   message text; buttons are items only.
+   message text; checklist items are Gusto items only.
 
 Checking items off afterward uses the normal ids (`shopping check|uncheck`);
 the chosen order has no effect on Gusto.

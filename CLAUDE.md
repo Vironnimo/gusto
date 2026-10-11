@@ -271,15 +271,15 @@ Süßes → Getränke → Tiefkühl → Drogerie), and name each item's pick fro
 the route lives only in the agent's answer or the Telegram checklist order.
 
 **Shopping list as a Telegram checklist:** the agent posts the list via vBot's
-`channel_send` tool (inline-keyboard) — one `chk:<id>` button per item (leading
-⬜/✅ from `checked`) plus a final `run:done` "Fertig" button. Item taps flip the
-glyph visually (vBot's checklist extension — no Gusto write); the **Fertig** tap
-wakes the agent with the current button state, which then syncs Gusto (`gusto
-shopping check|uncheck <id>` per item; no `toggle` — decide from the ⬜/✅ glyph)
-and confirms in chat. "Fertig" saves the checked-state (add `gusto shopping
-remove-done` only if it should also remove bought items). A request to empty
-the entire list maps to one `gusto shopping clear` call. Neither removal has a
-CLI restore.
+`channel_send` tool with its `checklist` parameter — one item per Gusto item
+(`id` verbatim, `label`, `checked`) and `done_label` "Fertig". vBot toggles
+taps inside the Telegram message without a Gusto write; the **Fertig** tap
+wakes the agent with only the items changed since posting, by id, which it
+saves with `gusto shopping check|uncheck <id>` and confirms in chat. Unchanged
+items get no call, so changes made in the PWA meanwhile survive. "Fertig"
+saves the checked-state (add `gusto shopping remove-done` only if it should
+also remove bought items). A request to empty the entire list maps to one
+`gusto shopping clear` call. Neither removal has a CLI restore.
 Full round-trip in the on-demand skill reference
 (`skill/gusto/references/telegram.md`); client history: [docs/telegram-shopping-handoff.md](docs/telegram-shopping-handoff.md).
 
@@ -372,10 +372,11 @@ service worker).
 
 **In progress:**
 - **Telegram shopping checklist** (tap-to-check on the phone) — Gusto side is
-  ready (`gusto shopping …`, verified); the Telegram client (inline-keyboard +
-  `callback_query`) is built in the agent app. Contract:
+  ready (`gusto shopping …`, verified); vBot provides the checklist as a
+  built-in `channel_send` feature (no extension). Contract:
   [docs/telegram-shopping-handoff.md](docs/telegram-shopping-handoff.md).
-  Fallback if Telegram gets too fiddly: the existing **PWA over HTTPS in the LAN**
+  Remaining: a live round-trip on the phone once vBot ships the feature.
+  Alternative without Telegram: the existing **PWA over HTTPS in the LAN**
   (DuckDNS + Caddy, no app code needed) — ready-to-grab guide in
   [docs/https-pwa-option.md](docs/https-pwa-option.md).
 

@@ -177,8 +177,8 @@ first catalog spelling for an unassigned tag.
 
 When the user names a store or requests route order, read
 `references/shopping-trip.md`. When the user requests a tappable Telegram list,
-also read `references/telegram.md`; it requires vBot's available checklist
-tool and a known destination. A shopping request alone does not request a post.
+also read `references/telegram.md`; it requires vBot's `channel_send` tool
+with its `checklist` parameter and a known destination. A shopping request alone does not request a post.
 
 ## Limits and less common commands
 

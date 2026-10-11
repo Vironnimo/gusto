@@ -96,7 +96,7 @@ danach wartungsfrei. Für die Nutzer: nur installieren.
 | | PWA + DuckDNS (diese Option) | Telegram-Checkliste |
 |---|---|---|
 | Pi öffentlich erreichbar? | nein, bleibt im Haus | nein (bei Long-Polling) |
-| Offline im Laden | ja (Service Worker) | Liste lesbar, Tap synct bei Signal |
-| Neue Fähigkeit nötig? | nur Caddy + DNS (App fertig) | Inline-Keyboard + `callback_query` in der Agent-App |
+| Offline im Laden | ja (Service Worker) | Liste lesbar; Taps und „Fertig" brauchen Signal |
+| Neue Fähigkeit nötig? | nur Caddy + DNS (App fertig) | keine; Checkliste ist in vBots `channel_send` eingebaut |
 | Installier-Hürde | 1× „App installieren" | Bot in Telegram öffnen (vertraut) |
 | Daten bei Dritten? | nein | ja (Telegram sieht den Inhalt) |

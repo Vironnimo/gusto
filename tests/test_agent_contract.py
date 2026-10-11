@@ -102,7 +102,9 @@ def main():
     trip = (skill_root / "references/shopping-trip.md").read_text(encoding="utf-8")
     check("--store" in trip and "shopping list" in trip and "products" in trip,
           "the store trip reference must retain its CLI and ranking inputs")
-    check("chk:" not in skill and "chk:" in telegram and "run:done" in telegram,
+    check("done_label" not in skill and "channel_send" in telegram
+          and "checklist" in telegram and "done_label" in telegram
+          and "shopping check" in telegram and "shopping uncheck" in telegram,
           "host-specific Telegram detail must stay routed out of the main skill")
 
     documented_calls = re.findall(r"`([^`]+)`", cli_reference, re.DOTALL)
