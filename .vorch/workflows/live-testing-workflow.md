@@ -10,7 +10,7 @@ How to start Gusto from your checkout and check a change in the real app, in the
 
 ## Steps
 
-1. **Pick the port and folder.** In the primary checkout use port 8000 (or any free one). In a worktree use the `port` from its `.vorch-worktree` marker, so parallel worktrees never collide. Folder: `<checkout>/.tmp/live-<task>/`.
+1. **Pick the port and folder.** Never use port 8000: it belongs to the installed household service, which the checkout's CLI also targets by default. In the primary checkout use a free port such as 8090. In a worktree use the `port` from its `.vorch-worktree` marker, so parallel worktrees never collide. Folder: `<checkout>/.tmp/live-<task>/`.
 2. **Seed the store** when the change needs data: copy the tracked sample store (`data/`, `recipes/`, `images/` of the checkout) into the folder, or create data through the CLI once the server runs.
 3. **Start the server** from the checkout's own `.venv`, in the background:
    ```bash
@@ -18,6 +18,6 @@ How to start Gusto from your checkout and check a change in the real app, in the
    ```
    Use `--host 0.0.0.0` only when the user wants to open it from another device in the LAN, such as a phone for the PWA. `--reload` restarts the server on source changes.
 4. **Check that it is yours:** `http://127.0.0.1:<port>/api/v1/health` must report `data_path` equal to your `GUSTO_HOME`. Stop and fix the setup otherwise.
-5. **Exercise the change.** CLI: `.venv/Scripts/python -m gusto --server http://127.0.0.1:<port> <command> --json`. Browser: drive the pages with `playwright-cli`, including narrow mobile widths for UI changes, and take screenshots of the states that matter.
+5. **Exercise the change.** CLI, always with `--server`, because without it the checkout's CLI talks to the installed service: `.venv/Scripts/python -m gusto --server http://127.0.0.1:<port> <command> --json`. Browser: drive the pages with `playwright-cli`, including narrow mobile widths for UI changes, and take screenshots of the states that matter.
 6. **Show it to the user:** give the clickable `http://127.0.0.1:<port>/...` link of the page that shows the change, with the screenshots, instead of instructions for starting it.
 7. **Clean up:** stop the server when the user is done looking. The `.tmp/` folder may stay; it is git-ignored.

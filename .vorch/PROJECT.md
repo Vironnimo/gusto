@@ -70,7 +70,7 @@ python -m venv .venv
 git config core.hooksPath .githooks   # once per clone; worktrees share it
 ```
 
-**Run:** `python -m gusto serve` starts the foreground development server on port 8000. The checkout's `gusto.settings.json` selects the `gusto-dev` store under the per-user data directory, which every checkout of this repository shares; `GUSTO_HOME` overrides the store. The installed production service owns its own store and is never used for development or tests. Starting the app to check a change, in the browser or through the CLI: read `.vorch/workflows/live-testing-workflow.md`.
+**Run:** `python -m gusto serve` starts the foreground development server, by default on port 8000, the installed household service's port; the checkout's CLI also targets `http://127.0.0.1:8000` unless `--server` says otherwise, so development uses another port and passes `--server`. The checkout's `gusto.settings.json` selects the `gusto-dev` store under the per-user data directory, which every checkout of this repository shares; `GUSTO_HOME` overrides the store. The installed production service owns its own store and is never used for development or tests. Starting the app to check a change, in the browser or through the CLI: read `.vorch/workflows/live-testing-workflow.md`.
 
 **Worktrees:** `python scripts/worktree.py create|list|merge|delete <task-name>`. `create` prints the absolute path and a port block of its own and sets up the worktree's own `.venv`; `merge` runs no tests and moves `main` only once the merge commit passed the commit hook. Never link a folder of another checkout into a worktree: Git for Windows' `git worktree remove` follows junctions and deletes the target's contents. Conflicts and gotchas: `.vorch/workflows/worktree-workflow.md`.
 
