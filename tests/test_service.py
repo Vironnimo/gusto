@@ -6,7 +6,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 import urllib.error
 from pathlib import Path
 from unittest.mock import patch
@@ -23,6 +22,21 @@ def check(value, message):
     global checks
     assert value, message
     checks += 1
+
+
+class HealthClock:
+    """Advance only this owner's polling clock when it requests a sleep."""
+
+    def __init__(self):
+        self.now = 100.0
+        self.sleeps = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, interval):
+        self.sleeps.append(interval)
+        self.now += interval
 
 
 with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
@@ -304,19 +318,20 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
         mismatch_calls.append(args)
         return Response()
 
-    started_at = time.monotonic()
-    try:
-        service.wait_for_health(
-            "http://fixture/api/v1/health", timeout=3, interval=0.05,
-            expected_version="9.9.9", expected_data_path=data,
-            opener=counted_opener,
-        )
-    except service.ServiceError as error:
-        check("9.9.9" in str(error) and "erwartet" in str(error),
-              "a wrong health version must fail fast and name both versions")
-    else:
-        raise AssertionError("wrong health version accepted")
-    check(len(mismatch_calls) == 1 and time.monotonic() - started_at < 1.5,
+    mismatch_clock = HealthClock()
+    with patch.object(service, "time", mismatch_clock):
+        try:
+            service.wait_for_health(
+                "http://fixture/api/v1/health", timeout=3, interval=0.05,
+                expected_version="9.9.9", expected_data_path=data,
+                opener=counted_opener,
+            )
+        except service.ServiceError as error:
+            check("9.9.9" in str(error) and "1.2.3" in str(error),
+                  "a wrong health version must fail fast and name both versions")
+        else:
+            raise AssertionError("wrong health version accepted")
+    check(len(mismatch_calls) == 1 and not mismatch_clock.sleeps,
           "a reachable server with the wrong version is not transient and "
           "must not be polled until the health timeout")
 
@@ -330,18 +345,20 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
         unhealthy_calls.append(args)
         return UnhealthyResponse()
 
-    try:
-        service.wait_for_health(
-            "http://fixture/api/v1/health", timeout=3, interval=0.05,
-            expected_version="1.2.3", expected_data_path=data,
-            opener=unhealthy_opener,
-        )
-    except service.ServiceError as error:
-        check("ok=true" in str(error),
-              "an explicit ok=false must fail fast with its meaning")
-    else:
-        raise AssertionError("unhealthy health response accepted")
-    check(len(unhealthy_calls) == 1,
+    unhealthy_clock = HealthClock()
+    with patch.object(service, "time", unhealthy_clock):
+        try:
+            service.wait_for_health(
+                "http://fixture/api/v1/health", timeout=3, interval=0.05,
+                expected_version="1.2.3", expected_data_path=data,
+                opener=unhealthy_opener,
+            )
+        except service.ServiceError as error:
+            check("ok=true" in str(error),
+                  "an explicit ok=false must fail fast with its meaning")
+        else:
+            raise AssertionError("unhealthy health response accepted")
+    check(len(unhealthy_calls) == 1 and not unhealthy_clock.sleeps,
           "a reachable server that reports ok=false must not be retried")
 
     class StartingResponse(Response):
@@ -356,12 +373,15 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
             raise result
         return result
 
-    recovered = service.wait_for_health(
-        "http://fixture/api/v1/health", timeout=5, interval=0.05,
-        expected_version="1.2.3", expected_data_path=data,
-        opener=transient_opener,
-    )
-    check(recovered["ok"] is True and not transient,
+    transient_clock = HealthClock()
+    with patch.object(service, "time", transient_clock):
+        recovered = service.wait_for_health(
+            "http://fixture/api/v1/health", timeout=5, interval=0.05,
+            expected_version="1.2.3", expected_data_path=data,
+            opener=transient_opener,
+        )
+    check(recovered["ok"] is True and not transient
+          and transient_clock.sleeps == [0.05, 0.05],
           "unreachable and HTTP-answering services must still be polled "
           "until they report the expected runtime")
 # ==== F3 end ====

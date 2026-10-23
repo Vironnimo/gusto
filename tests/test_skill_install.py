@@ -147,6 +147,26 @@ def main():
         check("unvollständig" in error and snapshot(destination) == snapshot(SOURCE),
               "an incomplete source must be rejected before replacing the target")
 
+        # Model an unsafe source directory entry at the filesystem query. This
+        # is deterministic on Windows without requiring symlink privileges.
+        linked_source = root / "linked-source"
+        shutil.copytree(SOURCE, linked_source)
+        linked_file = linked_source / "references" / "cli.md"
+        real_is_symlink = Path.is_symlink
+        before_unsafe_source = snapshot(destination)
+        with patch.object(
+            Path, "is_symlink", autospec=True,
+            side_effect=lambda path: path == linked_file or real_is_symlink(path),
+        ):
+            error = expect_valueerror(
+                skill_install.install_skill,
+                "vbot", user_home=home, source=linked_source,
+            )
+        check(linked_file.relative_to(linked_source).as_posix() in error
+              and snapshot(destination) == before_unsafe_source
+              and not list((vbot / "skills").glob(".gusto-skill-*")),
+              "a source symlink must fail before staging or replacing the existing skill")
+
         runtime = root / "runtime"
         packaged = runtime / "share" / "gusto" / "skill" / "gusto"
         shutil.copytree(SOURCE, packaged)
