@@ -1,68 +1,65 @@
 # Worktree Workflow
 
-This is an inactive generic workflow template. Gusto has no project-specific
-worktree CLI or numbered orchestration pipeline. Follow
-[the project guide](../../AGENTS.override.md) and the tools available in the
-current session; do not infer setup, delegation, merge, or deletion authority
-from the template below.
+A larger or uncertain task runs in its own git worktree: a separate directory on its own branch, so several agents can work, commit and merge in parallel without touching each other or the primary checkout. Small, low-risk changes go directly on `main` instead (`AGENTS.md` -> Git).
 
-Each task runs in a dedicated git worktree — an isolated directory with its own branch. Multiple tasks can run in parallel without touching each other or the main directory.
+## Create
 
-## Setup
-
-Use the project's worktree commands to create a worktree for this task. Command names and locations are project-specific and are documented in `.vorch/PROJECT.md` (Development section).
-
-The project-specific worktree tooling must provide these operations:
-- `create` — create a new worktree and branch for a task
-- `list` — show existing worktrees and their branches
-- `delete` — remove a task worktree when the task is done or abandoned
-
-Record the worktree path the `create` command outputs — **every agent you delegate to must work in this directory**, not the repo root.
-
-Types: `feat` · `fix` · `docs` · `refactor` · `perf` · `test` · `chore`
-
-## Key Rule: All Work Happens in the Worktree
-
-Every agent you delegate to must be told the worktree path as their working directory. Do not delegate work against the main repo directory.
-
-## Per-Phase Commit
-
-After each phase completes, commit from **within the worktree directory**:
+From any checkout:
 
 ```bash
-git add <files changed in this phase>
-git commit -m "<type>(<scope>): <what this phase accomplished>"
+python scripts/worktree.py create <task-name>
 ```
 
-**Commit rules:**
-- Stage only application files — never the plan file.
-- Never stage or commit `.vorch/FLAGGED.md`; it is a local-only ignored runtime log.
-- Subject: lowercase, no trailing period, max 72 chars.
-- Body (optional): explain *why*, not *what*.
-- Breaking change: append `!` → `feat(api)!: rename endpoint`.
-- One logical unit = one commit (= one phase).
-- **Never commit broken code.**
+It creates `.worktrees/<task-name>` on a new branch `<task-name>` from `main`, runs the project's setup for a fresh checkout, and prints the absolute `path` (and the ports or data directory, where the project assigns them). A task name is lowercase letters, digits and hyphens.
 
-## Finalize
+## Work inside the worktree
 
-Run quality gates from within the worktree. Everything must be green.
+The working directory decides which checkout a command acts on. Change into the printed path before you run anything, or use absolute paths and `git -C <path>`; a script path that points into the worktree does not make a process run there. Every subagent you delegate to gets the worktree path as its working directory and the instruction to stay inside it.
 
-Write the Step 7 summary. Then ask the user for merge confirmation — include the branch name and a one-line status.
+Commit inside the worktree as on `main`: one logical unit per commit, through the commit hook, once the tests covering the change pass.
 
-On confirmation: from the **main repo directory** (not the worktree), merge:
+## Merge
+
+Once everything is committed:
 
 ```bash
-git merge <branch> --no-ff -m "merge: <summary>"
+python scripts/worktree.py merge <task-name>
 ```
 
-Then clean up the worktree using the project-specific `delete` command (see `.vorch/PROJECT.md`).
+No user confirmation is needed. Use a generous shell timeout: the command waits while another session's merge holds the merge lock. It then:
 
-## Abandonment
+1. reports a conflict with `main` before touching anything;
+2. makes the merge commit (`--no-ff`) in a private landing checkout, where the commit hook checks it;
+3. fast-forwards `main` in the primary checkout to that commit, and remakes the merge when `main` moved meanwhile;
+4. removes the worktree and its branch.
 
-If the task is cancelled or aborted, use the project-specific `delete` command (see `.vorch/PROJECT.md`) to clean up. Uncommitted changes in the worktree are discarded.
+It runs no tests; the complete suites run at push (`push-workflow.md`). A merge that fails or is killed leaves `main` as it was; run it again.
+
+## Conflicts
+
+When the merge reports conflicts, `main` is unchanged. In your worktree, bring `main` into your branch, resolve, and commit:
+
+```bash
+git rebase main
+```
+
+Then run the merge again. When the merge commit fails the commit hook, the report names the problems: fix them in the worktree the same way and retry.
+
+## Abandon
+
+```bash
+python scripts/worktree.py delete <task-name>
+```
+
+It refuses while the worktree has uncommitted changes or commits that `main` lacks; `--force` discards them.
 
 ## Gotchas
 
-- **One branch per worktree** — a branch can only be checked out in one worktree at a time. The `create` operation must create a fresh branch for the task.
-- **Untracked files in worktree** — plan files (`.vorch/plans/`) and other untracked files exist only in the worktree; they are not visible in the main repo directory.
-- **Commands are project-specific** — use the worktree command names and paths documented in `.vorch/PROJECT.md`; do not assume a fixed script path.
+- **Stashes are shared by all worktrees.** An unqualified `git stash pop` can consume another session's stash. Set work aside with a temporary commit or a saved patch instead.
+- **One branch per worktree.** A branch can be checked out in one worktree at a time; `create` always makes a fresh branch.
+- **The primary checkout stays on `main`.** The merge refuses otherwise. Never switch it to another branch while sessions run.
+- **Never hand-merge into `main`** while sessions run: all merges go through the merge command so the lock serializes them.
+- **Uncommitted files are local.** Untracked plans and scratch files in a worktree are not visible in the primary checkout and disappear with the worktree.
+- **A leading `cd <primary checkout> && ` may be dropped.** Claude Code removes a leading `cd <session directory> && ` as redundant, comparing against the session's recorded directory, which can lag behind the shell's actual directory right after a `cd` into or out of a worktree; the rest of the command then runs where the shell already is. Use absolute paths and `git -C <path>`, and check with `pwd` when it matters.
+- **Never link folders between checkouts.** A junction or symlink from a worktree into another checkout (such as a shared `node_modules`) is followed by Git for Windows' `git worktree remove`, which deletes the target's contents. Each worktree installs its own dependencies.
+- **Run merge and delete from the primary checkout** (`python <primary>/scripts/worktree.py merge <name>` with the absolute path, or after changing there). Started from inside the worktree, the merge still lands, but on Windows the shell's handle on the directory can keep it from being removed; the command then says so, and `delete <name> --force` from the primary checkout finishes the cleanup.

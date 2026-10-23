@@ -1,141 +1,117 @@
 # Domain Map Workflow
 
-Use this workflow when creating, auditing, or updating `.vorch/domain-maps/<domain>.md`.
+How to change domain maps and their supplementary files under `.vorch/domain-maps/`. Every map change follows the sections up to `## Creating or restructuring a map`; read the rest when you create, split, merge, rename or restructure a map. A corpus-wide cleanup follows `domain-map-audit-workflow.md`.
 
-Domain maps are factual working notes for agents. They are not architecture documentation, not generated API reference, and not a line-count contest.
+## What a root map is for
 
-A good domain map is:
-- Short enough to stay readable
-- Factual enough to trust
-- Complete enough to keep agents from touching the wrong layer
+A root map (`.vorch/domain-maps/<domain>.md`) is read in full by every agent before it works in that domain, so each sentence costs every task there. It holds what an agent needs to safely touch anything in the domain (What belongs where). Supplementary files (`.vorch/domain-maps/<domain>/<topic>.md`) hold task-gated depth and are read only when a trigger in the root map's `## References` matches the task.
 
-Shorter is useful only when it removes noise. Do not remove high-signal behavior, contracts, invariants, gotchas, decision rules, or source-of-truth pointers just because they duplicate code or may change later. If behavior changes, update the map with the behavior.
+Maps are factual working notes for agents, not architecture documentation or generated reference: useful when they are correct and keep agents from touching the wrong layer. Short but wrong is worse than long.
 
-## Ownership
+## Size budget
 
-The standalone agent doing authorized repository work maintains affected
-domain maps. Verify claims in source and tests; delegate only when the user or
-applicable instructions authorize it. Gusto does not require Vorch roles.
+A root map holds at most 16,000 characters (about 4,000 tokens); `.vorch/PROJECT.md`, which every agent reads in every session, at most 30,000; `.vorch/GLOSSARY.md`, also read in every session, at most 12,000. `python scripts/domain_maps.py` measures them; the commit hook warns when a staged file above its budget grows.
 
-## Read First
+- When your change would leave a file above budget and larger than before, move material out in the same change so the file ends no larger than it started, beginning with the section you touched: from a root map, task-gated material into a supplementary file of that domain; from `.vorch/PROJECT.md`, facts whose use is confined to one domain into that domain's map; from `.vorch/GLOSSARY.md`, mechanics into the owning maps and terms only one domain uses into that map's Terms.
+- Content that every agent of the domain (for PROJECT.md: every agent) needs stays, even above budget. The budget tells you to look for task-gated material; it is never a reason to split always-needed content, which only forces an extra read.
 
-Before domain-map work:
-1. Read `AGENTS.md`, `.vorch/PROJECT.md`, and `.vorch/GLOSSARY.md` as required by the system.
-2. Read this workflow in full.
-3. Read the current target map if it exists.
-4. Read related maps when boundaries or contracts cross domains.
+## Every map change
 
-## What Belongs In A Domain Map
+1. **Place it.** Ask: would an agent working on a different feature of this domain still need this to choose the correct owner or layer, or to avoid breaking a domain-wide invariant? Yes -> root map. No -> supplementary file. Importance does not decide placement: a critical recovery contract of one feature still belongs in a supplementary file.
+2. **Write it once.** Each fact has one canonical home; elsewhere use a pointer (`see sessions.md -> Interfaces`). When a supplementary file is created or its scope changes, add or sharpen its trigger in the root map's References.
+3. **Write only what you verified** from source, tests, an existing map or `.vorch/PROJECT.md`, or an explicit user decision, never from memory. Keep observations, requirements and proposals distinguishable (`AGENTS.md` -> Interpret documentation). Remove unsupported claims or mark them as unresolved; never turn an unverified claim into a rule to keep it.
+4. **Make the narrow update the work needs:** what changed in ownership, contracts, invariants, gotchas or documented behavior. A record of how the change was made belongs in the commit, not the map.
+5. **Check the size budget** (above).
+6. **Account for removals.** Before committing a change that moves or deletes content, compare old and new in the diff: every moved fact is present in its new home (read it there), and every deleted fact was stale, unsupported, duplicated elsewhere (read it at the owner), or mirrored source without decision value. When you move, rename or remove a heading or file, repoint every pointer to it: search for `-> <Heading>` and the file name in `.vorch/`, `AGENTS.md`, the repository's skill folders and `scripts/README-*.md`.
 
-Keep information that helps agents choose the right file, layer, abstraction, or test:
-- Domain responsibility and boundary: what this domain owns and what it does not own
-- Cross-domain touchpoints: which other domains depend on it or feed it
-- Contracts other code relies on: public functions, events, API shapes, storage formats, message payloads, return shapes
-- Invariants: rules that must stay true, such as "only one active run per session"
-- Decision rules: "fix this here, not there" guidance
-- Domain-specific conventions beyond `AGENTS.md`
-- Constraints and gotchas: non-obvious behavior, fragile areas, previous failure modes, security or performance traps
-- Source-of-truth pointers when they help agents verify or extend behavior quickly
+For doc-only map work, run no application tests; verify by reading the source, adjacent maps and the diff.
 
-## What To Cut
+## What belongs where
 
-Cut information that slows agents down without making them safer:
-- Exhaustive RPC, method, field, settings-key, or schema inventories when callers do not need them
-- Field-by-field code mirroring that adds no decision value
-- Per-component UI inventories that do not guide implementation
-- Global rules already stated in `AGENTS.md`
-- Architecture prose that does not affect how an agent should work in the domain
-- Sections that do not apply
+**Root map content** - eligible kinds, not a list of everything to keep there; exact payloads, state transitions and procedures of one feature belong in a supplementary file:
+- Responsibility and boundary: what the domain owns and what it does not.
+- Cross-domain touchpoints: which domains depend on it or feed it.
+- Cross-task contracts other code relies on: public functions, events, API shapes, storage formats, message payloads, return shapes.
+- Invariants ("only one active job per user") and decision rules ("fix this here, not there").
+- Domain conventions beyond `AGENTS.md`.
+- Constraints and gotchas: non-obvious behavior, fragile areas, earlier failures, security and performance traps.
+- Source-of-truth pointers that let agents verify or extend behavior quickly.
 
-Do not cut important behavior, field semantics, output contracts, or gotchas merely because they duplicate code. Short but wrong is worse than long.
+**Supplementary file content:** feature-specific behavior and contracts, exact payload or state-transition detail, recovery matrices, step-by-step procedures ("how to add a payment provider"), deep references (endpoint catalogs, probing recipes), and the reasons for Agent-facing text.
 
-## Domain Terms (the `## Terms` section)
+**Cut:**
+- Inventories of endpoints, methods, fields, settings keys, CLI commands or schemas that restate what callers read in the code or the artifact itself; field-by-field code mirroring; per-component UI inventories.
+- Rules already stated in `AGENTS.md` or `.vorch/PROJECT.md`.
+- Architecture prose that does not change how an agent works in the domain.
 
-A domain map carries a `## Terms` section: the crisp vocabulary specific to this domain — the `Definition:` / `Not:` entries an agent (or the user) needs to read the domain the same way everyone else does. This is the domain-local half of the project's shared vocabulary; the cross-cutting core lives in `.vorch/GLOSSARY.md`.
+Semantics a caller must know before or without running an artifact (flag consequences, exit codes, security rules, offline behavior) are not mirroring: keep them in the map or a supplementary file, never delegate them to `--help`, probing or source diving, because the task may be repairing exactly that artifact.
 
-- **What belongs here:** a term you only need once you are already working inside this domain, and that the user never says in conversation — implementation-level vocabulary. A term that is core and cross-cutting (any agent needs it regardless of domain), or that the user uses, belongs in `.vorch/GLOSSARY.md` instead. **One home per term, never both** — if you move a term in from the glossary, delete the glossary copy and fix the pointers.
-- **Placement:** put `## Terms` **high** — right after the Overview, before the detailed sections — because agents often read only the first screen of a map. Never at the end.
-- **Format:** one `### <Term>` per entry, a `**Definition:**` line (max ~2 sentences, agent-perspective), and an optional `**Not:**` line only when confusion with a nearby term is a real risk — the same shape as a glossary entry, one heading level deeper. Open the section with one line naming which of this domain's core terms live in the glossary, so the split is visible (e.g. "Core terms (Provider, Model) live in `.vorch/GLOSSARY.md`").
-- **Cross-references:** name a term in another map plainly ("see `models.md`"); point at a core term as "GLOSSARY → <Term>". When a term leaves the glossary, sweep the maps for stale "GLOSSARY → <Term>" pointers to it.
+**Cross-cutting mechanisms.** A contract that any domain may need to use while it is defined in one place (example: how the backend notifies clients) gets its own cross-cutting home, a one-line pointer in `.vorch/PROJECT.md` -> Context, and a one-line back-reference in the References of each domain that uses it. Otherwise agents outside the owning domain never learn it exists.
 
-## References & Supplementary Files
+## Agent-facing text
 
-A domain map is the always-read orientation layer for its domain. Material needed only for a specific task does not belong in it — split it into a supplementary file so reading the map stays cheap.
+Applies only when the project ships runtime Agent-facing text (`AGENTS.md` -> Present Agent-facing text changes).
 
-**Layout.** The map stays the entry point as a loose file: `.vorch/domain-maps/<domain>.md`. When a domain needs depth, give it a sibling folder of the same name and put the supplementary files there:
+The reasons for runtime Agent-facing text (tool descriptions and results, system prompt blocks, injected reminders, prompts for model jobs, bundled skill instructions) live in the owning domain's supplementary file `<domain>/agent-facing-text.md`: a `| Text | Reason |` table with one row per sentence, giving the sentence or its unmistakable start and the failure it prevents, with its evidence where known.
 
-```
-domain-maps/
-  providers.md          ← the map (always read when working in the domain)
-  providers/            ← supplementary files (read on demand)
-    add-a-provider.md
-    endpoint-probing.md
+- Read a sentence's reason before you rewrite or delete it: many record a failure seen in real use that reading alone does not show. Change, add or delete its row together with the sentence.
+- The root map keeps a short `## Agent-facing text` section that names the texts the domain owns and points to the file, so an agent changing them finds the reasons without loading a Skill:
+
+```markdown
+## Agent-facing text
+
+This domain owns <the texts, by name and source path>. Before you change, add or delete a sentence of them, read `<domain>/agent-facing-text.md`: it records why each sentence exists. Update its row for every sentence you change and add one for every sentence you add.
 ```
 
-**What to split out — decide by relevance per task, not by size:**
-- **Keep in the map:** what an agent needs to safely touch *anything* in the domain — boundaries, contracts, invariants, decision rules, gotchas.
-- **Split into a file:** *task-gated* material — step-by-step procedures ("how to add a provider"), deep references (exhaustive endpoint catalogs, probing recipes) — needed only when doing that specific task.
+## Supplementary files and References
 
-The test: *does an agent need this to work safely in the domain at all, or only for this one task?* Always → map. One task → supplementary file. A long map is a prompt to look for task-gated content to extract — never split content that is always needed just to shorten the file; that only forces an extra read.
-
-**Linking.** The map carries a small index near the end. Each entry is a *trigger*, not a title — it tells an agent when to pull the file without opening it:
+Supplementary files live in a folder named like their root map (`payments.md` -> `payments/add-a-provider.md`); the root map stays the entry point. Its References list each file with a trigger that tells an agent when to read it without opening it:
 
 ```markdown
 ## References
 
-Read these only when your task matches — not by default.
+Read these only when your task matches - not by default.
 
-- Adding or changing a provider → `providers/add-a-provider.md`
-- Probing endpoints / verifying a provider's API → `providers/endpoint-probing.md`
+- Adding or changing a payment provider -> `payments/add-a-provider.md`
+- Probing endpoints or verifying a provider's API -> `payments/endpoint-probing.md`
 ```
 
-Keep triggers sharp. The failure mode is an agent missing context because a trigger was vague — a sloppy split is worse than none.
+- A vague trigger makes agents miss context; a sloppy split is worse than none.
+- Write each entry's path relative to `.vorch/domain-maps/` or to the repository root; the commit hook blocks an entry that names no file.
+- A supplementary file can route to deeper files through its own References; every supplementary file is reachable from its root map.
+- Supplementary files never enter the Domain Maps index in `.vorch/PROJECT.md`, which lists root maps only. A child area that earns its own index row is a root map.
 
-**Index discriminator.** Supplementary files are reached only through their map's References index. They are never listed in the Domain Maps index in `.vorch/PROJECT.md` — that index lists maps (domains) only. If a child area earns its own index entry, it is a domain map in its own right, not a supplementary file.
+## Terms
 
-## Verify Claims
+A root map's `## Terms` section defines vocabulary needed only within that domain; shared vocabulary lives in `.vorch/GLOSSARY.md`. What belongs where and what an entry may hold: `AGENTS.md` -> Terminology. Omit the section when the domain has no terms of its own.
 
-Every factual claim should be backed by one of:
-- Source code
-- Tests
-- Existing maps or `.vorch/PROJECT.md`
-- An explicit user/project decision
+- One `### <Term>` per entry with a definition of one or two sentences, plus a distinction from nearby terms only where confusion is likely.
+- An entry defines meaning. When you find yourself writing how the concept is stored, which states it has, or what code implements it, put that into the owning section (Data Model, Interfaces, a supplementary file) and let the entry point there.
+- Place it after the Overview, where useful opened by one line naming the relevant shared terms ("Core terms (Order, Customer) live in `.vorch/GLOSSARY.md`").
+- Refer to a term in another map plainly ("see `orders.md`") and to a shared term as "GLOSSARY -> <Term>". When a term moves, remove its old definition and repair the pointers to it.
 
-If a statement cannot be backed, remove it or distinguish it as a proposal for
-the user; do not turn an assumption into project policy.
+## Formatting
 
-For doc-only map work, do not run application tests unless the user asks or application/test code also changed. Verify by reading source-of-truth evidence, adjacent maps, and the diff.
+Maps use ASCII punctuation: `->` for pointers, `-` for dashes, `...` for ellipses, `>=`, `<=`, `!=` and `~` for comparisons, straight quotes, because agents and tools match, diff and edit these files as plain text and look-alike Unicode characters break exact matches. A literal product string with other characters (a UI label, a rendered fragment) goes into a code span verbatim. The commit hook blocks non-ASCII characters outside code spans.
 
-## Creating A Domain Map
+## Creating or restructuring a map
 
-Use when a new domain emerges or an existing domain has no map.
+**Creating a root map**, when a new domain emerges or a domain has no map:
+1. Identify the boundary: a module or subsystem with a clear responsibility where working without context risks misunderstanding interfaces, ownership or conventions. Use a nested root map only when a child domain has enough independent contracts or gotchas to warrant its own index row.
+2. Gather evidence from `.vorch/PROJECT.md`, related maps, user decisions, source and tests.
+3. Write only the template sections that apply, within the size budget, with task-gated material in supplementary files from the start.
+4. Add the map to the Domain Maps index in `.vorch/PROJECT.md`.
 
-1. Identify the domain boundary. A domain is any module or subsystem with a clear responsibility where working without context risks misunderstanding interfaces, ownership, or conventions.
-2. Choose the map path: `.vorch/domain-maps/<domain>.md`. Use nested paths only when a child domain has enough independent contracts or gotchas that a separate map improves agent handoff.
-3. Gather evidence from `.vorch/PROJECT.md`, related maps, user decisions, and source/test verification.
-4. Write only the sections that apply. There is no required minimum. Keep task-gated procedures and deep references out of the map — put them in supplementary files (see References & Supplementary Files).
-5. Add the new map to the Domain Maps index in `.vorch/PROJECT.md`.
-6. Keep the first version useful, not exhaustive. Add more only when it prevents likely mistakes.
-
-## Maintaining A Domain Map
-
-Use when implementation changes a domain, a Builder/Reviewer reports project-doc impact, a domain boundary changes, or an existing map is stale, noisy, misleading, incomplete, or large enough that task-gated content should move to supplementary files.
-
-For routine maintenance during implementation:
-1. Make the narrow factual update needed by the completed work.
-2. Base the change on Builder/Reviewer output, explorer summaries, source/test evidence, or explicit user decisions.
-3. Update the Domain Maps index if a map was created, renamed, split, or removed.
-
-For dedicated map cleanup or audit:
-1. Read the current map and identify what each section is trying to help agents do.
-2. Verify kept factual claims against source/test evidence or explicit decisions.
-3. Present a numbered edit plan before judgment-heavy rewrites: what stays, what is removed, what is added, and what moves — including any task-gated content that moves to a supplementary file.
-4. After approval, edit the map.
-5. Re-check the remaining claims and the diff. The work is done only when the map is useful for agents and factually correct.
+**Restructuring a map** (splitting, merging, renaming, or cleaning up one map):
+1. Decide per fact, by what it helps agents do: root map, supplementary file, pointer to another canonical home, or deletion.
+2. Verify the facts you keep against source and tests.
+3. For a substantial or judgment-heavy rewrite, briefly tell the user what stays, moves or goes before you write. Routine factual maintenance needs no planning round; ask only when an open choice would change meaning or scope.
+4. Update the Domain Maps index when a root map was created, renamed, split or removed.
+5. Account for every removed fact and repoint every pointer (Every map change, step 6), then run `python scripts/domain_maps.py` for routing defects.
 
 ## Template
 
-Use this as a starting point. Remove every section that does not apply.
+Remove every section that does not apply; what each may hold: What belongs where.
 
 ```markdown
 # <Domain Name>
@@ -144,42 +120,42 @@ Use this as a starting point. Remove every section that does not apply.
 
 ## Overview
 
-[What this domain is responsible for. What it owns. What it does not do if non-obvious. Keep it to the context an agent needs before touching the domain.]
+[What the domain owns, and what it does not do where that is not obvious.]
 
 ## Terms
 
-[Domain-local vocabulary — the terms specific to this domain, one `### Term` each with a `**Definition:**` (+ optional `**Not:**`). Place high, right after Overview. Core cross-cutting terms live in `.vorch/GLOSSARY.md`, not here. Omit the section if the domain has no domain-specific terms.]
+[Domain-local vocabulary, one `### Term` each.]
 
 ## Data Model
 
-[Only include if this domain owns entities or persisted data. Name key entities, shapes, important fields, relationships, and invariants that other domains depend on.]
+[Only if the domain owns entities or persisted data: key shapes, relationships and invariants needed across the domain.]
 
 ## Interfaces
 
-[Contracts other parts of the system depend on: exported functions/classes/hooks, API endpoints, event shapes, message formats, storage formats, return shapes. Focus on what callers need to know.]
+[Cross-task contracts other parts of the system depend on: exported functions and classes, API boundaries, event families, message or storage formats, return shapes.]
 
 ## Conventions
 
-[Patterns specific to this domain that go beyond global rules: error handling, naming, async behavior, extension patterns, testing patterns, ownership boundaries.]
+[Patterns specific to this domain beyond global rules: error handling, naming, async behavior, extension and testing patterns, ownership boundaries.]
 
 ## External Dependencies
 
-[Only include if this domain owns or calls external services, APIs, SDKs, databases, or infrastructure. Note auth, limits, quirks, or failure behavior relevant for development.]
+[Only if the domain owns or calls external services, APIs, SDKs or infrastructure: auth, limits, quirks and failure behavior relevant for development.]
 
 ## Constraints & Gotchas
 
-[Non-obvious behavior, limitations, fragile areas, previous bugs, security/performance traps, and things that look safe to change but are not.]
+[Non-obvious behavior, fragile areas, earlier bugs, security and performance traps, things that look safe to change but are not.]
+
+## Agent-facing text
+
+[Only if the domain owns runtime Agent-facing text: the pointer section from Agent-facing text above.]
 
 ## References
 
-[Only if the domain has supplementary files. One trigger line per file — when to read it, not just its title.]
-- <When an agent should read it> → `<domain>/<file>.md`
+[Only if the domain has supplementary files: one trigger line per file.]
+- <When an agent reads it> -> `<domain>/<file>.md`
 ```
 
 ## Output
 
-When domain-map work is complete, report:
-- Which domain maps were created or updated
-- Which supplementary files were created or updated, if any
-- Whether `.vorch/PROJECT.md` Domain Maps index changed
-- Any assumptions, unverified claims removed, or open questions
+When the map work is done, report which root maps and supplementary files changed, whether the Domain Maps index changed, and any claim you removed as unverified or left open.

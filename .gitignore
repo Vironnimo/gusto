@@ -8,10 +8,15 @@ build/
 dist/
 
 .opencode/
-.claude/
+.claude/*
+!.claude/settings.json
 .agents/
 
 TODO.md
+
+# Vorch worktrees
+/.worktrees/
+/.vorch-worktree
 
 # atomare Schreib-Tempdateien
 *.tmp
