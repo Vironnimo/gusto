@@ -24,7 +24,7 @@ make multiple calls as described below. Local commands act on the CLI machine wi
 `check --offline`, `serve`, `status|start|stop|restart`, `update`, `uninstall`
 and `install-skill`. They are thin wrappers over Core (`home`,
 `check --offline`), uvicorn with `gusto.web:app` (`serve`) and the lifecycle
-modules (`gusto/service.py`, `gusto/update.py`, `gusto/uninstall.py`,
+modules (`gusto/runtime.py` for lazy server preflight, `gusto/service.py`, `gusto/update.py`, `gusto/uninstall.py`,
 `gusto/skill_install.py`; semantics in `lifecycle.md`). They import their
 module inside the command, so importing `gusto.cli` loads neither Core nor the
 web stack (asserted in `tests/test_cli.py`).

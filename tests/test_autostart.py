@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.fspath(ROOT))
 
+from gusto import runtime as managed_runtime  # noqa: E402
 from gusto import service  # noqa: E402
 
 checks = 0
@@ -39,11 +40,11 @@ check("fremde geplante Aufgabe namens Gusto" in windows,
 
 with tempfile.TemporaryDirectory(prefix="gusto-autostart-") as temporary:
     root = Path(temporary)
-    paths = service.managed_paths(root / "app")
+    paths = managed_runtime.managed_paths(root / "app")
     runtime = paths.version("1.0.0")
     (runtime / "Scripts").mkdir(parents=True)
     (runtime / "Scripts" / "gusto-autostart.exe").write_bytes(b"x")
-    service.write_current(paths, "1.0.0")
+    managed_runtime.write_current(paths, "1.0.0")
     state = {"data_dir": os.fspath(root / "data"), "host": "0.0.0.0", "port": 8000}
     commands = []
     dry_result = service.install_user_service(

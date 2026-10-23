@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import service
+from . import runtime as managed_runtime
 
 
 class UninstallError(RuntimeError):
@@ -57,21 +58,21 @@ def discover_targets(
     application: Path | None = None
     install_state: dict[str, object] | None = None
     for candidate in (runtime, *runtime.parents):
-        if ((candidate / service.STATE_FILENAME).is_file()
-                and (candidate / service.CURRENT_FILENAME).is_file()
+        if ((candidate / managed_runtime.STATE_FILENAME).is_file()
+                and (candidate / managed_runtime.CURRENT_FILENAME).is_file()
                 and runtime.is_relative_to(candidate / "versions")):
             try:
-                paths = service.managed_paths(candidate)
-                current = service.read_current(paths)
+                paths = managed_runtime.managed_paths(candidate)
+                current = managed_runtime.read_current(paths)
                 if Path(str(current["runtime"])).resolve() != runtime:
                     raise UninstallError(
                         "Gusto läuft nicht aus der aktiven verwalteten Version."
                     )
                 application = candidate
-                install_state = service.read_state(paths)
-            except service.ServiceError as error:
+                install_state = managed_runtime.read_state(paths)
+            except managed_runtime.RuntimePreparationError as error:
                 # The CLI maps only UninstallError for the --json contract;
-                # a raw ServiceError would escape as a traceback.
+                # a raw runtime error would escape as a traceback.
                 raise UninstallError(
                     "Die verwaltete Installation kann nicht verifiziert "
                     f"werden: {error}"
@@ -82,7 +83,7 @@ def discover_targets(
         raise UninstallError(
             "Gusto läuft nicht aus einer aktuellen verwalteten Installation."
         )
-    settings = application / service.STATE_FILENAME
+    settings = application / managed_runtime.STATE_FILENAME
 
     if not package.is_relative_to(runtime):
         raise UninstallError(

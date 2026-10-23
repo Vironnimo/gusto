@@ -15,7 +15,8 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.fspath(ROOT))
 
-from gusto import cli, service, uninstall  # noqa: E402
+from gusto import runtime as managed_runtime  # noqa: E402
+from gusto import cli, uninstall  # noqa: E402
 
 checks = 0
 
@@ -38,7 +39,7 @@ def expect_error(call, message):
 with tempfile.TemporaryDirectory(prefix="gusto-uninstall-") as temporary:
     root = Path(temporary)
     app = root / "Gusto App"
-    paths = service.managed_paths(app)
+    paths = managed_runtime.managed_paths(app)
     runtime = paths.version("1.2.3")
     scripts = runtime / "Scripts"
     package = runtime / "Lib" / "site-packages" / "gusto" / "uninstall.py"
@@ -54,13 +55,13 @@ with tempfile.TemporaryDirectory(prefix="gusto-uninstall-") as temporary:
     python_root = paths.python_runtimes / "3.13.14"
     python_root.mkdir(parents=True)
     (python_root / "python.exe").write_bytes(b"app-private-python")
-    service.write_state(paths, {
+    managed_runtime.write_state(paths, {
         "data_dir": os.fspath(data), "host": "0.0.0.0", "port": 8000,
-        "python_runtime": service.managed_python_state(
+        "python_runtime": managed_runtime.managed_python_state(
             paths, "3.13.14", "0" * 64,
         ),
     })
-    service.write_current(paths, "1.2.3")
+    managed_runtime.write_current(paths, "1.2.3")
 
     targets = uninstall.discover_targets(
         prefix=runtime, package_file=package,
@@ -127,7 +128,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-uninstall-") as temporary:
           and all((data / name).is_dir() for name in ("recipes", "images", "data")),
           "validation must leave the installation, store and foreign data untouched")
 
-    service.write_current(paths, "1.2.2", previous_version="1.2.3")
+    managed_runtime.write_current(paths, "1.2.2", previous_version="1.2.3")
     paths.version("1.2.2").mkdir()
     expect_error(
         lambda: uninstall.discover_targets(
@@ -136,7 +137,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-uninstall-") as temporary:
         ),
         "an inactive version may not uninstall the application",
     )
-    service.write_current(paths, "1.2.3")
+    managed_runtime.write_current(paths, "1.2.3")
 
     # Corrupt lifecycle state must surface as UninstallError (the CLI's
     # --json contract), never as a raw service error.
@@ -149,7 +150,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-uninstall-") as temporary:
         "a corrupt current pointer must raise UninstallError instead of a "
         "raw service error",
     )
-    service.write_current(paths, "1.2.3")
+    managed_runtime.write_current(paths, "1.2.3")
     paths.state.write_text("[]", encoding="utf-8")
     expect_error(
         lambda: uninstall.discover_targets(
@@ -159,9 +160,9 @@ with tempfile.TemporaryDirectory(prefix="gusto-uninstall-") as temporary:
         "a corrupt install state must raise UninstallError instead of a "
         "raw service error",
     )
-    service.write_state(paths, {
+    managed_runtime.write_state(paths, {
         "data_dir": os.fspath(data), "host": "0.0.0.0", "port": 8000,
-        "python_runtime": service.managed_python_state(
+        "python_runtime": managed_runtime.managed_python_state(
             paths, "3.13.14", "0" * 64,
         ),
     })

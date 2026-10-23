@@ -21,6 +21,7 @@ sys.path.insert(0, os.fspath(ROOT))
 
 import install  # noqa: E402
 import gusto  # noqa: E402
+from gusto import runtime as managed_runtime  # noqa: E402
 from gusto import service  # noqa: E402
 from scripts import build_release  # noqa: E402
 
@@ -121,7 +122,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
     with zipfile.ZipFile(wheel_path) as wheel:
         packaged = set(wheel.namelist())
     for required in (
-        "gusto/api.py", "gusto/client.py", "gusto/service.py",
+        "gusto/api.py", "gusto/client.py", "gusto/service.py", "gusto/runtime.py",
         "gusto/update.py", "gusto/uninstall.py", "gusto/skill_install.py",
         "gusto/templates/base.html",
         "gusto/static/app.js", "gusto/static/shopping-client.js",
@@ -143,7 +144,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
     # local command does not accidentally depend on the source checkout copy.
     skill_runtime = output / "skill runtime"
     venv.EnvBuilder(with_pip=True).create(skill_runtime)
-    skill_python = service.runtime_python(skill_runtime)
+    skill_python = managed_runtime.runtime_python(skill_runtime)
 
     # A checkout or inherited PYTHONPATH must not make an empty runtime look
     # usable. Both repair and post-install verification must import the package
@@ -154,8 +155,8 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
     (shadow_package / "__init__.py").write_text(
         f"__version__ = {gusto.__version__!r}\n", encoding="utf-8",
     )
-    (shadow_package / "_cli_local.py").write_text(
-        "def _missing_web_dependencies(): return []\n", encoding="utf-8",
+    (shadow_package / "runtime.py").write_text(
+        "def missing_web_dependencies(): return []\n", encoding="utf-8",
     )
     marker = skill_runtime / ".gusto-runtime.json"
     python_version = ".".join(map(str, sys.version_info[:3]))
@@ -174,14 +175,14 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
         return actual_run(command, cwd=shadow, **kwargs)
 
     with patch.dict(os.environ, {"PYTHONPATH": os.fspath(shadow)}):
-        with patch.object(install.subprocess, "run", side_effect=run_with_shadow):
-            check(not install.runtime_is_usable(
+        with patch.object(managed_runtime.subprocess, "run", side_effect=run_with_shadow):
+            check(not managed_runtime.runtime_is_usable(
                 skill_runtime, gusto.__version__, python_version,
             ), "repair must reject an empty runtime despite an importable "
                "checkout or PYTHONPATH package")
             marker.unlink()
             try:
-                install.install_source_runtime(
+                managed_runtime.prepare_source_runtime(
                     wheel_path, skill_runtime, gusto.__version__,
                     output / "probe-data", "http://127.0.0.1:8123",
                     base_python=Path(sys.executable), python_version=python_version,
@@ -340,7 +341,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-install-rollback-") as temporary:
 
     with (
         patch.object(install.sys, "platform", "win32"),
-        patch.object(install, "install_source_runtime",
+        patch.object(managed_runtime, "prepare_source_runtime",
                      side_effect=fake_runtime),
         patch.object(install, "write_wrappers", side_effect=fake_wrappers),
         patch.object(install, "add_windows_user_path", return_value=True),
@@ -363,16 +364,16 @@ with tempfile.TemporaryDirectory(prefix="gusto-runtime-repair-") as temporary:
     root = Path(temporary)
     app_root = root / "managed-app"
     data_root = root / "data"
-    paths = service.managed_paths(app_root)
+    paths = managed_runtime.managed_paths(app_root)
     data_root.mkdir()
-    service.write_state(paths, {
+    managed_runtime.write_state(paths, {
         "data_dir": os.fspath(data_root),
         "host": "0.0.0.0",
         "port": 9123,
         "manifest_url": "fixture",
-        "python_runtime": service.system_python_state(),
+        "python_runtime": managed_runtime.system_python_state(),
     })
-    service.write_current(paths, gusto.__version__)
+    managed_runtime.write_current(paths, gusto.__version__)
     rebuilt = []
 
     def rebuild_runtime(source, runtime, version, data, server_url, **kwargs):
@@ -391,7 +392,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-runtime-repair-") as temporary:
 
     with (
         patch.object(install.sys, "platform", "win32"),
-        patch.object(install, "install_source_runtime",
+        patch.object(managed_runtime, "prepare_source_runtime",
                      side_effect=rebuild_runtime),
         patch.object(install, "write_wrappers", side_effect=fake_wrappers),
         patch.object(install, "add_windows_user_path", return_value=False),

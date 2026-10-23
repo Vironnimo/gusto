@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 import subprocess
 import sys
 from collections.abc import Callable
@@ -10,16 +9,6 @@ from pathlib import Path
 
 from . import client
 from ._cli_terminal import dump, remote
-
-
-_WEB_DEPENDENCIES = (
-    ("fastapi", ("fastapi",)),
-    ("uvicorn[standard]", ("uvicorn",)),
-    ("jinja2", ("jinja2",)),
-    ("markdown", ("markdown",)),
-    ("python-multipart", ("python_multipart", "multipart.multipart")),
-    ("pillow", ("PIL.Image",)),
-)
 
 
 def _port(value: str) -> int:
@@ -147,40 +136,10 @@ def cmd_check(args):
         raise SystemExit(1)
 
 
-def _missing_web_dependencies() -> list[str]:
-    missing = []
-    for requirement, module_names in _WEB_DEPENDENCIES:
-        for module_name in module_names:
-            try:
-                importlib.import_module(module_name)
-                break
-            except ImportError:
-                continue
-        else:
-            missing.append(requirement)
-    return missing
-
-
-def _web_dependency_error(missing: list[str]) -> str:
-    return (
-        "Web-Abhängigkeiten fehlen oder sind nicht importierbar: "
-        f"{', '.join(missing)}. "
-        'Projekt-Checkout: python -m pip install -e ".[web]". '
-        "Installierte App: den Installer derselben Gusto-Version im expliziten "
-        "Reparaturmodus verwenden (--repair bzw. -Repair beim Windows-Bootstrap)."
-    )
-
-
-def _load_web_runtime():
-    missing = _missing_web_dependencies()
-    if missing:
-        sys.exit(_web_dependency_error(missing))
-    importlib.import_module("gusto.web")
-    return importlib.import_module("uvicorn")
-
-
 def cmd_serve(args):
-    uvicorn = _load_web_runtime()
+    from .runtime import load_web_runtime
+
+    uvicorn = load_web_runtime()
     local_host = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(args.host, args.host)
     if ":" in local_host and not local_host.startswith("["):
         local_host = f"[{local_host}]"

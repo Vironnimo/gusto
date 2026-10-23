@@ -13,6 +13,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.fspath(ROOT))
 
+from gusto import runtime as managed_runtime  # noqa: E402
 from gusto import service  # noqa: E402
 
 checks = 0
@@ -41,7 +42,7 @@ class HealthClock:
 
 with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
     root = Path(temporary)
-    paths = service.managed_paths(root / "Gusto")
+    paths = managed_runtime.managed_paths(root / "Gusto")
     runtime = paths.version("1.2.3")
     (runtime / "bin").mkdir(parents=True)
     (runtime / "bin" / "python").write_bytes(b"python")
@@ -52,13 +53,13 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
     state = {
         "data_dir": os.fspath(data), "host": "0.0.0.0", "port": 8123,
         "manifest_url": "fixture",
-        "python_runtime": service.system_python_state(),
+        "python_runtime": managed_runtime.system_python_state(),
     }
-    service.write_state(paths, state)
-    service.write_current(paths, "1.2.3")
-    check(service.read_current(paths)["version"] == "1.2.3",
+    managed_runtime.write_state(paths, state)
+    managed_runtime.write_current(paths, "1.2.3")
+    check(managed_runtime.read_current(paths)["version"] == "1.2.3",
           "current pointer must resolve a version inside versions/")
-    check(service.read_state(paths)["data_dir"] == os.fspath(data),
+    check(managed_runtime.read_state(paths)["data_dir"] == os.fspath(data),
           "install state must round-trip")
     check(service.server_url(state) == "http://127.0.0.1:8123",
           "wildcard listen host must become a local client URL")
@@ -84,21 +85,21 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
         ("a host with a space", {**state, "host": "0.0.0.0 0.0.0.1"}, "Host"),
         ("a non-string host", {**state, "host": 8123}, "Host"),
     ):
-        service.write_state(paths, corrupt)
+        managed_runtime.write_state(paths, corrupt)
         try:
-            service.read_state(paths)
-        except service.ServiceError as error:
+            managed_runtime.read_state(paths)
+        except managed_runtime.RuntimePreparationError as error:
             check(expected in str(error),
                   f"read_state must reject {description}: {error}")
         else:
             raise AssertionError(f"read_state accepted {description}")
     for boundary in (1, 65535):
-        service.write_state(paths, {**state, "port": boundary})
-        check(service.read_state(paths)["port"] == boundary,
+        managed_runtime.write_state(paths, {**state, "port": boundary})
+        check(managed_runtime.read_state(paths)["port"] == boundary,
               "a valid port boundary must stay readable")
-    service.write_state(paths, state)
+    managed_runtime.write_state(paths, state)
 
-    corrupt_python = service.managed_python_root(paths, "3.13.14")
+    corrupt_python = managed_runtime.managed_python_root(paths, "3.13.14")
     corrupt_python.mkdir(parents=True)
     (corrupt_python / "python.exe").write_bytes(b"not-an-executable")
     (corrupt_python / ".gusto-python-runtime.json").write_text(
@@ -111,7 +112,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
         }),
         encoding="utf-8",
     )
-    check(not service.managed_python_usable(
+    check(not managed_runtime.managed_python_usable(
         corrupt_python, "3.13.14", "0" * 64,
     ), "a corrupt managed Python executable must be repairable, not crash probing")
 
@@ -170,8 +171,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
           "a dry-run start must not claim an unobserved running state")
 
     fallback = root / "default-app"
-    with patch.object(service.sys, "prefix", os.fspath(runtime)), patch.object(
-        service, "default_app_root", return_value=fallback,
+    with patch.object(service.sys, "prefix", os.fspath(runtime)), patch.object(managed_runtime, "default_app_root", return_value=fallback,
     ) as default_root:
         for action in ("status", "start", "stop", "restart"):
             selected = service.service_action(
@@ -181,7 +181,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
             check(selected["version"] == "1.2.3"
                   and selected["url"] == "http://127.0.0.1:8123",
                   f"{action} must select its executing custom installation")
-        check(service.managed_paths(fallback).app_root == fallback,
+        check(managed_runtime.managed_paths(fallback).app_root == fallback,
               "an explicit app root must override the executing installation")
         check(not default_root.called,
               "managed execution must not consult the platform default")
@@ -193,10 +193,10 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
                   "corrupt executing-installation state must not redirect control")
         else:
             raise AssertionError("corrupt managed installation was ignored")
-        service.write_state(paths, state)
+        managed_runtime.write_state(paths, state)
     with patch.object(service.sys, "prefix", os.fspath(root / "checkout-venv")), \
-            patch.object(service, "default_app_root", return_value=fallback):
-        check(service.managed_paths().app_root == fallback,
+            patch.object(managed_runtime, "default_app_root", return_value=fallback):
+        check(managed_runtime.managed_paths().app_root == fallback,
               "an unmanaged interpreter must retain the platform-default root")
 
     windows = service.install_user_service(
@@ -305,8 +305,8 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
 
     for bad in ("1", "1.2", "../1.2.3", "01.2.3"):
         try:
-            service.validate_version(bad)
-        except service.ServiceError:
+            managed_runtime.validate_version(bad)
+        except managed_runtime.RuntimePreparationError:
             checks += 1
         else:
             raise AssertionError(f"invalid semantic version accepted: {bad}")
@@ -389,14 +389,14 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
 # ==== F9: atomic temp cleanup ====
     with patch.object(service.os, "replace", side_effect=OSError("gesperrt")):
         try:
-            service.write_current(paths, "1.2.4")
+            managed_runtime.write_current(paths, "1.2.4")
         except OSError:
             checks += 1
         else:
             raise AssertionError("a failing atomic replace must propagate")
     check(not list(paths.app_root.glob("*.tmp")),
           "a failed atomic write must not leave a temporary sibling behind")
-    check(service.read_current(paths)["version"] == "1.2.3",
+    check(managed_runtime.read_current(paths)["version"] == "1.2.3",
           "a failed atomic write must not change the active pointer")
 # ==== F9 end ====
 

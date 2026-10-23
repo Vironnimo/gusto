@@ -16,8 +16,6 @@ Evidence: target validation and `main`; `tests/test_paths.py`, `tests/test_packa
 | `weder ein Gusto-Wheel noch ein vollständiger Projekt-Checkout gefunden` | Explains that the bootstrap payload/source is incomplete rather than a service problem. |
 | `Version im Wheel-Namen nicht erkennbar:` | Rejects an unidentifiable payload before creating version directories. |
 | `Projektversion ist nicht erkennbar` | Stops a checkout installation without a usable version identity. |
-| `Wheel-Installation fehlgeschlagen` | Distinguishes pip failure from the later installed-runtime verification and health checks. |
-| `Import-/Web-Runtime-Prüfung fehlgeschlagen` | Prevents calling an installed-but-unusable runtime operational. |
 | `Bestehender fremder Symlink blockiert Gusto:` | Preserves another application's command link and names the collision. |
 | `Bestehende Datei blockiert den Gusto-Befehl:` | Prevents overwriting an unrelated command file. |
 | `Trockenlauf: Gusto {version} würde installiert.` | Distinguishes a non-mutating preview from a started service; plain dry-run case in packaging tests. |
@@ -53,9 +51,9 @@ Evidence: target validation and `main`; `tests/test_paths.py`, `tests/test_packa
 | `Installation oder Reparatur nicht möglich:` | Distinguishes shared-lock refusal from first-install failure cleanup. |
 | `Installation fehlgeschlagen:` | Reports the terminal failure after cleanup attempts without claiming success. |
 
-## Managed paths, runtime and service (`gusto/service.py`)
+## Managed paths and runtime preparation (`gusto/runtime.py`)
 
-Evidence: state/path/Python validators, health waiters and platform integration; `tests/test_service.py`, `tests/test_paths.py`, `tests/test_autostart.py`.
+Evidence: state/path/Python validators and install/repair/update preparation; `tests/test_service.py`, `tests/test_paths.py`, `tests/test_packaging.py` and `tests/test_update.py`.
 
 | Text | Reason |
 |---|---|
@@ -88,6 +86,20 @@ Evidence: state/path/Python validators, health waiters and platform integration;
 | `System-Python der Installation ist nicht verwendbar.` | Names missing or app-nested system-Python state without choosing another interpreter silently. |
 | `Unbekannte Python-Runtime-Art:` | Refuses unsupported interpreter ownership kinds. |
 | `Virtuelle Umgebung konnte nicht erstellt werden` | Reports interpreter/venv creation failure before any wheel can be installed. |
+| `Wheel-Installation fehlgeschlagen` | Distinguishes pip failure from the later installed-runtime verification and health checks. |
+| `Import-/Web-Runtime-Prüfung fehlgeschlagen` | Prevents calling an installed-but-unusable runtime operational. |
+| `Installation des Release-Wheels fehlgeschlagen:` | Keeps pip failure before activation distinct from rollback failure. |
+| `Import-/Versionsprüfung der neuen Runtime fehlgeschlagen:` | Prevents activating a wheel that installed but cannot supply the expected package version. |
+| `Web-Abhängigkeiten fehlen oder sind nicht importierbar: {', '.join(missing)}.` | Names missing web dependencies and distinguishes checkout installation from managed-app repair. |
+| `Projekt-Checkout: python -m pip install -e ".[web]".` | Names missing web dependencies and distinguishes checkout installation from managed-app repair. |
+| `Installierte App: den Installer derselben Gusto-Version im expliziten Reparaturmodus verwenden (--repair...` | Names missing web dependencies and distinguishes checkout installation from managed-app repair. |
+
+## User service (`gusto/service.py`)
+
+Evidence: health waiters and platform integration; `tests/test_service.py` and `tests/test_autostart.py`.
+
+| Text | Reason |
+|---|---|
 | `Health-Antwort meldet nicht ok=true` | Prevents accepting a reachable but unready/unrecognized server as activation success. |
 | `Health-Antwort stammt von Version` | Names actual/expected versions when a stale service answers on the target port. |
 | `Health-Antwort verwendet Datenpfad` | Prevents accepting a server for another household store. |
@@ -131,8 +143,6 @@ Evidence: manifest and payload validation, update lock, activation/rollback bran
 | `Python-Runtime-Paket enthält tools/python.exe nicht.` | Names the required interpreter payload missing from an otherwise valid archive. |
 | `Die Gusto-Update-Sperre ist nicht initialisiert.` | Distinguishes a short incomplete lock initialization from another operation holding the lock. |
 | `Ein anderes Gusto-Update läuft bereits.` | Reports `update_locked` rather than starting competing preparation or activation. |
-| `Installation des Release-Wheels fehlgeschlagen:` | Keeps pip failure before activation distinct from rollback failure. |
-| `Import-/Versionsprüfung der neuen Runtime fehlgeschlagen:` | Prevents activating a wheel that installed but cannot supply the expected package version. |
 | `Release-Manifest enthält kein Wheel.` | Refuses update preparation without its Gusto payload. |
 | `Installationszustand enthält keine Python-Runtime.` | Refuses choosing a replacement interpreter without the installation's ownership state. |
 | `Release enthält keine Windows-Python-Runtime.` | Identifies the missing component required by a managed-Python installation. |
