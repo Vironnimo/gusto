@@ -20,11 +20,14 @@ the steps for the project below.
 from __future__ import annotations
 
 import argparse
+import errno
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -138,10 +141,49 @@ def remote_tag(root: Path, name: str, tag: str) -> bool:
     return current == tag
 
 
-def remove_checkout(root: Path, checkout: Path) -> None:
-    git("worktree", "remove", "--force", str(checkout), cwd=root)
-    shutil.rmtree(checkout, ignore_errors=True)
-    git("worktree", "prune", cwd=root)
+class PushInProgress(Exception):
+    """Another invocation holds this repository's push lock."""
+
+
+@contextmanager
+def push_lock(worktrees: Path):
+    """Serialize selection, FETCH_HEAD, checking and publication for this repo.
+
+    The lock file stays in place: replacing it could let two processes lock
+    different files with the same name. The OS releases the lock after a crash.
+    """
+    worktrees.mkdir(parents=True, exist_ok=True)
+    with (worktrees / ".push.lock").open("a+b") as handle:
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            if error.errno in (errno.EACCES, errno.EAGAIN):
+                raise PushInProgress from error
+            raise
+        try:
+            yield
+        finally:
+            if sys.platform == "win32":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def remove_checkout(root: Path, checkout: Path) -> bool:
+    """Remove only this run's checkout; Git refusal never authorizes deletion."""
+    removed = git("worktree", "remove", "--force", str(checkout), cwd=root)
+    if removed.returncode:
+        print(f"error: private checkout preserved at {checkout}: {removed.stderr.strip()}")
+        return False
+    return True
 
 
 def run_step(step: Step, checkout: Path, log: Path) -> bool:
@@ -191,6 +233,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = primary_root()
+    try:
+        with push_lock(root / WORKTREES_DIR_NAME):
+            return run(args, root)
+    except PushInProgress:
+        print("error: another push check owns this repository; retry after it finishes.")
+        return 1
+
+
+def run(args: argparse.Namespace, root: Path) -> int:
     selected = git("rev-parse", "--verify", f"refs/heads/{PRIMARY_BRANCH}^{{commit}}", cwd=root)
     if selected.returncode:
         print(f"error: local {PRIMARY_BRANCH} does not name a commit; nothing pushed.")
@@ -217,14 +268,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     worktrees = root / WORKTREES_DIR_NAME
-    for leftover in worktrees.glob(".push-*"):
-        remove_checkout(root, leftover)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    checkout = worktrees / f".push-{stamp}"
-    logs = worktrees / ".push-logs" / stamp
-    logs.mkdir(parents=True, exist_ok=True)
+    checkout = Path(tempfile.mkdtemp(prefix=f".push-{stamp}-", dir=worktrees))
+    logs = worktrees / ".push-logs" / checkout.name.removeprefix(".push-")
+    logs.mkdir(parents=True, exist_ok=False)
     added = git("worktree", "add", "--detach", str(checkout), commit, cwd=root)
     if added.returncode != 0:
+        # Only an untouched, empty reservation is safe to discard. An incomplete
+        # Git checkout remains available for inspection rather than forced removal.
+        try:
+            checkout.rmdir()
+        except OSError:
+            pass
         print(f"error: the private checkout could not be created: {added.stderr.strip()}")
         return 1
 
@@ -241,7 +296,11 @@ def main(argv: list[str] | None = None) -> int:
                 step, checkout, logs / f"{step.name.replace(' ', '-')}.log"
             )
     finally:
-        remove_checkout(root, checkout)
+        cleaned = remove_checkout(root, checkout)
+
+    if not cleaned:
+        print("Nothing pushed: inspect the preserved checkout before retrying.")
+        return 1
 
     failed = [name for name, passed in results.items() if passed is False]
     skipped = [name for name, passed in results.items() if passed is None]
