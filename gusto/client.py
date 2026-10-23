@@ -16,6 +16,7 @@ from urllib import error, parse, request
 DEFAULT_SERVER_URL = "http://127.0.0.1:8000"
 DEFAULT_TIMEOUT_SECONDS = 15.0
 REQUEST_TIMEOUT_SECONDS_PER_MB = 1.0
+MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 SETTINGS_FILENAME = "gusto.settings.json"
 # Domain reads also use POST. HTTP method alone cannot tell whether a lost
 # command reply could hide a mutation. Unlisted operations stay conservative.
@@ -136,9 +137,16 @@ def encode_attachment(
     if not source.is_file():
         raise ClientError(f"Datei '{source}' ist keine reguläre Datei.")
     try:
-        content = source.read_bytes()
+        with source.open("rb") as attachment:
+            content = attachment.read(MAX_ATTACHMENT_BYTES + 1)
     except OSError as exc:
         raise ClientError(f"Datei '{source}' konnte nicht gelesen werden: {exc}") from exc
+    if len(content) > MAX_ATTACHMENT_BYTES:
+        raise ClientError(
+            f"Datei '{source}' ist größer als "
+            f"{MAX_ATTACHMENT_BYTES // (1024 * 1024)} MiB. "
+            "Es wurde nichts hochgeladen."
+        )
     return {
         "name": name,
         "filename": source.name,
@@ -179,6 +187,7 @@ def _request_json(
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json; charset=utf-8"
+        timeout += len(data) / (1024 * 1024) * REQUEST_TIMEOUT_SECONDS_PER_MB
     outgoing = request.Request(url, data=data, headers=headers, method=method)
     try:
         with request.urlopen(outgoing, timeout=timeout) as response:
@@ -236,12 +245,8 @@ def command(
         "arguments": dict(arguments or {}),
         "attachments": [dict(item) for item in (attachments or [])],
     }
-    payload_bytes = len(json.dumps(envelope, ensure_ascii=False).encode("utf-8"))
-    effective_timeout = (
-        timeout + payload_bytes / (1024 * 1024) * REQUEST_TIMEOUT_SECONDS_PER_MB
-    )
     response = _request_json(
-        "POST", endpoint, payload=envelope, timeout=effective_timeout,
+        "POST", endpoint, payload=envelope, timeout=timeout,
     )
     if response.get("ok") is not True:
         message = response.get("error")

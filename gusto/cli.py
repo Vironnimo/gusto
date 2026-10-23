@@ -10,6 +10,9 @@ import argparse
 import importlib
 import json
 import os
+import re
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -76,8 +79,32 @@ def _open_editor(path, *, quiet: bool = False) -> dict:
     if quiet:
         options = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
     try:
-        exit_code = subprocess.call([editor, str(path)], **options)
-    except OSError as error:
+        if Path(editor).is_file():
+            # Keep accepting a bare executable path containing spaces.
+            command = [editor, str(path)]
+        elif os.name == "nt":
+            # CreateProcess parses Windows quotes/backslashes itself. A POSIX
+            # shell split would corrupt paths such as C:\\Tools\\editor.exe.
+            # Resolve PATHEXT first: CreateProcess alone misses code.cmd when
+            # EDITOR is "code --wait". Preserve the remaining native arguments.
+            match = re.fullmatch(
+                r'\s*(?:"([^"]+)"|([^\s"]+))(\s.*|$)', editor,
+                flags=re.DOTALL,
+            )
+            if match is None:
+                raise ValueError("EDITOR enthält keinen gültigen Programmnamen.")
+            program = match[1] or match[2]
+            resolved = shutil.which(program) or program
+            command = (
+                subprocess.list2cmdline([resolved]) + match[3]
+                + " " + subprocess.list2cmdline([str(path)])
+            )
+        else:
+            command = [*shlex.split(editor), str(path)]
+            if len(command) == 1:
+                raise ValueError("EDITOR enthält keinen Programmnamen.")
+        exit_code = subprocess.call(command, **options)
+    except (OSError, ValueError) as error:
         raise ValueError(f"Editor '{editor}' konnte nicht gestartet werden: {error}") from error
     if exit_code:
         raise ValueError(f"Editor '{editor}' wurde mit Status {exit_code} beendet.")

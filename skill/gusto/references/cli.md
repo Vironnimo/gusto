@@ -6,6 +6,9 @@ command accepts `--json`; command-specific help describes the installed
 version's arguments. Examples with angle-bracket values require substitution
 from the request or command results.
 
+`outcome_unknown:true` can also report failed server file cleanup after a saved
+write; use the main skill's uncertain-outcome recovery guidance.
+
 ## Contents
 
 - [Commands](#commands)
@@ -84,6 +87,8 @@ from the request or command results.
   a successful interactive `edit` round-trip.
   Without `EDITOR` set, Windows opens notepad and Linux nano — headless agents
   must set `EDITOR` to a scriptable editor or use `content set` instead.
+  `EDITOR` accepts an executable path or a command with arguments, such as
+  `code --wait`. Quote paths containing spaces when adding arguments.
 - `content set <slug> (--file PATH | --stdin) [--json]`
   Replace the complete Markdown body through the server from a local file
   or stdin. Use UTF-8; files also accept UTF-8 or UTF-16 with a byte-order mark.
@@ -137,6 +142,9 @@ and browser clients see the same facet order and assignment.
   items still reference the slug. JSON is `{ "slug": "...", "purged": true }`.
 
 ### Recipe images (`image`)
+
+CLI image uploads, including preferred-product images, reject files over 25 MiB
+before sending them.
 
 - `image list <slug> [--json]` — list every image and the selected cover.
 - `image add <slug> <path> [--role R] [--caption TEXT] [--cover] [--json]` —

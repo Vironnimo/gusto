@@ -7,12 +7,14 @@ import importlib
 import io
 import json
 import os
+import shlex
 import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import venv
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -197,6 +199,22 @@ def check_client_contract():
                   f"encode_attachment must reject {description} with a clear message")
         else:
             raise AssertionError(f"encode_attachment accepted {description}")
+    oversized = HOME / "oversized-attachment.bin"
+    with oversized.open("wb") as output:
+        output.seek(client.MAX_ATTACHMENT_BYTES)
+        output.write(b"x")
+    with patch.object(client.base64, "b64encode") as encode:
+        try:
+            client.encode_attachment("image", oversized)
+        except client.ClientError as error:
+            check("25 MiB" in str(error) and not error.outcome_unknown
+                  and not encode.called,
+                  "oversized attachments must fail before encoding or sending")
+        else:
+            raise AssertionError("an oversized attachment was accepted")
+    with patch.object(client, "MAX_ATTACHMENT_BYTES", len(image.read_bytes())):
+        check(client.encode_attachment("image", image) == attachment,
+              "the exact attachment size limit must remain inclusive")
     captured = []
 
     def fake_request(method, url, *, payload=None, timeout=None):
@@ -228,26 +246,31 @@ def check_client_contract():
                   "remote command errors must retain their API message")
         else:
             raise AssertionError("remote command failure was not raised")
-    timeouts = []
-
-    def timing_request(method, url, *, payload=None, timeout=None):
-        timeouts.append(timeout)
-        return {"ok": True, "result": {"slug": "test"}}
-
     heavy = HOME / "heavy-attachment.bin"
     heavy.write_bytes(bytes(1024 * 1024))
-    with patch.object(client, "_request_json", side_effect=timing_request):
-        client.command(
-            "recipe.show", {"slug": "test"},
-            attachments=[client.encode_attachment("image", heavy)],
-            server_url="http://gusto.local:9000",
-        )
+    with patch.object(
+        client.request, "urlopen",
+        return_value=io.BytesIO(b'{"ok":true,"result":{"slug":"test"}}'),
+    ) as send:
+        with patch.object(client.json, "dumps", wraps=json.dumps) as serialize:
+            client.command(
+                "recipe.show", {"slug": "test"},
+                attachments=[client.encode_attachment("image", heavy)],
+                server_url="http://gusto.local:9000",
+            )
+    sent = send.call_args.args[0]
+    effective_timeout = send.call_args.kwargs["timeout"]
     check(
-        client.DEFAULT_TIMEOUT_SECONDS < timeouts[0]
+        client.DEFAULT_TIMEOUT_SECONDS < effective_timeout
         <= client.DEFAULT_TIMEOUT_SECONDS + 2.0,
         "large attachments must scale the command timeout instead of "
         "failing as unreachable",
     )
+    check(serialize.call_count == 1
+          and effective_timeout == client.DEFAULT_TIMEOUT_SECONDS
+          + len(sent.data) / (1024 * 1024) * client.REQUEST_TIMEOUT_SECONDS_PER_MB
+          and json.loads(sent.data)["attachments"][0]["filename"] == heavy.name,
+          "timeout sizing and HTTP delivery must reuse one JSON serialization")
     with patch.object(
         client, "_request_json", return_value={"ok": True, "version": "1.2.3"},
     ):
@@ -486,6 +509,104 @@ def check_edit_readback_contract():
         path.unlink()
 
 
+def check_editor_arguments_contract():
+    """Run a real quoted editor command, including its arguments and failure."""
+    from gusto import cli
+
+    editor_root = HOME / "editor with spaces"
+    venv.EnvBuilder(with_pip=False).create(editor_root)
+    executable = editor_root / (
+        "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    )
+    script = editor_root / "edit recipe.py"
+    script.write_text(
+        "import sys\n"
+        "from pathlib import Path\n"
+        "Path(sys.argv[-1]).write_text(\n"
+        "    '# Ignored editor title\\n\\n' + sys.argv[1] + '\\n', encoding='utf-8')\n"
+        "print('editor output must not corrupt JSON')\n"
+        "raise SystemExit(int(sys.argv[2]))\n",
+        encoding="utf-8",
+    )
+    body = 'Grüne "Kräuter" & ein Pfad C:\\Zutaten\\frisch'
+    previous_editor = ENV.get("EDITOR")
+    previous_path = ENV.get("PATH", "")
+    previous_pathext = ENV.get("PATHEXT")
+    unchanged = editor_root / "unchanged recipe.md"
+    unchanged.write_text("# A recipe without executable content\n", encoding="utf-8")
+    with patch.dict(os.environ, {"EDITOR": os.fspath(executable)}):
+        result = cli._open_editor(unchanged, quiet=True)
+    check(result["exit_code"] == 0,
+          "an unquoted executable path with spaces must keep working as EDITOR")
+
+    def editor_command(exit_code, content=body):
+        arguments = [os.fspath(executable), os.fspath(script), content, str(exit_code)]
+        return (subprocess.list2cmdline(arguments) if os.name == "nt"
+                else shlex.join(arguments))
+
+    try:
+        ENV["EDITOR"] = editor_command(0)
+        created = as_json("new", "Editor Argumente", "--edit")
+        slug = created["slug"]
+        check(created["editor"]["exit_code"] == 0
+              and as_json("show", slug)["content"] == f"# Editor Argumente\n\n{body}\n",
+              "EDITOR must preserve quoted executable/script paths and argument values")
+        check(not Path(created["editor"]["path"]).exists(),
+              "a successful editor command must clean its temporary recipe")
+
+        failed_body = body + " (nicht gespeichert)"
+        ENV["EDITOR"] = editor_command(7, failed_body)
+        failed = as_json_error("edit", slug)
+        recovery = Path(failed["recovery_path"])
+        check(failed["slug"] == slug and "Status 7" in failed["error"]
+              and recovery.read_text(encoding="utf-8") == f"# Ignored editor title\n\n{failed_body}\n",
+              "an editor with arguments that fails must preserve its exact recovery copy")
+        check(as_json("show", slug)["content"] == f"# Editor Argumente\n\n{body}\n",
+              "a failing editor must not upload its temporary recipe")
+        recovery.unlink()
+
+        if os.name == "nt":
+            launcher_root = editor_root / "PATH launchers"
+            launcher_root.mkdir()
+            launcher_script = launcher_root / "editor launcher.py"
+            launcher_script.write_text(
+                "import sys\n"
+                "from pathlib import Path\n"
+                "assert sys.argv[1:-1] == ['--wait', 'argument with spaces']\n"
+                "Path(sys.argv[-1]).write_text(\n"
+                "    '# Ignored title\\n\\n- PATH launcher\\n', encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+            launcher = launcher_root / "gusto-editor.cmd"
+            launcher.write_text(
+                "@echo off\n" + subprocess.list2cmdline(
+                    [os.fspath(executable), os.fspath(launcher_script)]
+                ) + " %*\n",
+                encoding="utf-8",
+            )
+            ENV["PATH"] = os.fspath(launcher_root) + os.pathsep + previous_path
+            ENV["PATHEXT"] = ".EXE;.CMD"
+            ENV["EDITOR"] = 'gusto-editor --wait "argument with spaces"'
+            edited = as_json("edit", slug)
+            check(edited["exit_code"] == 0
+                  and as_json("show", slug)["content"]
+                  == "# Editor Argumente\n\n- PATH launcher\n",
+                  "Windows EDITOR must resolve extensionless .cmd PATH launchers")
+
+        as_json("delete", slug)
+        as_json("archive", "purge", slug, "--yes")
+    finally:
+        ENV["PATH"] = previous_path
+        if previous_pathext is None:
+            ENV.pop("PATHEXT", None)
+        else:
+            ENV["PATHEXT"] = previous_pathext
+        if previous_editor is None:
+            ENV.pop("EDITOR", None)
+        else:
+            ENV["EDITOR"] = previous_editor
+
+
 def check_uncertain_delivery_contract():
     """Lose a response after the real service commits, then recover via the CLI."""
     from gusto import cli
@@ -600,6 +721,7 @@ def main():
           and home["server_version"],
           "home --json must identify the reachable server-owned store/version")
     check_uncertain_delivery_contract()
+    check_editor_arguments_contract()
     check_serve_json_contract()
     check_serve_dependency_preflight()
     invalid_port = run("serve", "--port", "70000", expect=2)

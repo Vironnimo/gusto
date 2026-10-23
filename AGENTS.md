@@ -14,10 +14,14 @@ when the user or applicable instructions authorize it.
 Normal Gusto operations use the selected running service. Verify the exact
 invocation with `home --json` before domain work; verify `server_url` and
 `server_data_path`, since local `path` need not identify the remote store.
-If a mutation loses its
-response (`outcome_unknown:true`), inspect state on the same server before
+If a mutation loses its response or server file cleanup fails after saving
+(`outcome_unknown:true`), inspect state on the same server before
 retrying; do not replay it automatically. Failed interactive edits retain
 `recovery_path`; compare `show` before uploading that copy again.
+
+`EDITOR` accepts an executable path or a command with arguments; quote paths
+containing spaces when adding arguments. CLI image uploads reject files over
+25 MiB before sending them, including preferred-product images.
 
 Keep repository scratch files under `.tmp/`; see the canonical guide for
 Python/child-process setup and the same-filesystem atomic-write exception.

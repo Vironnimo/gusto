@@ -118,14 +118,17 @@ All commands understand `--json`. Normal domain commands go through
 select the server. Expected command failures write
 `{ "ok": false, "error": "..." }` to stdout and exit 1. `check --json` returns
 full diagnostics; `check --offline` is the explicit local recovery exception.
-`edit` downloads a temporary copy and uploads it after the editor exits;
-headless agents use `content set --file` (UTF-8 with optional BOM, or UTF-16
+`edit` downloads a temporary copy and uploads it after the editor exits.
+`EDITOR` accepts an executable path or a command with arguments (for example,
+`code --wait`); quote paths containing spaces when adding arguments.
+Headless agents use `content set --file` (UTF-8 with optional BOM, or UTF-16
 with BOM) or `content set --stdin` (UTF-8). Lifecycle
 commands (`serve`, `home`, `status`, `start`, `stop`, `restart`, `update`,
 `uninstall`, `install-skill`) remain local.
 
 Lost responses and server failures may return `outcome_unknown:true`: the
-command may already have applied. Never automatically retry a mutation after
+command may already have applied. File cleanup can also fail after a server
+write was saved. Never automatically retry a mutation after
 an uncertain response; inspect its state on the same verified server first.
 Read-only calls and documented idempotent operations are safe to retry.
 Failed `edit`/`new --edit` calls preserve the local recipe copy and report
@@ -249,7 +252,8 @@ as `result`, `ingredients`, or `step` are descriptive and remain open-ended.
 Human users can manage the same images in the web UI, with separate actions to
 take a photo using the outward-facing camera or choose an existing image.
 Browser uploads are normalized to metadata-free WebP with a 1920 px maximum
-edge; CLI imports remain unchanged and dependency-free.
+edge; CLI imports remain unchanged and dependency-free. CLI image uploads,
+including preferred-product images, reject files over 25 MiB before sending.
 
 **Preferred product for a shopping item:** run `gusto favorites match "<shopping
 text>" --json`. A result is the shared household shopping need; its `products`

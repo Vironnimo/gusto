@@ -60,6 +60,7 @@ When `outcome_unknown:true`, a timeout, or an interrupted call leaves a mutation
 uncertain, inspect its state on the same server before repeating it: `show`
 for known recipe slugs, `list`/`search` after an uncertain `new`, `log` for
 cooking entries, or the relevant list/show command.
+Server file cleanup can fail after a saved write and return the same uncertainty flag.
 Read-only calls and documented idempotent operations can be retried.
 
 Successful mutations normally return the resulting object or a confirmation.
