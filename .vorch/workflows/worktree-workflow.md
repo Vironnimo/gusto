@@ -29,7 +29,7 @@ python scripts/worktree.py merge <task-name>
 No user confirmation is needed. Use a generous shell timeout: the command waits while another session's merge holds the merge lock. It then:
 
 1. reports a conflict with `main` before touching anything;
-2. makes the merge commit (`--no-ff`) in a private landing checkout, where the commit hook checks it;
+2. prepares the merged tree's dependencies in its own private landing checkout, then makes the merge commit (`--no-ff`) there through the static commit hook;
 3. fast-forwards `main` in the primary checkout to that commit, and remakes the merge when `main` moved meanwhile;
 4. removes the worktree and its branch.
 
