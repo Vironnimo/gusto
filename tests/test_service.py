@@ -49,6 +49,16 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
           "install state must round-trip")
     check(service.server_url(state) == "http://127.0.0.1:8123",
           "wildcard listen host must become a local client URL")
+    for host in ("::", "[::]"):
+        ipv6 = {**state, "host": host}
+        check(service.server_url(ipv6) == "http://[::1]:8123"
+              and service.health_url(ipv6) == "http://[::1]:8123/api/v1/health",
+              "an IPv6 wildcard must probe IPv6 loopback, even when IPv4 "
+              "is not accepted by the listener")
+        check(service.server_url(ipv6, local=False) == "http://[::]:8123",
+              "nonlocal rendering must preserve the IPv6 listen address")
+    check(service.server_url({**state, "host": "::1"}) == "http://[::1]:8123",
+          "an explicit IPv6 host must retain a valid bracketed URL")
     for description, corrupt, expected in (
         ("a non-numeric port", {**state, "port": "8000x"}, "Port"),
         ("a missing port", {**state, "port": None}, "Port"),

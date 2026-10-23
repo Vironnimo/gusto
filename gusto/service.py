@@ -464,8 +464,11 @@ def register_windows_app(
 
 def server_url(state: dict[str, Any], *, local: bool = True) -> str:
     host = str(state.get("host", "0.0.0.0"))
-    if local and host in {"0.0.0.0", "::", "[::]"}:
-        host = "127.0.0.1"
+    if local:
+        if host == "0.0.0.0":
+            host = "127.0.0.1"
+        elif host in {"::", "[::]"}:
+            host = "::1"
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
     return f"http://{host}:{int(state.get('port', 8000))}"

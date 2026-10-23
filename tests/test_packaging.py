@@ -142,6 +142,55 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
     skill_runtime = output / "skill runtime"
     venv.EnvBuilder(with_pip=True).create(skill_runtime)
     skill_python = service.runtime_python(skill_runtime)
+
+    # A checkout or inherited PYTHONPATH must not make an empty runtime look
+    # usable. Both repair and post-install verification must import the package
+    # from the target environment, as the service will when started elsewhere.
+    shadow = output / "shadow"
+    shadow_package = shadow / "gusto"
+    shadow_package.mkdir(parents=True)
+    (shadow_package / "__init__.py").write_text(
+        f"__version__ = {gusto.__version__!r}\n", encoding="utf-8",
+    )
+    (shadow_package / "cli.py").write_text(
+        "def _missing_web_dependencies(): return []\n", encoding="utf-8",
+    )
+    marker = skill_runtime / ".gusto-runtime.json"
+    python_version = ".".join(map(str, sys.version_info[:3]))
+    marker.write_text(json.dumps({
+        "version": gusto.__version__, "verified": True,
+        "python_runtime": python_version,
+    }), encoding="utf-8")
+    actual_run = subprocess.run
+
+    def run_with_shadow(command, **kwargs):
+        # Model a successful pip exit which left the target package absent;
+        # only the real isolated smoke process can detect the broken runtime.
+        if command[1:4] == ["-m", "pip", "install"]:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        kwargs.setdefault("capture_output", True)
+        return actual_run(command, cwd=shadow, **kwargs)
+
+    with patch.dict(os.environ, {"PYTHONPATH": os.fspath(shadow)}):
+        with patch.object(install.subprocess, "run", side_effect=run_with_shadow):
+            check(not install.runtime_is_usable(
+                skill_runtime, gusto.__version__, python_version,
+            ), "repair must reject an empty runtime despite an importable "
+               "checkout or PYTHONPATH package")
+            marker.unlink()
+            try:
+                install.install_source_runtime(
+                    wheel_path, skill_runtime, gusto.__version__,
+                    output / "probe-data", "http://127.0.0.1:8123",
+                    base_python=Path(sys.executable), python_version=python_version,
+                    json_output=True,
+                )
+            except RuntimeError as error:
+                check("Runtime-Prüfung" in str(error) and not marker.exists(),
+                      "an isolated failed smoke must not mark a runtime verified")
+            else:
+                raise AssertionError("post-install smoke accepted a shadow package")
+
     installed_skill_runtime = subprocess.run(
         [os.fspath(skill_python), "-m", "pip", "install", "--no-deps",
          os.fspath(wheel_path)],
@@ -157,7 +206,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
         "USERPROFILE": os.fspath(fake_home),
     }
     first_skill_install = subprocess.run(
-        [os.fspath(skill_python), "-m", "gusto", "install-skill", "vbot", "--json"],
+        [os.fspath(skill_python), "-I", "-m", "gusto", "install-skill", "vbot", "--json"],
         capture_output=True, text=True, encoding="utf-8", env=skill_environment,
     )
     first_skill_result = (
@@ -168,11 +217,13 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
     check(first_skill_install.returncode == 0
           and first_skill_result.get("status") == "installed"
           and first_skill_result.get("overwritten") is False
+          and Path(first_skill_result.get("source", "")).resolve()
+          == (skill_runtime / "share/gusto/skill/gusto").resolve()
           and installed_skill_file.is_file(),
           first_skill_install.stdout + first_skill_install.stderr)
     installed_skill_file.write_text("stale", encoding="utf-8")
     second_skill_install = subprocess.run(
-        [os.fspath(skill_python), "-m", "gusto", "install-skill", "vbot", "--json"],
+        [os.fspath(skill_python), "-I", "-m", "gusto", "install-skill", "vbot", "--json"],
         capture_output=True, text=True, encoding="utf-8", env=skill_environment,
     )
     second_skill_result = (

@@ -295,7 +295,7 @@ def runtime_is_usable(
         return False
     smoke = subprocess.run(
         [
-            os.fspath(python), "-c",
+            os.fspath(python), "-I", "-c",
             "import gusto,sys;"
             "from gusto.cli import _missing_web_dependencies;"
             "raise SystemExit(gusto.__version__ != sys.argv[1] or "
@@ -350,7 +350,7 @@ def install_source_runtime(
     write_instance_settings(runtime, data_root, server_url)
     smoke = subprocess.run(
         [
-            os.fspath(python), "-c",
+            os.fspath(python), "-I", "-c",
             "import gusto,sys;from gusto.cli import _missing_web_dependencies;"
             "raise SystemExit(gusto.__version__ != sys.argv[1] or "
             "bool(_missing_web_dependencies()))",
