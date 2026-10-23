@@ -109,6 +109,25 @@ def main() -> None:
           "GUSTO_HOME does not point into the temp directory -- abort.")
 
     core.data_dir().mkdir(parents=True)
+    if os.name == "nt":
+        import msvcrt as native_lock
+        lock_function = "locking"
+    else:
+        import fcntl as native_lock
+        lock_function = "flock"
+    with patch.object(core, "_LOCK_TIMEOUT_SECONDS", 0), patch.object(
+        native_lock, lock_function, side_effect=BlockingIOError("resource busy"),
+    ):
+        try:
+            core.add_recipe("Blocked before persistence")
+        except ValueError as error:
+            check(isinstance(error.__cause__, BlockingIOError),
+                  "lock timeout must report the failed native lock attempt")
+        else:
+            raise AssertionError("a held resource lock unexpectedly allowed a mutation")
+    check(not core.index_path().exists() and not core.changes_path().exists()
+          and not core.recipe_file("blocked-before-persistence").exists(),
+          "lock timeout must leave business data and change revisions untouched")
     abandoned_lock = core.data_dir() / ".gusto-catalog.lock"
     abandoned_lock.touch()
     with patch.object(core, "_LOCK_TIMEOUT_SECONDS", 0):
