@@ -27,6 +27,9 @@ The cross-cutting term GLOSSARY → Einkaufsbedarf defines the durable owner of 
 `data/shopping_list.json` has the shape `{ "items": [...] }`. Each item has a unique id, text, optional quantity, checked state, optional source recipe slug, creation and update timestamps, and deletion state. Visible list order is ascending `created_at`; tombstones are hidden unless explicitly requested.
 
 The browser stores the same full item array, including tombstones, under `localStorage` key `gusto.shopping`.
+When browser storage is full or blocked, the current page retains its latest
+items in memory and continues syncing. Unsaved memory survives renders, not
+page closure; a successful later storage write restores normal persistence.
 
 `data/favorites.json` stores shared household Einkaufsbedarfe. Each has one
 canonical name, explicit exact-match aliases, and a product array whose order
@@ -112,6 +115,9 @@ with a 1920 px maximum edge before invoking the existing core product mutation.
 - Items present on only one side are retained, so every exchange uploads and returns full state rather than a delta.
 - Tombstones participate like any other version and are never hard-deleted by shopping operations.
 - Both legacy second-precision and current millisecond timestamps are accepted. Valid timestamps outrank malformed legacy values on the server.
+- A winning remote timestamp that cannot advance by another millisecond is
+  rejected before saving the merged state. UTC-conversion overflow is handled
+  like a malformed legacy timestamp; existing malformed values stay repairable.
 - Compare the clock at persisted millisecond precision before advancing it;
   consecutive mutations within one wall-clock millisecond need distinct versions.
 - The browser merges a response into its current state instead of overwriting it, preserving mutations made while a request was in flight. A queued follow-up sync handles changes during an active sync.
@@ -120,6 +126,8 @@ with a 1920 px maximum edge before invoking the existing core product mutation.
   holds the catalog lock while reading its recipe snapshot. A merge containing
   visible recipe sources also holds the catalog lock so archive/restore cannot
   temporarily hide a valid source; locks are acquired in a stable order.
+- A merge without a winning or new item skips the save/serialization stage
+  entirely. An empty initial sync does not create a shopping data file.
 
 ## Constraints & Gotchas
 

@@ -16,28 +16,35 @@
   var FAVORITES_URL = "/api/favorites";
   var favoriteNeeds = [];
   var sourceReferences = {};
+  var memoryItems = [];
+  var storageWriteFailed = false;
 
   // --- localStorage binding --------------------------------------------------
 
   // Always returns an array of items (incl. tombstones). Robust against a
   // missing / broken store.
   function loadItems() {
+    // A quota/privacy failure must not replace newer, unsaved changes with
+    // an old (or empty) disk copy. Keep using memory until a write succeeds.
+    if (storageWriteFailed) return memoryItems;
     try {
       var raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return [];
-      var data = JSON.parse(raw);
-      if (data && Array.isArray(data.items)) return data.items;
+      var data = raw ? JSON.parse(raw) : null;
+      memoryItems = data && Array.isArray(data.items) ? data.items : [];
     } catch (e) {
-      // Broken store -> treat as empty, the next mutation/sync heals it.
+      // Keep the last known state when storage is blocked or corrupt.
     }
-    return [];
+    return memoryItems;
   }
 
   function saveItems(items) {
+    memoryItems = items;
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ items: items }));
+      storageWriteFailed = false;
     } catch (e) {
-      // Store full/blocked -> UI stays consistent anyway (in memory).
+      // Current-page edits still render and sync even without persistence.
+      storageWriteFailed = true;
     }
   }
 
@@ -816,7 +823,8 @@
   // not overwrite local changes made during the in-flight request (otherwise
   // fast clicks would be lost).
   function mergeInto(local, incoming) {
-    var byId = {};
+    // IDs are opaque strings; names such as "__proto__" must be ordinary keys.
+    var byId = Object.create(null);
     local.forEach(function (it) { byId[it.id] = it; });
     incoming.forEach(function (rem) {
       var cur = byId[rem.id];

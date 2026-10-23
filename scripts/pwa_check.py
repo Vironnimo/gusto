@@ -535,6 +535,89 @@ try:
               "malformed local timestamp loses to valid server timestamp")
         ctx.close()
 
+        # E4: failed browser persistence must not erase the current page's
+        # server snapshot or offline edits. Quota failures still allow reads
+        # of a stale disk copy; blocked storage fails both reads and writes.
+        for storage_failure in ("quota", "blocked"):
+            reset_and_wait()
+            seed_shopping([mk("Bestand", past_iso())])
+            ctx = browser.new_context()
+            ctx.add_init_script("""(() => {
+                if (sessionStorage.getItem('gusto.test.storage-restored')) return;
+                const read = Storage.prototype.getItem;
+                const write = Storage.prototype.setItem;
+                window.restoreShoppingStorage = () => {
+                    Storage.prototype.getItem = read;
+                    Storage.prototype.setItem = write;
+                    sessionStorage.setItem('gusto.test.storage-restored', '1');
+                };
+                if (STORAGE_BLOCKED) {
+                    Storage.prototype.getItem = function (key) {
+                        if (key === 'gusto.shopping') {
+                            throw new DOMException('Storage blocked', 'SecurityError');
+                        }
+                        return read.call(this, key);
+                    };
+                }
+                Storage.prototype.setItem = function (key, value) {
+                    if (key === 'gusto.shopping') {
+                        throw new DOMException('Storage unavailable', 'QuotaExceededError');
+                    }
+                    return write.call(this, key, value);
+                };
+            })();""".replace("STORAGE_BLOCKED", str(storage_failure == "blocked").lower()))
+            page = ctx.new_page()
+            page.goto(BASE + "/shopping", wait_until="load")
+            check(wait_item_once(page, "Bestand"),
+                  f"storage {storage_failure}: server items stay visible")
+            check(sw_ready(page, 8000) is True,
+                  f"storage {storage_failure}: offline shell is ready")
+            ctx.set_offline(True)
+            page.locator("#shop-client .shop-add-panel summary").click()
+            page.fill("#shop-client input[name=text]", "Offlinezugang")
+            page.locator("#shop-client form.shop-add button").click()
+            check(wait_item_once(page, "Offlinezugang"),
+                  f"storage {storage_failure}: offline add remains in memory")
+            added = page.locator("#shop-client .shop-item", has_text="Offlinezugang")
+            added.locator(".shop-box").click()
+            check(wait_count(page, "#shop-client .shop-group-done .shop-item", 1),
+                  f"storage {storage_failure}: offline follow-up edit survives")
+            ctx.set_offline(False)
+            check(wait_server(lambda its: any(
+                i["text"] == "Offlinezugang" and i["checked"] for i in its
+            )), f"storage {storage_failure}: buffered edits sync when online")
+            page.evaluate("window.restoreShoppingStorage()")
+            page.evaluate(
+                "document.dispatchEvent(new CustomEvent('gusto:change', "
+                "{detail: {resources: ['shopping']}}))")
+            page.wait_for_function("""() => {
+                const items = JSON.parse(localStorage.getItem('gusto.shopping') || '{}').items || [];
+                return items.some(item => item.text === 'Offlinezugang' && item.checked);
+            }""")
+            ctx.set_offline(True)
+            page.reload(wait_until="domcontentloaded")
+            check(wait_item_once(page, "Offlinezugang"),
+                  f"storage {storage_failure}: recovered storage survives reload")
+            page.screenshot(path=str(TESTDATA / f"storage-{storage_failure}.png"))
+            ctx.close()
+
+        # E5: sync accepts opaque string IDs, including JavaScript property
+        # names. Such an item must render and propagate its removal normally.
+        reset_and_wait()
+        api_sync([itm(past_iso(), id="__proto__", text="Sonderkennung")])
+        ctx = browser.new_context()
+        page = ctx.new_page()
+        page.goto(BASE + "/shopping", wait_until="load")
+        check(wait_item_once(page, "Sonderkennung"),
+              "opaque IDs: __proto__ item appears after client merge")
+        page.locator("#shop-client .shop-item", has_text="Sonderkennung").locator(".shop-x").click()
+        check(wait_server(lambda its: any(
+            i["id"] == "__proto__" and i["deleted"] for i in its
+        )), "opaque IDs: __proto__ tombstone syncs back to the server")
+        check(wait_count(page, "#shop-client .shop-item", 0),
+              "opaque IDs: deleted item stays absent after sync")
+        ctx.close()
+
         browser.close()
 finally:
     srv.terminate()

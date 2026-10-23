@@ -45,6 +45,9 @@ Neue Zeitstempel sind UTC-Werte mit Millisekunden und literalem `Z`:
 Server und Browser vergleichen geparste Zeitwerte. Gültige Zeitwerte gewinnen
 gegen fehlerhafte Altwerte; nur zwei fehlerhafte Werte werden lexikografisch
 verglichen.
+Ein gewinnender Remote-Zeitwert, für den keine weitere Millisekunde darstellbar
+ist, wird vor dem Speichern mit HTTP 400 abgewiesen. Ein Überlauf bei der
+UTC-Konvertierung wird wie ein fehlerhafter Altwert behandelt.
 
 Jede Zustandsänderung eines Items erhält ein `updated_at`, das mindestens
 1 ms nach dessen vorherigem Wert liegt. Das gilt auch für mehrere Änderungen
@@ -64,6 +67,7 @@ Der Server speichert und liefert den Gesamtstand einschließlich Tombstones.
 Die Mutation hält den Shopping-Lock über Laden, Merge und atomarem Speichern;
 bei sichtbaren Rezeptquellen wird zusätzlich der Katalog gesperrt. Ein Merge
 ohne Zustandsänderung erzeugt keine Änderungsrevision.
+Er überspringt auch die erneute Serialisierung und Speicherung vollständig.
 
 ## Browser-API
 
@@ -95,6 +99,11 @@ rendern die Ansicht und stoßen `sync()` an. Neue Browser-Items haben
 `source:null`. „Erledigte entfernen“ setzt Tombstones für alle sichtbaren
 gehakten Items, „Einkaufsliste leeren“ für alle sichtbaren Items. Beide
 Entfernungen haben keine CLI-Wiederherstellung.
+Ist localStorage voll oder gesperrt, behält die geöffnete Seite ihre aktuellen
+Items im Arbeitsspeicher und synchronisiert sie weiterhin. Nach erfolgreichem
+Speichern gilt wieder die normale Persistenz. Ohne erfolgreiche Speicherung
+oder Server-Synchronisation überlebt dieser Ersatzspeicher kein Schließen oder
+Neuladen der Seite.
 
 Ein Sync lädt alle lokalen Items einschließlich Tombstones hoch. Seine Antwort
 wird in den zum Antwortzeitpunkt aktuellen lokalen Stand gemergt. Sie ersetzt
