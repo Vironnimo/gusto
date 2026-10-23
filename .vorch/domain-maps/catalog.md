@@ -86,6 +86,7 @@ the CLI.
 Cooking-log writes accept only exact `YYYY-MM-DD` calendar dates no later than
 today, so the log's lexical ordering remains valid. Suggestion limits must be
 nonnegative; zero deliberately returns no candidates.
+Positive day windows beyond the calendar range include all recorded history.
 
 The shopping domain calls the catalog lookup and recipe-content reader when adding every bullet under `## Zutaten` to the shopping list; it does not own recipe parsing beyond that section rule.
 
@@ -98,11 +99,17 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
 - Every catalog mutation holds the cross-process catalog lock across its full
   read-modify-write transaction. This includes the cooking log and owned recipe
   images because both also update catalog state.
+- Multi-file mutations keep write checkpoints: completed rollbacks restore the
+  prior checkpoint and raise the original failure without an event. Failed
+  rollback or cleanup after a committed write retains the event and reports
+  `PostMutationError`. A committed index keeps its referenced Markdown/images.
 - `data/categories.json` is server-owned. Normal clients use `categories ...`;
   direct edits bypass validation, locking, and change events.
 - Core create/update owns the metadata-title ↔ first-H1 invariant; web forms
   still reconstruct the line, but are not the source of truth for the rule.
 - Images are copied into Gusto storage after extension and header/dimension validation. The first image becomes the cover unless another is explicitly selected.
+  Failed imports remove partial copies; failed cleanup is reported as a
+  storage change rather than as a clean rejection.
 - Before core receives a browser photo, the web shell applies EXIF orientation,
   limits the longest edge to 1920 px, converts it to WebP, and omits metadata.
   CLI imports travel as bounded API attachments and are copied in their
@@ -116,10 +123,14 @@ The shopping domain calls the catalog lookup and recipe-content reader when addi
   warnings; other non-empty diagnostics are hard errors.
   Invalid categories and malformed recipe/favorite/shopping entries appear in
   `invalid_data_files` rather than aborting the whole diagnostic report.
+  Unreadable or invalid-UTF-8 Markdown and invalid directory paths are also
+  reported without discarding the remaining diagnostics.
 
 ## Constraints & Gotchas
 
 - Search reads both indexed metadata and the Markdown body, so ingredient text participates in full-text results.
+  It opens Markdown only when title/tag matches have not already settled the
+  ANY/ALL condition; ALL can combine matches across metadata and body.
 - Separate clients may safely create recipes, record cooking, replace content,
   or import images concurrently without losing index/log/image metadata. Their
   final order can follow server lock acquisition order. Lock files must be

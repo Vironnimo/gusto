@@ -10,6 +10,7 @@ gusto.core is imported or any function is called. Otherwise the real data
 under recipes/ and data/ would be modified -- which is forbidden.
 """
 import os
+import json
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -253,6 +254,61 @@ result = core.shopping_merge([
 m = by_id(result)
 check(m["a"].deleted is True and m["a"].text == "neu",
       "a losing stale version may still reference a purged recipe")
+
+
+# --- 16) read-only merges do not rewrite the ever-growing full state -------
+unchanged = item("same", "2026-06-23T18:00:00Z", deleted=True)
+reset_local([unchanged])
+core.shopping_path().write_text(json.dumps({"items": [unchanged]}), encoding="utf-8")
+before_bytes = core.shopping_path().read_bytes()
+before_revision = core.change_state()["revision"]
+for remote in ([], [unchanged], [item("same", "2026-06-23T17:00:00Z")]):
+    result = core.shopping_merge(remote)
+    check(result[0].to_dict() == unchanged,
+          "empty, identical and stale sync states must return the stored version")
+check(core.shopping_path().read_bytes() == before_bytes
+      and core.change_state()["revision"] == before_revision,
+      "a no-op sync must preserve the existing file and must not publish an event")
+core.shopping_path().unlink()
+check(core.shopping_merge([]) == [] and not core.shopping_path().exists()
+      and core.change_state()["revision"] == before_revision,
+      "an empty first sync must not create a shopping store or a change event")
+
+
+# --- 17) extreme timestamps cannot crash or poison future mutations -------
+for overflowed_utc in ("0001-01-01T00:00:00+01:00",
+                       "9999-12-31T23:59:59-01:00"):
+    check(core._parse_iso(overflowed_utc) is None,
+          "out-of-range UTC conversion must be treated like malformed legacy time")
+    reset_local([item("legacy", overflowed_utc)])
+    result = core.shopping_merge([item("legacy", "2026-06-23T18:00:00Z")])
+    check(result[0].updated_at == "2026-06-23T18:00:00Z",
+          "a valid version must repair a legacy timestamp outside the UTC range")
+
+reset_local([item("unchanged", "2026-06-23T18:00:00Z")])
+before_bytes = core.shopping_path().read_bytes()
+before_revision = core.change_state()["revision"]
+for final_instant in ("9999-12-31T23:59:59.999Z",
+                      "9999-12-31T23:59:59.999999Z"):
+    expect_valueerror([item("first", "2026-06-23T19:00:00Z"),
+                       item("unwritable", final_instant)])
+check(core.shopping_path().read_bytes() == before_bytes
+      and core.change_state()["revision"] == before_revision,
+      "a non-advanceable version must reject the entire merge without a partial write")
+
+# Existing bad data must fail as a validation error rather than OverflowError;
+# even earlier in-memory removals in the same operation remain unpersisted.
+reset_local([item("normal", "2026-06-23T18:00:00Z"),
+             item("unwritable", "9999-12-31T23:59:59.999Z")])
+before_bytes = core.shopping_path().read_bytes()
+try:
+    core.shopping_clear()
+except ValueError as error:
+    check("Zeitstempel" in str(error), "an unwritable version needs a clear validation error")
+else:
+    raise AssertionError("an unadvanceable stored version must be rejected")
+check(core.shopping_path().read_bytes() == before_bytes,
+      "an invalid stored version must not partially clear the shopping list")
 
 
 print(f"OK - {checks} checks passed (test_merge.py)")

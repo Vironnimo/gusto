@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from pathlib import Path
 import base64
+from unittest.mock import patch
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -35,6 +36,115 @@ def expect_valueerror(function, *args, **kwargs):
     except ValueError:
         return
     raise AssertionError(f"expected ValueError from {function.__name__}")
+
+
+def transaction_failure_checks():
+    """Distinguish complete rollback, failed rollback, and committed results."""
+    for operation in ("add", "update", "log", "archive", "restore"):
+        for failure in ("before-index", "rollback", "after-index"):
+            with tempfile.TemporaryDirectory(prefix="transactions-", dir=HOME) as home:
+                with patch.dict(os.environ, {"GUSTO_HOME": home}):
+                    slug = "transaktion"
+                    if operation != "add":
+                        core.add_recipe("Transaktion", slug=slug)
+                    if operation == "log":
+                        core.log_cooked(slug, (date.today() - timedelta(days=1)).isoformat())
+                    if operation == "restore":
+                        core.archive_recipe(slug)
+                    actions = {
+                        "add": lambda: core.add_recipe("Transaktion", slug=slug),
+                        "update": lambda: core.update_recipe(slug, title="Geändert"),
+                        "log": lambda: core.log_cooked(slug),
+                        "archive": lambda: core.archive_recipe(slug),
+                        "restore": lambda: core.restore_archived_recipe(slug),
+                    }
+
+                    def business_files():
+                        return {
+                            path.relative_to(home).as_posix(): path.read_bytes()
+                            for path in Path(home).rglob("*") if path.is_file()
+                            and path != core.changes_path() and path.suffix != ".lock"
+                        }
+
+                    before = business_files()
+                    revision = core.change_state()["revision"]
+                    original_save = core._save_recipes_unlocked
+                    original_unlink = Path.unlink
+                    original_replace = Path.replace
+                    original_text = core._write_text
+                    original_json = core._write_json
+                    index_failed = False
+
+                    def failing_index(recipes):
+                        nonlocal index_failed
+                        if failure == "after-index":
+                            original_save(recipes)
+                        index_failed = True
+                        raise OSError("index failure")
+
+                    def failing_unlink(path, *args, **kwargs):
+                        if (failure == "rollback" and index_failed and operation == "add"
+                                and path == core.recipe_file(slug)):
+                            raise OSError("rollback failure")
+                        return original_unlink(path, *args, **kwargs)
+
+                    def failing_replace(path, *args, **kwargs):
+                        if failure == "rollback" and index_failed:
+                            if ((operation == "archive" and path == core.archive_recipe_file(slug))
+                                    or (operation == "restore" and path == core.recipe_file(slug))):
+                                raise OSError("rollback failure")
+                        return original_replace(path, *args, **kwargs)
+
+                    def failing_text(path, *args, **kwargs):
+                        if (failure == "rollback" and index_failed and operation == "update"
+                                and path == core.recipe_file(slug)):
+                            raise OSError("rollback failure")
+                        return original_text(path, *args, **kwargs)
+
+                    def failing_json(path, *args, **kwargs):
+                        if (failure == "rollback" and index_failed and operation == "log"
+                                and path == core.log_path()):
+                            raise OSError("rollback failure")
+                        return original_json(path, *args, **kwargs)
+
+                    with patch.object(core, "_save_recipes_unlocked", failing_index), \
+                            patch.object(Path, "unlink", failing_unlink), \
+                            patch.object(Path, "replace", failing_replace), \
+                            patch.object(core, "_write_text", failing_text), \
+                            patch.object(core, "_write_json", failing_json):
+                        try:
+                            actions[operation]()
+                        except Exception as error:
+                            expected = OSError if failure == "before-index" else core.PostMutationError
+                            check(type(error) is expected,
+                                  f"{operation}/{failure}: failure must reflect whether effects remain")
+                        else:
+                            raise AssertionError(f"{operation}/{failure}: expected injected failure")
+
+                    if failure == "before-index":
+                        check(business_files() == before
+                              and core.change_state()["revision"] == revision,
+                              f"{operation}: complete rollback must restore all files without an event")
+                    else:
+                        check(business_files() != before
+                              and core.change_state()["revision"] == revision + 1,
+                              f"{operation}/{failure}: remaining effects must publish a change")
+                    if failure == "after-index":
+                        if operation == "archive":
+                            check(core.get(slug) is None and core.get_archived(slug) is not None,
+                                  "an already committed archive must not move its files back")
+                        else:
+                            saved = core.get(slug)
+                            check(saved is not None and saved.path.is_file(),
+                                  f"{operation}: a committed recipe must retain its Markdown")
+                            if operation == "update":
+                                check(saved.title == "Geändert"
+                                      and saved.content().startswith("# Geändert\n"),
+                                      "a committed title update must not restore the previous Markdown")
+                            if operation == "log":
+                                check(saved.last_cooked == date.today().isoformat()
+                                      and len(core.load_log()) == 2,
+                                      "a committed cooking entry must not lose its log record")
 
 
 def main():
@@ -96,6 +206,29 @@ def main():
 
     check([r.slug for r in core.search("kokosmilch")] == [curry.slug],
           "full-text search must include recipe content")
+    # Live searches should only open bodies when metadata leaves a term
+    # unresolved, without changing ANY/ALL or cross-field matching.
+    read_slugs = []
+    original_content = core.Recipe.content
+
+    def record_content(recipe):
+        read_slugs.append(recipe.slug)
+        return original_content(recipe)
+
+    with patch.object(core.Recipe, "content", record_content):
+        check([r.slug for r in core.search("pasta italienisch", match="all")]
+              == [pasta.slug] and pasta.slug not in read_slugs,
+              "an ALL match in metadata must not read that recipe's Markdown")
+        read_slugs.clear()
+        check({r.slug for r in core.search("pasta kokosmilch")}
+              == {pasta.slug, curry.slug} and pasta.slug not in read_slugs,
+              "ANY must combine metadata hits and body-only hits without redundant reads")
+        read_slugs.clear()
+        check([r.slug for r in core.search("italienisch tomaten", match="all")]
+              == [pasta.slug] and pasta.slug in read_slugs,
+              "ALL must resolve remaining terms in the body after a metadata match")
+        check(core.search("pasta kokosmilch", match="all") == [],
+              "a metadata hit must not bypass an absent ALL term")
     check({r.slug for r in core.search(tags=["italienisch", "indisch"])}
           == {pasta.slug, curry.slug}, "tags within one facet must use OR")
     check([r.slug for r in core.search(tags=["indisch", "curry"])] == [curry.slug],
@@ -329,6 +462,8 @@ def main():
           "invalid or future cooking dates must not mutate the log")
     expect_valueerror(core.load_log, days=0)
     expect_valueerror(core.load_log, days=-1)
+    check(core.load_log(days=10**100) == core.load_log(),
+          "a calendar-spanning positive day window must include all history")
 
     # A failing index write must roll the created Markdown back, and a failing
     # catalog write must roll the new log entry back.
@@ -389,6 +524,8 @@ def main():
           "a positive suggestion limit must cap the result")
     expect_valueerror(core.suggest, 7, -1)
     expect_valueerror(core.suggest, 0)
+    check(pasta.slug not in {recipe.slug for recipe in core.suggest(days=10**100)},
+          "a calendar-spanning suggestion window must still exclude logged recipes")
 
     initial = core.check()
     check(not initial["orphaned_files"] and not initial["missing_files"],
@@ -398,6 +535,73 @@ def main():
           "stored image metadata and files must be consistent")
     check(initial["ok"] is True and not initial["errors"],
           "a consistent store must expose an explicit successful check result")
+
+    # Integrity checks must remain usable when the files they diagnose are
+    # damaged. Keep collecting unrelated findings after a bad Markdown read
+    # or a regular file occupying an expected directory.
+    pasta_content = pasta.path.read_bytes()
+    quick_content = quick.path.read_bytes()
+    try:
+        pasta.path.write_bytes(b"# Pasta Pomodoro\n\xff")
+        quick.path.write_text("# Abweichender Titel\n", encoding="utf-8")
+        corrupted = core.check()
+        check(corrupted["ok"] is False
+              and any(str(pasta.path) in error for error in corrupted["invalid_data_files"])
+              and corrupted["recipe_count"] == len(core.load_recipes())
+              and corrupted["title_mismatches"] == [quick.slug],
+              "unreadable Markdown must retain file context and unrelated diagnostics")
+    finally:
+        pasta.path.write_bytes(pasta_content)
+        quick.path.write_bytes(quick_content)
+    quick.path.unlink()
+    quick.path.mkdir()
+    try:
+        corrupted = core.check()
+        check(corrupted["ok"] is False and corrupted["missing_files"] == [quick.slug],
+              "a directory named like Markdown must not count as a recipe file")
+    finally:
+        quick.path.rmdir()
+        quick.path.write_bytes(quick_content)
+    invalid_image_folder = core.recipe_images_dir(curry.slug)
+    invalid_image_folder.write_text("keine Bildablage", encoding="utf-8")
+    try:
+        corrupted = core.check()
+        check(corrupted["ok"] is False
+              and any(str(invalid_image_folder) in error
+                      for error in corrupted["invalid_data_files"]),
+              "a file replacing an active image directory must be diagnosed")
+    finally:
+        invalid_image_folder.unlink()
+
+    core.archive_recipe(quick.slug)
+    archived_markdown = core.archive_recipe_file(quick.slug)
+    archived_images = core.archive_images_dir(quick.slug)
+    try:
+        archived_markdown.write_bytes(b"# Gurkensalat\n\xff")
+        archived_images.write_text("keine Bildablage", encoding="utf-8")
+        corrupted = core.check()
+        check(corrupted["ok"] is False and corrupted["archive_count"] == 1
+              and all(any(str(path) in error for error in corrupted["invalid_data_files"])
+                      for path in (archived_markdown, archived_images)),
+              "unreadable archived Markdown and image folders must both be diagnosed")
+    finally:
+        archived_markdown.write_bytes(quick_content)
+        archived_images.unlink()
+        core.restore_archived_recipe(quick.slug)
+    check(core.check()["ok"] is True,
+          "repairing the damaged active/archive files must clear their diagnostics")
+
+    index_backup = core.index_path().read_text(encoding="utf-8")
+    try:
+        entries = json.loads(index_backup)
+        core.index_path().write_text(
+            json.dumps([*entries, entries[0], entries[0], entries[1]]), encoding="utf-8",
+        )
+        check(core.check()["duplicate_recipe_slugs"]
+              == sorted([entries[0]["slug"], entries[1]["slug"]]),
+              "duplicate slug diagnostics must stay unique and sorted")
+    finally:
+        core.index_path().write_text(index_backup, encoding="utf-8")
 
     # Corrupted data files become German ValueErrors, and check() reports them
     # as integrity errors instead of crashing with a raw loader exception.
@@ -554,18 +758,22 @@ def main():
     def _failing_rmtree(path, *args, **kwargs):
         raise OSError("simulierter Abbruch")
     core.shutil.rmtree = _failing_rmtree
+    purge_revision = core.change_state()["revision"]
     try:
         try:
             core.purge_archived_recipe(interrupt_target.slug)
             raise AssertionError("purge must fail when the snapshot removal fails")
-        except OSError:
-            pass
+        except core.PostMutationError as error:
+            check(isinstance(error.__cause__, OSError),
+                  "an interrupted purge must report its already changed archive state")
     finally:
         core.shutil.rmtree = original_rmtree
     leftovers = sorted(path.name for path in core.archive_dir().iterdir()
                        if path.name.startswith("."))
     check(len(leftovers) == 1 and core.get_archived(interrupt_target.slug) is None,
           "an interrupted purge must park the snapshot in a hidden folder")
+    check(core.change_state()["revision"] == purge_revision + 1,
+          "a purge that already hid the snapshot must notify other clients")
     interrupted_check = core.check()
     check(interrupted_check["stale_archive_transactions"] == leftovers
           and not interrupted_check["invalid_archive_entries"]
@@ -600,6 +808,7 @@ def main():
     for item in created:
         core.shopping_remove(item.id)
 
+    transaction_failure_checks()
     print(f"OK - {checks} recipe core checks passed (GUSTO_HOME={HOME})")
 
 

@@ -30,6 +30,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass, field, asdict, fields
 from datetime import date, datetime, timedelta, timezone
@@ -359,35 +360,66 @@ def _locked_mutation(*resources: str, event_resources=None):
 
 def _execute_locked_mutation(resources, function, *, event_resources=None):
     """Run one dynamic mutation and emit its event after business locks."""
+    mutation_error: Exception | None = None
     with _mutation_locks(*resources):
-        previous = getattr(_MUTATION_CONTEXT, "changed", None)
-        _MUTATION_CONTEXT.changed = False
+        previous = getattr(_MUTATION_CONTEXT, "writes", None)
+        _MUTATION_CONTEXT.writes = 0
         try:
             result = function()
-            changed = _MUTATION_CONTEXT.changed
+            changed = bool(_MUTATION_CONTEXT.writes)
+        except Exception as error:
+            changed = bool(_MUTATION_CONTEXT.writes)
+            if not changed:
+                raise
+            # Cleanup and other post-save steps can fail after a durable
+            # change. Publish that change and report its uncertain extent;
+            # returning an ordinary rejection would invite unsafe retries.
+            mutation_error = error
         finally:
             if previous is None:
                 try:
-                    del _MUTATION_CONTEXT.changed
+                    del _MUTATION_CONTEXT.writes
                 except AttributeError:
                     pass
             else:
-                _MUTATION_CONTEXT.changed = previous
+                _MUTATION_CONTEXT.writes = previous
     if changed:
         try:
             _record_change(event_resources or resources)
         except (OSError, ValueError) as error:
+            if mutation_error is not None:
+                raise PostMutationError(
+                    "Die Änderung wurde zumindest teilweise gespeichert, "
+                    f"aber der Befehl konnte nicht abgeschlossen werden: {mutation_error}. "
+                    "Auch das Änderungsjournal konnte nicht aktualisiert "
+                    f"werden: {error}"
+                ) from mutation_error
             raise PostMutationError(
                 "Die Änderung wurde gespeichert, aber das Änderungsjournal "
                 f"konnte nicht aktualisiert werden: {error}"
             ) from error
+    if mutation_error is not None:
+        raise PostMutationError(
+            "Die Änderung wurde zumindest teilweise gespeichert, aber der "
+            f"Befehl konnte nicht abgeschlossen werden: {mutation_error}"
+        ) from mutation_error
     return result
 
 
 def _mark_mutation() -> None:
-    """Remember that the active Core transaction changed persisted state."""
-    if hasattr(_MUTATION_CONTEXT, "changed"):
-        _MUTATION_CONTEXT.changed = True
+    """Count confirmed writes so a complete rollback can restore its checkpoint."""
+    if hasattr(_MUTATION_CONTEXT, "writes"):
+        _MUTATION_CONTEXT.writes += 1
+
+
+def _mutation_checkpoint() -> int:
+    return getattr(_MUTATION_CONTEXT, "writes", 0)
+
+
+def _rollback_completed(checkpoint: int) -> None:
+    """Forget only the writes that the caller has successfully rolled back."""
+    if hasattr(_MUTATION_CONTEXT, "writes"):
+        _MUTATION_CONTEXT.writes = checkpoint
 
 
 def _load_change_journal() -> dict:
@@ -857,10 +889,10 @@ def _write_json(path: Path, data, *, track_mutation: bool = True) -> bool:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(content)
         _replace_atomic(temporary, path)
+        if track_mutation:
+            _mark_mutation()
     finally:
         temporary.unlink(missing_ok=True)
-    if track_mutation:
-        _mark_mutation()
     return True
 
 
@@ -881,9 +913,9 @@ def _write_text(path: Path, content: str) -> bool:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(content)
         _replace_atomic(temporary, path)
+        _mark_mutation()
     finally:
         temporary.unlink(missing_ok=True)
-    _mark_mutation()
     return True
 
 
@@ -950,16 +982,22 @@ def add_recipe(title: str, tags=None, duration_min=None, servings=None,
         _content_with_title(content, title) if content is not None
         else _template(title)
     )
-    _write_text(markdown_path, recipe_content)
     r = Recipe(slug=slug, title=title, tags=tags,
                duration_min=duration_min, servings=servings)
     recipes.append(r)
+    checkpoint = _mutation_checkpoint()
+    index_checkpoint = None
     try:
+        _write_text(markdown_path, recipe_content)
+        index_checkpoint = _mutation_checkpoint()
         _save_recipes_unlocked(recipes)
     except Exception:
         # Without the index entry the .md would stay behind as an orphaned
-        # file (a hard check error), so roll the Markdown back as well.
-        markdown_path.unlink(missing_ok=True)
+        # file. Roll it back only if the index write did not commit; otherwise
+        # the new recipe is already durable and its files must stay together.
+        if index_checkpoint is None or _mutation_checkpoint() == index_checkpoint:
+            markdown_path.unlink(missing_ok=True)
+            _rollback_completed(checkpoint)
         raise
     return r
 
@@ -1386,11 +1424,16 @@ def search(query: str = "", match: str = "any", tags: list[str] | None = None,
         if max_time is not None and (r.duration_min is None or r.duration_min > max_time):
             continue
         if terms:
-            haystack = f"{r.title} {' '.join(r.tags)} {r.content()}".lower()
-            ok = (all(t in haystack for t in terms) if match == "all"
-                  else any(t in haystack for t in terms))
-            if not ok:
-                continue
+            metadata = f"{r.title} {' '.join(r.tags)}".lower()
+            missing = [term for term in terms if term not in metadata]
+            # Titles/tags often settle a search without opening the Markdown
+            # file. For ALL, only the terms still missing need body matches.
+            if missing and (match == "all" or len(missing) == len(terms)):
+                body = r.content().lower()
+                ok = (all(term in body for term in missing) if match == "all"
+                      else any(term in body for term in missing))
+                if not ok:
+                    continue
         hits.append(r)
     return hits
 
@@ -1442,7 +1485,9 @@ def load_log(days: int | None = None) -> list[dict]:
                     "jeder Eintrag braucht ein Textfeld 'date' und 'slug'."
                 )
     if days is not None:
-        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        # A window longer than the calendar reaches all available history;
+        # even arbitrarily large positive CLI integers must not overflow.
+        cutoff = date.fromordinal(max(1, date.today().toordinal() - days)).isoformat()
         entries = [e for e in entries if e["date"] >= cutoff]
     return sorted(entries, key=lambda e: e["date"])
 
@@ -1463,22 +1508,25 @@ def log_cooked(slug: str, when: str | None = None) -> None:
     if cooked_on > date.today():
         raise ValueError("Das Kochdatum darf nicht in der Zukunft liegen.")
     entries = load_log()
+    log_existed = log_path().is_file()
     entries.append({"date": when, "slug": slug})
-    _write_json(log_path(), sorted(entries, key=lambda e: e["date"]))
-    changed_last_cooked = False
     for r in recipes:
         if r.slug == slug and (r.last_cooked is None or when > r.last_cooked):
             r.last_cooked = when
-            changed_last_cooked = True
+    checkpoint = _mutation_checkpoint()
+    index_checkpoint = None
     try:
+        _write_json(log_path(), sorted(entries, key=lambda e: e["date"]))
+        index_checkpoint = _mutation_checkpoint()
         _save_recipes_unlocked(recipes)
     except Exception:
         # The log entry must never persist without its last_cooked update.
-        if changed_last_cooked:
-            _write_json(
-                log_path(), sorted(entries[:-1], key=lambda e: e["date"]),
-                track_mutation=False,
-            )
+        if index_checkpoint is None or _mutation_checkpoint() == index_checkpoint:
+            if log_existed:
+                _write_json(log_path(), entries[:-1], track_mutation=False)
+            else:
+                log_path().unlink(missing_ok=True)
+            _rollback_completed(checkpoint)
         raise
 
 
@@ -1550,15 +1598,21 @@ def update_recipe(slug: str, title: str | None = None, tags=None,
                 if markdown_path.is_file() else None
             )
             next_content = _content_with_title(content, target.title)
-        _write_text(markdown_path, next_content)
+    checkpoint = _mutation_checkpoint()
+    index_checkpoint = None
     try:
+        if next_content is not None:
+            _write_text(markdown_path, next_content)
+        index_checkpoint = _mutation_checkpoint()
         _save_recipes_unlocked(recipes)
     except Exception:
-        if next_content is not None:
-            if old_content is None:
-                markdown_path.unlink(missing_ok=True)
-            else:
-                _write_text(markdown_path, old_content)
+        if index_checkpoint is None or _mutation_checkpoint() == index_checkpoint:
+            if next_content is not None:
+                if old_content is None:
+                    markdown_path.unlink(missing_ok=True)
+                else:
+                    _write_text(markdown_path, old_content)
+            _rollback_completed(checkpoint)
         raise
     return target
 
@@ -1582,12 +1636,15 @@ def archive_recipe(slug: str) -> ArchivedRecipe:
 
     root = archive_dir()
     root.mkdir(parents=True, exist_ok=True)
+    checkpoint = _mutation_checkpoint()
     temporary = Path(tempfile.mkdtemp(prefix=f".{slug}.archive.", dir=root))
+    _mark_mutation()
     archived_at = _now_iso()
     source_images = recipe_images_dir(slug)
     final_created = False
     markdown_moved = False
     images_moved = False
+    index_checkpoint = None
     try:
         source_markdown.replace(temporary / "recipe.md")
         markdown_moved = True
@@ -1601,19 +1658,22 @@ def archive_recipe(slug: str) -> ArchivedRecipe:
         })
         temporary.replace(target)
         final_created = True
+        index_checkpoint = _mutation_checkpoint()
         _save_recipes_unlocked([
             item for item in recipes if item.slug != slug
         ])
     except Exception:
-        rollback = target if final_created else temporary
-        if markdown_moved and (rollback / "recipe.md").exists():
-            source_markdown.parent.mkdir(parents=True, exist_ok=True)
-            (rollback / "recipe.md").replace(source_markdown)
-        if images_moved and (rollback / "images").exists():
-            source_images.parent.mkdir(parents=True, exist_ok=True)
-            (rollback / "images").replace(source_images)
-        if rollback.exists():
-            shutil.rmtree(rollback)
+        if index_checkpoint is None or _mutation_checkpoint() == index_checkpoint:
+            rollback = target if final_created else temporary
+            if markdown_moved:
+                source_markdown.parent.mkdir(parents=True, exist_ok=True)
+                (rollback / "recipe.md").replace(source_markdown)
+            if images_moved:
+                source_images.parent.mkdir(parents=True, exist_ok=True)
+                (rollback / "images").replace(source_images)
+            if rollback.exists():
+                shutil.rmtree(rollback)
+            _rollback_completed(checkpoint)
         raise
     return ArchivedRecipe(recipe=recipe, archived_at=archived_at)
 
@@ -1642,9 +1702,12 @@ def restore_archived_recipe(slug: str) -> Recipe:
     source = archive_recipe_dir(slug)
     root = archive_dir()
     temporary = root / f".{slug}.restore.{uuid.uuid4().hex}"
+    checkpoint = _mutation_checkpoint()
     source.replace(temporary)
+    _mark_mutation()
     markdown_moved = False
     images_moved = False
+    index_checkpoint = None
     try:
         target_markdown.parent.mkdir(parents=True, exist_ok=True)
         (temporary / "recipe.md").replace(target_markdown)
@@ -1655,14 +1718,16 @@ def restore_archived_recipe(slug: str) -> Recipe:
             images_moved = True
         recipes = load_recipes()
         recipes.append(entry.recipe)
+        index_checkpoint = _mutation_checkpoint()
         _save_recipes_unlocked(recipes)
     except Exception:
-        if markdown_moved and target_markdown.exists():
-            target_markdown.replace(temporary / "recipe.md")
-        if images_moved and target_images.exists():
-            target_images.replace(temporary / "images")
-        if temporary.exists():
+        if index_checkpoint is None or _mutation_checkpoint() == index_checkpoint:
+            if markdown_moved:
+                target_markdown.replace(temporary / "recipe.md")
+            if images_moved:
+                target_images.replace(temporary / "images")
             temporary.replace(source)
+            _rollback_completed(checkpoint)
         raise
     shutil.rmtree(temporary)
     return entry.recipe
@@ -1693,8 +1758,8 @@ def purge_archived_recipe(slug: str) -> ArchivedRecipe:
         )
     temporary = archive_dir() / f".{slug}.purge.{uuid.uuid4().hex}"
     archive_recipe_dir(slug).replace(temporary)
-    shutil.rmtree(temporary)
     _mark_mutation()
+    shutil.rmtree(temporary)
     return entry
 
 
@@ -1804,6 +1869,15 @@ def get_recipe_image(slug: str, image_id: str) -> RecipeImage | None:
     return next((image for image in recipe.images if image.id == image_id), None)
 
 
+def _discard_imported_image(path: Path) -> None:
+    """Remove an uncommitted copy; a failed cleanup leaves a storage change."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        _mark_mutation()
+        raise
+
+
 @_locked_mutation("catalog")
 def add_recipe_image(slug: str, source: str | Path, role: str = "gallery",
                      caption: str = "", cover: bool = False) -> RecipeImage:
@@ -1836,15 +1910,21 @@ def add_recipe_image(slug: str, source: str | Path, role: str = "gallery",
     image.filename = f"{image.id}{suffix}"
     destination = recipe_image_path(slug, image)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_path, destination)
+    try:
+        shutil.copy2(source_path, destination)
+    except Exception:
+        _discard_imported_image(destination)
+        raise
 
     recipe.images.append(image)
     if make_cover:
         recipe.cover_image_id = image.id
+    index_checkpoint = _mutation_checkpoint()
     try:
         _save_recipes_unlocked(recipes)
     except Exception:
-        destination.unlink(missing_ok=True)
+        if _mutation_checkpoint() == index_checkpoint:
+            _discard_imported_image(destination)
         raise
     return image
 
@@ -1914,17 +1994,41 @@ def check() -> dict:
     # Corrupted data files must be reported as integrity errors instead of
     # crashing the whole diagnostic with a raw loader exception.
     invalid_data_files: list[str] = []
+
+    def directory_entries(path: Path) -> list[Path]:
+        try:
+            if not path.exists():
+                return []
+            return list(path.iterdir())
+        except FileNotFoundError:
+            return []
+        except OSError as error:
+            invalid_data_files.append(
+                f"Datenverzeichnis '{path}' kann nicht gelesen werden: {error}"
+            )
+            return []
+
+    def markdown_content(path: Path) -> str | None:
+        try:
+            return path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            invalid_data_files.append(
+                f"Rezeptdatei '{path}' kann nicht gelesen werden: {error}"
+            )
+            return None
+
     try:
         recipes = load_recipes()
     except ValueError as error:
         recipes = []
         invalid_data_files.append(str(error))
     indexed = {r.slug for r in recipes}
-    present = {p.stem for p in recipes_dir().glob("*.md")} if recipes_dir().exists() else set()
-    duplicate_recipe_slugs = sorted({
-        recipe.slug for recipe in recipes
-        if sum(item.slug == recipe.slug for item in recipes) > 1
-    })
+    present = {path.stem for path in directory_entries(recipes_dir())
+               if path.is_file() and path.match("*.md")}
+    slug_counts = Counter(recipe.slug for recipe in recipes)
+    duplicate_recipe_slugs = sorted(
+        slug for slug, count in slug_counts.items() if count > 1
+    )
     try:
         uncategorized = uncategorized_tags([
             tag for recipe in recipes for tag in recipe.tags
@@ -1935,12 +2039,13 @@ def check() -> dict:
     title_mismatches: list[str] = []
     for recipe in recipes:
         path = recipe_file(recipe.slug)
-        if path.is_file() and _markdown_title(path.read_text(encoding="utf-8")) != recipe.title:
-            title_mismatches.append(recipe.slug)
+        if recipe.slug in present:
+            content = markdown_content(path)
+            if content is not None and _markdown_title(content) != recipe.title:
+                title_mismatches.append(recipe.slug)
     image_root = images_dir()
-    image_folders = ({path.name for path in image_root.iterdir()
-                      if path.is_dir() and path.name != "_favorites"}
-                     if image_root.exists() else set())
+    image_folders = {path.name for path in directory_entries(image_root)
+                     if path.is_dir() and path.name != "_favorites"}
     orphaned_image_folders = sorted(image_folders - indexed)
     missing_image_files: list[str] = []
     orphaned_image_files: list[str] = []
@@ -1948,8 +2053,8 @@ def check() -> dict:
     for recipe in recipes:
         referenced = {image.filename for image in recipe.images}
         folder = recipe_images_dir(recipe.slug)
-        present_images = ({path.name for path in folder.iterdir() if path.is_file()}
-                          if folder.exists() else set())
+        present_images = {path.name for path in directory_entries(folder)
+                          if path.is_file()}
         missing_image_files.extend(
             f"{recipe.slug}/{filename}" for filename in sorted(referenced - present_images)
         )
@@ -1972,9 +2077,8 @@ def check() -> dict:
         if product.image_filename
     }
     favorite_root = favorite_images_dir()
-    present_favorite_images = ({path.name for path in favorite_root.iterdir()
-                                if path.is_file()}
-                               if favorite_root.exists() else set())
+    present_favorite_images = {path.name for path in directory_entries(favorite_root)
+                               if path.is_file()}
     alias_owners: dict[str, list[str]] = {}
     for need in favorite_needs:
         for label in [need.name, *need.aliases]:
@@ -1985,13 +2089,10 @@ def check() -> dict:
     )
 
     archive_root = archive_dir()
-    archive_folders = (
-        [path for path in archive_root.iterdir() if path.is_dir()]
-        if archive_root.exists() else []
-    )
-    orphaned_archive_root_files = (
-        sorted(path.name for path in archive_root.iterdir() if path.is_file())
-        if archive_root.exists() else []
+    archive_paths = directory_entries(archive_root)
+    archive_folders = [path for path in archive_paths if path.is_dir()]
+    orphaned_archive_root_files = sorted(
+        path.name for path in archive_paths if path.is_file()
     )
     stale_archive_transactions = sorted(
         path.name for path in archive_folders if path.name.startswith(".")
@@ -2015,14 +2116,14 @@ def check() -> dict:
         markdown = archive_recipe_file(entry.slug)
         if not markdown.is_file():
             missing_archive_files.append(entry.slug)
-        elif _markdown_title(markdown.read_text(encoding="utf-8")) != entry.title:
-            archived_title_mismatches.append(entry.slug)
+        else:
+            content = markdown_content(markdown)
+            if content is not None and _markdown_title(content) != entry.title:
+                archived_title_mismatches.append(entry.slug)
         referenced = {image.filename for image in entry.images}
         folder_images = archive_images_dir(entry.slug)
-        present_images = (
-            {path.name for path in folder_images.iterdir() if path.is_file()}
-            if folder_images.exists() else set()
-        )
+        present_images = {path.name for path in directory_entries(folder_images)
+                          if path.is_file()}
         missing_archive_image_files.extend(
             f"{entry.slug}/{filename}"
             for filename in sorted(referenced - present_images)
@@ -2184,17 +2285,28 @@ def _parse_iso(value: str) -> datetime | None:
     """
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (TypeError, ValueError):
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError, OverflowError):
         return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 def _version_key(value: str) -> tuple:
     """Comparable sync version; valid ISO values beat malformed legacy data."""
     parsed = _parse_iso(value)
     return (1, parsed) if parsed is not None else (0, value)
+
+
+def _next_sync_instant(previous: datetime) -> datetime:
+    """Advance a parsed version or reject a timestamp outside writable range."""
+    try:
+        return previous + timedelta(milliseconds=1)
+    except OverflowError as error:
+        raise ValueError(
+            "Der Zeitstempel eines Einkaufslisten-Eintrags liegt zu weit "
+            "in der Zukunft und kann nicht fortgeschrieben werden."
+        ) from error
 
 
 def _now_iso(after: str | None = None) -> str:
@@ -2211,7 +2323,7 @@ def _now_iso(after: str | None = None) -> str:
     now = now.replace(microsecond=(now.microsecond // 1000) * 1000)
     previous = _parse_iso(after or "")
     if previous is not None and now <= previous:
-        now = previous + timedelta(milliseconds=1)
+        now = _next_sync_instant(previous)
     return now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
@@ -2365,6 +2477,7 @@ def favorite_add_need(name: str, aliases: list[str] | None = None) -> ShoppingNe
     seen = {normalize_shopping_text(name)}
     for alias in aliases or []:
         cleaned = alias.strip()
+        _no_newlines(cleaned, "Ein Alias")
         normalized = normalize_shopping_text(cleaned)
         if not normalized or normalized in seen:
             continue
@@ -2457,7 +2570,11 @@ def _copy_favorite_image(source: str | Path) -> tuple[str, Path]:
     filename = f"{new_id()}{suffix}"
     destination = favorite_images_dir() / filename
     destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_path, destination)
+    try:
+        shutil.copy2(source_path, destination)
+    except Exception:
+        _discard_imported_image(destination)
+        raise
     return filename, destination
 
 
@@ -2494,11 +2611,12 @@ def favorite_add_product(identifier: str, name: str, *, brand: str = "",
     if image:
         product.image_filename, copied = _copy_favorite_image(image)
     need.products.append(product)
+    index_checkpoint = _mutation_checkpoint()
     try:
         _favorites_save_unlocked(needs)
     except Exception:
-        if copied is not None:
-            copied.unlink(missing_ok=True)
+        if copied is not None and _mutation_checkpoint() == index_checkpoint:
+            _discard_imported_image(copied)
         raise
     return product
 
@@ -2541,11 +2659,12 @@ def favorite_update_product(identifier: str, product_id: str, *,
         product.image_filename, copied = _copy_favorite_image(image)
     elif remove_image:
         product.image_filename = ""
+    index_checkpoint = _mutation_checkpoint()
     try:
         _favorites_save_unlocked(needs)
     except Exception:
-        if copied is not None:
-            copied.unlink(missing_ok=True)
+        if copied is not None and _mutation_checkpoint() == index_checkpoint:
+            _discard_imported_image(copied)
         raise
     if old_filename and old_filename != product.image_filename:
         favorite_image_path(old_filename).unlink(missing_ok=True)
@@ -2865,6 +2984,7 @@ def _shopping_merge_unlocked(remote_items: list[dict]) -> list[ShoppingItem]:
     # Local state (incl. tombstones) as the source of truth, indexed by id.
     merged: dict[str, ShoppingItem] = {i.id: i for i in shopping_load()}
     known_sources: set[str] | None = None
+    changed = False
 
     if not isinstance(remote_items, list):
         raise ValueError("Der Einkaufslisten-Stand muss eine Liste sein.")
@@ -2903,7 +3023,13 @@ def _shopping_merge_unlocked(remote_items: list[dict]) -> list[ShoppingItem]:
         # id only remote -> take it over.
         # id on both sides -> later updated_at wins;
         # on a tie the local version stays.
-        if local is None or _version_key(remote.updated_at) > _version_key(local.updated_at):
+        remote_version = _version_key(remote.updated_at)
+        if local is None or remote_version > _version_key(local.updated_at):
+            if remote_version[0]:
+                # Do not persist a version that makes the next check/remove
+                # overflow. Malformed legacy versions remain repairable by a
+                # normal mutation, as before.
+                _next_sync_instant(remote_version[1])
             if not remote.deleted and remote.source:
                 # Only taken-over versions are persisted, so a losing stale
                 # version may still reference a since-purged recipe.
@@ -2915,8 +3041,10 @@ def _shopping_merge_unlocked(remote_items: list[dict]) -> list[ShoppingItem]:
                         "Einkaufslisten-Eintrags ist kein bekanntes Rezept."
                     )
             merged[remote.id] = remote
+            changed = True
     # ids that exist only locally stay unchanged.
 
     result = list(merged.values())
-    _shopping_save_unlocked(result)
+    if changed:
+        _shopping_save_unlocked(result)
     return result
