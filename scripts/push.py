@@ -42,30 +42,27 @@ class Step:
     """Directory inside the checkout to run in."""
 
 
-# <<FILL: the project's complete checks, in order: dependency setup first, then
-# every static check and the complete test suites (stress tests deselected). Use
-# the same tools and versions as the commit hook and CI.>>
+PY = ".venv/Scripts/python.exe" if sys.platform == "win32" else ".venv/bin/python"
+
+# The complete checks, in order: the checkout's own environment first, then the
+# lint the commit hook runs (over the whole project) and every quality gate of
+# scripts/run_quality.py, real Chromium browser and PWA checks included. CI runs
+# the same gates on Linux and Windows.
 STEPS: list[Step] = [
-    Step("backend deps", [sys.executable, "-m", "venv", ".venv"]),
+    Step("venv", [sys.executable, "-m", "venv", ".venv"]),
     Step(
-        "backend install",
-        [
-            ".venv/Scripts/python" if sys.platform == "win32" else ".venv/bin/python",
-            "-m",
-            "pip",
-            "install",
-            "-q",
-            "-e",
-            ".[dev]",
-        ],
-        requires=("backend deps",),
+        "install",
+        [PY, "-m", "pip", "install", "-q", "-e", ".[web,test,dev]"],
+        requires=("venv",),
     ),
-    # Step("ruff", [PY, "-m", "ruff", "check", "."], requires=("backend install",)),
-    # Step("mypy", [PY, "-m", "mypy"], requires=("backend install",)),
-    # Step("pytest", [PY, "-m", "pytest", "-q"], requires=("backend install",)),
-    # Step("webui deps", ["npm", "ci"], cwd="webui"),
-    # Step("webui lint", ["npm", "run", "lint"], requires=("webui deps",), cwd="webui"),
-    # Step("webui tests", ["npx", "vitest", "run"], requires=("webui deps",), cwd="webui"),
+    Step("ruff", [PY, "-m", "ruff", "check", "."], requires=("install",)),
+    Step("script gates", [PY, "scripts/run_quality.py", "scripts"], requires=("install",)),
+    Step("chromium", [PY, "-m", "playwright", "install", "chromium"], requires=("install",)),
+    Step(
+        "browser gates",
+        [PY, "scripts/run_quality.py", "browser"],
+        requires=("install", "chromium"),
+    ),
 ]
 
 
