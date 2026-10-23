@@ -108,7 +108,13 @@ def main() -> None:
     check(core.project_root().is_relative_to(Path(tempfile.gettempdir()).resolve()),
           "GUSTO_HOME does not point into the temp directory -- abort.")
 
-    core.add_recipe("Meal", slug="meal")
+    core.data_dir().mkdir(parents=True)
+    abandoned_lock = core.data_dir() / ".gusto-catalog.lock"
+    abandoned_lock.touch()
+    with patch.object(core, "_LOCK_TIMEOUT_SECONDS", 0):
+        core.add_recipe("Meal", slug="meal")
+    check(abandoned_lock.stat().st_size == 0,
+          "an empty lock left by an interrupted creator must remain usable")
     core.add_recipe("Photos", slug="photos")
     image_path = home / "source.png"
     image_path.write_bytes(base64.b64decode(

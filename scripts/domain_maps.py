@@ -10,11 +10,13 @@ checks live in ``.vorch/workflows/domain-map-workflow.md``.
 
 ``python scripts/domain_maps.py`` prints the corpus report a domain-map audit
 starts from: root map sizes against the budget, routing defects and punctuation
-findings. The commit check calls ``staged_findings`` for the staged map files.
+findings. Add ``--check`` to fail on routing or punctuation defects. Size budgets
+remain advisory. The commit check calls ``staged_findings`` for staged map files.
 """
 
 from __future__ import annotations
 
+import argparse
 import re
 import subprocess
 import sys
@@ -285,12 +287,16 @@ def format_report(report: Report) -> str:
     return "\n".join(lines)
 
 
-def main(root: Path = PROJECT_ROOT) -> int:
+def main(argv: list[str] | None = None, *, root: Path = PROJECT_ROOT) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check", action="store_true", help="Exit 1 on blocking findings.")
+    args = parser.parse_args(argv)
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="replace")
-    print(format_report(corpus_report(root)))
-    return 0
+    report = corpus_report(root)
+    print(format_report(report))
+    return int(args.check and any(finding.blocking for finding in report.findings))
 
 
 if __name__ == "__main__":

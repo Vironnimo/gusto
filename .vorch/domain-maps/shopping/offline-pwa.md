@@ -20,8 +20,9 @@ Browser client `gusto/static/shopping-client.js` and service worker `gusto/stati
 
 - `sync()` runs on init (an empty local state fills from the server), after each mutation, on `online`, on `shopping` events, and once more when a mutation happened during an in-flight request. It does nothing while `navigator.onLine` is false.
 - It posts all local items including tombstones; on success it merges the response into the current local state (`mergeInto`, `isNewer`).
-- Any non-2xx or network failure keeps local state and retries with backoff: 2 s doubling plus up to 500 ms jitter, capped at 60 s, at most 5 attempts; success or `online` resets the budget. A 400 is retried like a network failure with the same payload, so one permanently invalid item blocks all later syncs of that device (see `shopping.md` -> Constraints & Gotchas).
-- The sync endpoint also answers 400 `invalid shopping state` when the merge was saved but a later step failed (Core `PostMutationError` is a `ValueError`); the retry is then a no-op.
+- Network failures and non-2xx responses other than 400 keep local state and retry with backoff: 2 s doubling plus up to 500 ms jitter, capped at 60 s, at most 5 attempts; success or `online` resets the budget.
+- A 400 is a definite atomic rejection. The client shows the endpoint's `detail` as plain text in `#shop-sync-error`, keeps every local item, and does not resend the identical payload on timers, `online` or change events. A different local state unblocks sync, including edits made during the rejected request. Success clears the notice. For a stale visible source purged elsewhere, the notice names the source; the existing row removal creates a valid tombstone, allowing other queued edits through. The user may then re-add the item without that source. Arbitrary malformed localStorage records have no automatic repair or quarantine.
+- A post-write Core failure is an uncertain outcome (`web.md`), never a definite 400 rejection. Full-state sync can safely retry it: already accepted versions do not write again.
 
 ## Preferred products in the PWA
 
@@ -37,8 +38,8 @@ Browser client `gusto/static/shopping-client.js` and service worker `gusto/stati
 - Install precaches the app shell with `cache: "reload"` and calls `skipWaiting`; activate deletes other cache versions and claims clients.
 - Fetch handles same-origin GET only: navigations network-first with fallback to cached `/shopping`, then `/`; `/api/*`, `/media/recipe/*`, `/media/archive/*` and every other non-static request (live search HTML, source refresh) network-only; `/static/*` and `/media/favorite/*` cache-first from the active cache, storing successful non-HTML responses.
 - Product photos get a new filename on replacement, so cache-first never shows a stale photo; old entries remain until the next `CACHE` bump. Cross-origin fonts are not cached.
-- Bump `CACHE` (currently `gusto-v17`) for every precached-asset or offline-behavior change; `scripts/ci_smoke_install.py` only checks that a `gusto-` cache name exists.
+- Bump `CACHE` for every precached-asset or offline-behavior change; `scripts/ci_smoke_install.py` only checks that a `gusto-` cache name exists.
 
 ## Verification
 
-`scripts/pwa_check.py` drives Chromium against throwaway data under `.tmp/pwa-*/`: sync API validation and merge, mixed timestamp precision, offline add and reload from the cache, two-device merge, live events while typing, focus handling, malformed-timestamp ranking, storage failure, opaque ids, product-image caching, manifest and service worker. Run it for any change here; `scripts/browser_check.py` covers the no-JS fallback.
+`scripts/pwa_check.py` drives Chromium against throwaway data under `.tmp/pwa-*/`: sync API validation and merge, mixed timestamp precision, offline add and reload from the cache, two-device merge, live events while typing, focus handling, malformed-timestamp ranking, storage failure, opaque ids, rejected-sync recovery without lost local edits or repeated requests, product-image caching, manifest and service worker. Run it for any change here; `scripts/browser_check.py` covers the no-JS fallback.

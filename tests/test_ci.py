@@ -6,14 +6,17 @@ import re
 import subprocess
 import sys
 import tempfile
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.fspath(ROOT))
 
-from scripts import ci_smoke_install, run_quality  # noqa: E402
+from scripts import ci_smoke_install, domain_maps, push, run_quality  # noqa: E402
 
 
 QUALITY = ROOT / ".github/workflows/quality.yml"
@@ -46,6 +49,47 @@ check(
     == {path.relative_to(ROOT).as_posix() for path in (ROOT / "tests").glob("test_*.py")},
     "the shared quality runner must execute every standalone test script",
 )
+
+static_commands = {step.get("run") for step in quality["jobs"]["static"]["steps"]}
+check(
+    "python scripts/domain_maps.py --check" in static_commands
+    and any(step.command[1:] == ["scripts/domain_maps.py", "--check"] for step in push.STEPS),
+    "push and CI must reject blocking domain-map defects",
+)
+
+with tempfile.TemporaryDirectory(prefix="gusto-quality-contract-") as temporary:
+    sandbox = Path(temporary)
+    # A deliberately incomplete map corpus is enough to exercise the gate.
+    maps = sandbox / ".vorch/domain-maps"
+    maps.mkdir(parents=True)
+    (maps / "fixture.md").write_text("# Fixture\n", encoding="utf-8")
+    with redirect_stdout(StringIO()):
+        check(domain_maps.main(["--check"], root=sandbox) == 1,
+              "a root map missing from the index must fail the static gate")
+
+    with patch.dict(os.environ, {"PLAYWRIGHT_BROWSERS_PATH": str(sandbox / "browsers"),
+                                 "GUSTO_URL": "http://household:8000"}):
+        environment = run_quality.gate_environment(sandbox / "gate")
+    check(
+        all(Path(environment[name]).is_relative_to(sandbox / "gate") for name in (
+            "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "GUSTO_HOME",
+        ))
+        and "XDG_CONFIG_HOME" not in environment
+        and "GUSTO_URL" not in environment
+        and environment["PLAYWRIGHT_BROWSERS_PATH"] == str(sandbox / "browsers"),
+        "gate defaults must be isolated without losing the installed browser cache",
+    )
+
+    with (
+        patch.object(run_quality.subprocess, "Popen") as launch,
+        patch.object(run_quality, "stop_process_tree") as stop,
+        redirect_stdout(StringIO()), redirect_stderr(StringIO()),
+    ):
+        launch.return_value.wait.side_effect = subprocess.TimeoutExpired("fixture", 0.1)
+        result = run_quality.run(("fixture.py", "must-not-run.py"), timeout=0.1)
+    check(result == 124 and launch.call_count == 1
+          and stop.call_args.args == (launch.return_value,),
+          "a timed-out gate must stop its process tree and prevent later gates")
 
 quality_events = quality["on"]
 check(

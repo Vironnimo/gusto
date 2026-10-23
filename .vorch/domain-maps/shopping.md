@@ -44,7 +44,7 @@ One concrete product (name, brand, optional store, note, photo) in a shopping ne
 
 ## Data Model
 
-- `data/shopping_list.json` is `{ "items": [...] }`, the complete state including tombstones. An item has an opaque string `id`, single-line `text`, free-text `quantity` (never parsed or combined), `checked`, `source` (recipe slug or `null`), `created_at`, `updated_at` and `deleted`. Exact JSON: `docs/sync-kontrakt.md`.
+- `data/shopping_list.json` is `{ "items": [...] }`, the complete state including tombstones. An item has an opaque string `id`, `text`, free-text `quantity` (never parsed or combined), `checked`, `source` (recipe slug or `null`), `created_at`, `updated_at` and `deleted`. Exact JSON: `docs/sync-kontrakt.md`.
 - Ids are opaque strings: Core creates 32-hex UUIDs, browsers hyphenated UUIDs or a longer fallback. Every client passes them through verbatim.
 - Visible order is ascending `created_at` (string order); file order has no meaning.
 - Loading tolerates legacy items without `checked`, `deleted`, `quantity`, `source` or timestamps (defaults apply), but one item with a wrong type or a missing `id`/`text` invalidates the whole file: every shopping read and write fails with a `ValueError` until repaired, and `check` names the file. The same all-or-nothing validation applies to `favorites.json`.
@@ -63,7 +63,7 @@ List mutation semantics (also stated in the skill):
 - Ingredient import (`shopping_add_recipe`) needs an active recipe and at least one parsed ingredient, and refuses while any visible item has that recipe as `source`; the error names their count. Items get `source = slug`. Once the old items are tombstoned, a new import creates new ids.
 - A sourced single add (`shopping add --source`) needs an active recipe and joins the same import guard. Archived recipes are rejected for new attribution but remain valid sources of existing items, whose presentation resolves through the catalog's active-or-archived reference map.
 - Explicit check/uncheck to the current state and removing an existing tombstone are no-ops: no write, no new `updated_at`, no change event. Unknown ids are errors; check/uncheck of a tombstone is an error too.
-- `remove-done` tombstones every visible checked item, `clear` every visible item, each in one transaction returning `{ "removed": N }`. No restore exists in Core, API, CLI or web.
+- `remove-done` tombstones every visible checked item, `clear` every visible item, each in one transaction returning the removed count (API and CLI: `{ "removed": N }`). No restore action exists in Core, API, CLI or web.
 
 Ingredient parsing (`parse_ingredients`, owned here): only lines after a line that is exactly `## Zutaten` (after trimming), up to the next line starting with `## `. Only `-` or `*` bullets followed by whitespace count, each whole remaining line one entry; `+` bullets, numbered lists, bold lines and thematic breaks are ignored, while H3 subsections and nested bullets stay inside the section. Changing the rule changes what existing recipes import.
 
@@ -86,7 +86,7 @@ Wire details: `docs/sync-kontrakt.md`. Invariants every shopping change keeps:
 - Merge per id: the later valid `updated_at` wins; on a tie the receiving side keeps its version; ids present on one side only are kept, so a missing item never means deletion. Every exchange sends and returns the full state including tombstones.
 - Timestamps: new values are UTC `YYYY-MM-DDTHH:MM:SS.sssZ`; legacy second precision stays valid. Values compare as instants; a valid value beats a malformed one; two malformed values compare as strings; UTC-conversion overflow counts as malformed. The browser's `isNewer` mirrors Core's `_version_key`.
 - Every state change of an item sets `updated_at` at least 1 ms after its previous value (Core `_now_iso(previous)`, browser `nowIso(previous)`), comparing at the persisted millisecond precision so same-millisecond changes still advance.
-- Remote items must be objects with non-empty string `id` and `text`, string `quantity`, present boolean `checked` and `deleted`, non-empty string timestamps, and `source` string or null. A winning version whose timestamp cannot advance another millisecond is invalid too.
+- Remote items must be objects with non-empty string `id` and `text`, string `quantity` (default empty), present boolean `checked` and `deleted`, non-empty string timestamps, and `source` string or null (default null). Unlike normal additions, stored and synced text/quantity are not checked for newlines. A winning version whose timestamp cannot advance another millisecond is invalid too.
 - A winning visible item's `source` must name an active or archived recipe; tombstones and losing versions are not validated, so purged slugs survive in tombstones.
 - Any invalid item rejects the whole merge before saving (HTTP 400 on the sync endpoint).
 - A merge without a winning or new item saves nothing and publishes no event; an empty first sync creates no file.
@@ -108,7 +108,7 @@ Wire details: `docs/sync-kontrakt.md`. Invariants every shopping change keeps:
 ## Constraints & Gotchas
 
 - `sw.js` serves every `/static/` asset cache-first from its active cache, also online, and static URLs carry no version. Any change to a precached asset (`style.css`, `app.js`, `photo-input.js`, `shopping-client.js`, manifest, icons) or to offline behavior needs a `CACHE` bump in `sw.js`, or installed browsers keep the old file. No test enforces the bump.
-- Sync rejection is all-or-nothing and the client retries the same payload. A device that was offline while an item was removed and its recipe purged, and that then changes its stale visible copy, sends a winning visible item with an unknown source: every later sync from that device fails until the user removes that item on the device.
+- Sync rejection is all-or-nothing. A device that was offline while an item was removed and its recipe purged, and that then changes its stale visible copy, sends a winning visible item with an unknown source. The client preserves its state, shows the rejection detail and pauses that unchanged payload; removing the offending item on that device allows the remaining edits to sync. Recovery and retry rules: `shopping/offline-pwa.md`.
 - Tombstones are never compacted, so the file and every sync payload grow. Dropping tombstones would let an offline device resurrect removed items, because ids present on one side only are kept.
 - Preferred-product changes and product photos are online-only server mutations; the PWA shows the last fetched catalog and cached photos offline and queues nothing for favorites.
 - Order-sensitive pairs such as `clear` or `remove-done` with `check` resolve by lock acquisition order; callers sequence them when order expresses intent.
@@ -123,3 +123,4 @@ Read these only when your task matches - not by default.
 - Exact PWA wire format and merge rules (German) -> `docs/sync-kontrakt.md`
 - Telegram checklist boundary (German) -> `docs/telegram-shopping-handoff.md`
 - Lock mechanism, atomic writes, change journal -> `storage.md`
+- Changing shopping event publication or replay and diagnosing journal failures -> `storage/change-journal.md`

@@ -282,12 +282,17 @@ def check_client_failure_recovery():
 def check_post_mutation_failures():
     journal = core.changes_path().read_text(encoding="utf-8")
     try:
-        core.changes_path().write_text("{broken", encoding="utf-8")
-        failure = command("shopping.add", {"text": "Journal failure"}, status=500)
-        check(failure.get("outcome_unknown") is True
-              and any(item.text == "Journal failure" for item in core.shopping_list()),
-              "a broken journal must not turn a persisted add into a "
-              "confirmed rejection")
+        for number, broken in enumerate((
+            "{broken",
+            '{"revision": 1, "resources": [], "events": [null]}',
+        )):
+            core.changes_path().write_text(broken, encoding="utf-8")
+            text = f"Journal failure {number}"
+            failure = command("shopping.add", {"text": text}, status=500)
+            check(failure.get("outcome_unknown") is True
+                  and any(item.text == text for item in core.shopping_list()),
+                  "a broken journal must not turn a persisted add into a "
+                  "confirmed rejection")
     finally:
         core.changes_path().write_text(journal, encoding="utf-8")
 

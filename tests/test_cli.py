@@ -305,19 +305,23 @@ def check_serve_json_contract():
     fake_uvicorn = SimpleNamespace(
         run=lambda *args, **kwargs: calls.append((args, kwargs)),
     )
-    output = io.StringIO()
-    with patch.object(cli, "_load_web_runtime", return_value=fake_uvicorn):
-        with redirect_stdout(output):
-            cli.cmd_serve(SimpleNamespace(
-                host="0.0.0.0", port=8765, reload=True, json=True,
-            ))
-    payload = json.loads(output.getvalue())
-    check(payload["status"] == "starting"
-          and payload["url"] == "http://127.0.0.1:8765"
-          and payload["reload"] is True
-          and calls[0][1]["port"] == 8765
-          and calls[0][1]["reload"] is True,
-          "serve --json must preserve reload and emit startup before serving")
+    for host, local_host in (
+        ("0.0.0.0", "127.0.0.1"),
+        ("::", "[::1]"),
+        ("2001:db8::1", "[2001:db8::1]"),
+    ):
+        output = io.StringIO()
+        with patch.object(cli, "_load_web_runtime", return_value=fake_uvicorn):
+            with redirect_stdout(output):
+                cli.main(["serve", "--host", host, "--port", "8765", "--reload", "--json"])
+        payload = json.loads(output.getvalue())
+        check(payload["status"] == "starting"
+              and payload["url"] == f"http://{local_host}:8765"
+              and payload["reload"] is True
+              and calls[-1][1]["host"] == host
+              and calls[-1][1]["port"] == 8765
+              and calls[-1][1]["reload"] is True,
+              "serve --json must preserve its bind/reload and print a local IPv4/IPv6 URL")
 
 
 def check_serve_dependency_preflight():

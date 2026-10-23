@@ -51,7 +51,7 @@ write; use the main skill's uncertain-outcome recovery guidance.
   Recipes not cooked in the last positive N days (default 7), longest-ago
   first. `limit` must be nonnegative; `0` returns an empty array.
 - `check [--offline] [--json]`
-  Full active/archive H1, file, image, cover, cross-reference, and
+  Full active/archive H1, file, image, cover, cross-reference, change-journal, and
   preferred-product integrity plus organization warnings. Hard errors set
   `ok:false` and exit 1; uncategorized tags and unresolved historical log slugs
   are warnings and keep exit 0. Normal mode runs on the server. `--offline` is
@@ -203,12 +203,13 @@ before sending them.
   included, marked `checked:true`); `--pending` = only unchecked.
 - `shopping add "<text>" [--quantity M] [--source SLUG] [--json]` — returns the
   created item. `--quantity` is separate free text, not parsed out of `text`.
-  `--source` must name an existing recipe, records its slug on the
+  `--source` must name an active recipe, records its slug on the
   item, and makes that visible item participate in the recipe import guard.
+  Existing items keep their source when that recipe is archived.
 - `shopping add-many "<text>" ... [--json]` — add a non-empty free-text group
   in one transaction; returns the array of created items in argument order.
 - `shopping add-recipe <slug> [--json]` — add all non-empty parsed ingredients
-  of a recipe (`source = slug`); returns the array of created items. It fails
+  of an active recipe (`source = slug`); returns the array of created items. It fails
   clearly when none can be parsed or while any visible items from that recipe
   remain, reporting their count and avoiding accidental repeated imports
   without merging quantities.
@@ -244,6 +245,11 @@ before sending them.
   merges shopping state after reconnect.
 
 ### Installed application lifecycle
+
+Without `--app-root`, service control and update use the managed installation
+containing the running CLI, including custom installation directories. From
+a checkout or unmanaged Python they use the platform-default application path;
+pass `--app-root PATH` to target another managed installation explicitly.
 
 - `status|start|stop|restart [--app-root PATH] [--dry-run] [--json]` — inspect or control the
   current-user background service locally. `start` and `restart` return only
@@ -431,6 +437,8 @@ With `--dry-run`, only `status` changes to `dry_run`; the reported
 
 - `orphaned_files`: a `.md` with no index entry.
 - `missing_files`: an index entry with no `.md`.
+- `invalid_data_files`: unreadable or invalid persisted JSON, including
+  `data/changes.json`; entries identify the file and diagnostic.
 - `title_mismatches`: active metadata title and first Markdown H1 disagree.
 - `uncategorized_tags`: used tags not in any category.
 - The image fields report folders without recipes, files without metadata,

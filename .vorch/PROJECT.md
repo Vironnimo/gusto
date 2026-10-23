@@ -80,26 +80,28 @@ git config core.hooksPath .githooks   # once per clone; worktrees share it
 
 ## Testing
 
-Tests are standalone Python scripts, not a pytest suite: each `tests/test_<owner>.py` runs its checks top to bottom, prints `OK - <n> ... checks passed` and exits non-zero on the first failure. `scripts/browser_check.py` and `scripts/pwa_check.py` drive real Chromium through Playwright against an isolated server with throwaway data. Every gate allocates its own store under `.tmp/` through `GUSTO_HOME` and never touches real data.
+Tests are standalone Python scripts, not a pytest suite: each `tests/test_<owner>.py` runs its checks top to bottom, prints `OK - <n> ... checks passed` and exits non-zero on the first failure. `scripts/browser_check.py` and `scripts/pwa_check.py` drive real Chromium and collect their failures. Run gates through `scripts/run_quality.py`: it isolates each gate's home, user configuration and default store under `.tmp/`, preserves the Playwright browser cache, records durations, and stops a gate and its child processes after 180 seconds. Live servers also use throwaway stores.
 
 Before writing or changing a test, read `development/testing.md`: what to assert, how to wait, and what the gates isolate.
 
 **Running tests and checks:** Call the tools directly; what to test: `AGENTS.md` -> Testing.
 ```bash
-python tests/test_recipes.py                  # one gate
-python scripts/run_quality.py scripts         # every script gate
-python scripts/run_quality.py browser         # Chromium browser and PWA checks
-python scripts/run_quality.py all             # the complete suite
-python -m ruff check .                        # lint, as the commit hook and CI run it
+.venv/Scripts/python scripts/run_quality.py tests/test_recipes.py  # one isolated gate
+.venv/Scripts/python scripts/run_quality.py scripts               # every script gate
+.venv/Scripts/python scripts/run_quality.py browser               # Chromium browser and PWA checks
+.venv/Scripts/python scripts/run_quality.py all                   # the complete suite
+.venv/Scripts/python -m ruff check .                              # lint
+python scripts/domain_maps.py --check                            # map structure and routing
 ```
 The complete suite is `python scripts/run_quality.py all`; the push check and CI run it.
 
 **Commit hook:** `.githooks/pre-commit` and `.githooks/pre-merge-commit` run `scripts/commit_check.py` on every commit and merge commit, in every checkout: `ruff check` on staged Python files, domain-map checks, and a refusal of AI tool identities; no tests. It blocks when the checkout's `.venv` lacks the ruff version `pyproject.toml` pins and prints the install command. Details: `development.md` -> Commit hook.
 
-**CI:** `.github/workflows/quality.yml` runs on pull requests and pushes to `main`: lint plus the commit-authorship history, every script gate on Windows and Linux with Python 3.10 and 3.14, and the Chromium browser and PWA checks on both systems. `release.yml` reuses it before building a release.
+**CI:** `.github/workflows/quality.yml` runs on pull requests and pushes to `main`: lint, domain-map checks and the commit-authorship history, every script gate on Windows and Linux with Python 3.10 and 3.14, and the Chromium browser and PWA checks on both systems. `release.yml` reuses it before building a release.
 
 ## Context
 
+- Change events are refresh notifications shared by Core, API, browser and PWA; their persistence, replay and recovery live in `storage.md` and `storage/change-journal.md`.
 - Target platforms: Windows and Linux, installed per user without admin or root. A Raspberry Pi is the first Linux deployment target, not an exclusive platform.
 - No MCP, ever: explicit, final user decision. Do not propose or build an MCP server; agents use the CLI.
 - Ask first, then build: new features and larger steps start with a concept the user approves (`AGENTS.md` -> Working with the user).

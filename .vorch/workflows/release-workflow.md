@@ -11,8 +11,8 @@ How to publish a Gusto release when the user asks for one. A release is a versio
 5. **Tag and push the tag**, on exactly that commit:
    ```bash
    git tag -a v<version> -m "Gusto <version>" <commit>
-   git push origin v<version>
+   python scripts/push.py --tag v<version>
    ```
-   Pushing a tag is the one push that does not go through `scripts/push.py`; it publishes nothing that the push check did not already check.
+   The wrapper requires an annotated tag of the selected `main` commit whose name matches the committed package version. It reruns every check even when that commit is already remote, then publishes the captured commit and tag object atomically, without overwriting a remote tag or including any other tags. `--no-push` checks the same selection without publishing it. A local tag changed during the checks is refused; do not move a tag to make a failed release pass.
 6. **Watch the release run to its end** (`gh run list --workflow release.yml`, `gh run watch <id>`). It validates that the tag equals the package version, reruns the complete quality gates, builds the assets once, smoke-installs them on fresh Windows and Linux runners, attests provenance and only then publishes. A failed run publishes nothing; fix the cause on `main`, then release a new patch version. Never move or reuse a published tag.
 7. **Verify the result:** the GitHub release lists the manifest and its assets, and `gusto update --check --json` on an installed instance reports the new version. Report the release URL to the user.

@@ -14,7 +14,11 @@ Not owned here: the command API, health and SSE endpoints (`service.md`), the of
 
 **Request pattern.** GET routes render a template; POST form actions mutate through Core and answer `303` to a GET page (post/redirect/get). Expected Core rejections (`ValueError`) redirect back with `?error=<message>`, shown escaped in `.error`; recipe create/edit instead re-render the form with status 400 and the submitted values. Missing entities raise Starlette's 404, which the app-wide handler renders as `404.html` for every path, including unknown `/api/v1/...` routes and missing static files. Other HTTP errors are plain text. FastAPI validation failures (a missing required form field, `/suggestions?days=0`) return FastAPI's 422 JSON, not a page.
 
-**Templates.** Every page extends `base.html` and passes `nav` (active navigation key) and `title`. `base.html` sets `lang="de"`, registers `/sw.js`, loads Google Fonts, `style.css`, `app.js` and `photo-input.js`, and stamps `<body data-gusto-live data-gusto-revision>` from `core.change_state()` (Jinja global `gusto_change_state`). Calls use `templates.TemplateResponse(request, "name.html", {...})` with the request first; Starlette 1.x has no name-first form.
+**Browser write boundary.** The host rejects unsafe HTTP methods before routing when `Origin` differs from the request's scheme/host/port (including a null or invalid origin), when `Sec-Fetch-Site` is neither `same-origin` nor `none`, or when the fallback `Referer` has a foreign origin. This covers forms, shopping sync and the mounted command API, with a definite 403 JSON error. Headerless non-browser clients remain accepted; this is browser request protection, not authentication. No cookies or CSRF token are required.
+
+**Templates.** Normal pages extend `base.html` and pass `nav` (active navigation key) and `title`. `base.html` sets `lang="de"`, registers `/sw.js`, loads Google Fonts, `style.css`, `app.js` and `photo-input.js`, and stamps `<body data-gusto-live data-gusto-revision>` from `core.change_state()` (Jinja global `gusto_change_state`). Calls use `templates.TemplateResponse(request, "name.html", {...})` with the request first; Starlette 1.x has no name-first form. The standalone `mutation_error.html` recovery page deliberately reads no store state and loads no scripts.
+
+**Post-save failures.** Every mutation route lets `core.PostMutationError` pass before catching `ValueError`; the app handler returns 500 with fixed uncertainty guidance and a GET link to inspect the affected area. It never renders a retry form or enables live reload of the POST. Shopping sync receives JSON with `outcome_unknown:true`; a definite sync validation failure stays 400 with `error: "invalid shopping state"` and a safe-to-display `detail` from Core. When a web action makes several Core calls, failures after its first successful write must also become uncertain (image metadata followed by cover selection).
 
 **URLs other code builds.** Active recipes live at `/recipe/{slug}`, archived snapshots at `/archive/{slug}`; `_recipe_reference_map` adds these as `url` to Core's reference map, and the log, the shopping fallback and `shopping-client.js` link through it. The recipe list is `/?q=...&tag=...` with repeatable `tag`. `/media/recipe/{slug}/{image_id}` and `/media/archive/{slug}/{image_id}` keep stable URLs (the service worker fetches them network-only); `/media/favorite/{filename}` serves only filenames a product references, and replacing an image creates a new filename (cached offline). Renaming any of these paths needs matching changes in `sw.js` and `shopping-client.js`.
 
@@ -42,13 +46,13 @@ Not owned here: the command API, health and SSE endpoints (`service.md`), the of
 ## External Dependencies
 
 - FastAPI/Starlette, Jinja2, Python-Markdown, python-multipart (form and upload parsing) and Pillow are unpinned in the `web` extra; installs and updates resolve current releases, so an upstream breaking change can reach users without a Gusto change.
-- Fraunces and Hanken Grotesk load from Google Fonts on every page. The service worker ignores foreign origins, so offline or without internet pages fall back to Georgia and system fonts, and each online page view contacts Google.
+- Normal pages load Fraunces and Hanken Grotesk from Google Fonts. The service worker ignores foreign origins, so offline or without internet pages fall back to Georgia and system fonts. The standalone mutation-recovery page uses those fallbacks without a font request.
 
 ## Constraints & Gotchas
 
-- `core.PostMutationError` (change saved, command incomplete) subclasses `ValueError`. Routes that map `ValueError` to 404 (`/recipe/{slug}/cooked`, `/shopping/{id}/toggle|remove`, `/favorites/{id}/delete`, and archive, restore or purge once the entity has moved) therefore show `Nicht gefunden` after a persisted write; `/shopping/add`, `/shopping/remove-done` and `/shopping/clear` have no handler and answer 500. The web has no uncertain-outcome display (open issue). Catch `PostMutationError` before `ValueError` in new routes.
+- `core.PostMutationError` subclasses `ValueError`; catch it first in new mutation routes so a committed write never becomes a 400/404 or an ordinary error redirect. The recovery page cannot inherit `base.html`: the same damaged change journal may make its revision read fail again. Its inspection link can still fail while that journal is corrupt; `check` diagnoses it (`catalog/check.md`), with no automatic repair.
 - Core deliberately does not deduplicate cooking-log entries; the guard in `app.js` blocks a second submit of a POST form and disables its buttons only after the submit event (disabling during it cancels the submission in Chromium). GET forms are excluded because the clicked button carries the value (day switch).
-- Form POSTs and `/api/v1/command` carry no CSRF token or Origin check, consistent with the anonymous LAN model (`service.md`); a cross-site page in the user's browser can submit them. The purge confirmation is only a form field.
+- The host's browser write check compares against the externally requested origin. Reverse proxies must preserve its Host and scheme; headerless LAN clients still have the anonymous access described in `service.md`. Purge confirmation is a form field, not authorization.
 - Web multipart uploads have no request-size cap; the 25 MiB check runs after the whole file is received (the command API enforces its own cap).
 - The rendered body omits the first `# ` line (`_split_title`); the edit form shows the body without it and the route rebuilds `# {title}`. Core still enforces the title/H1 invariant (`catalog.md`). Blank duration/servings on the edit form clear the values through Core's clear flags.
 - Only Chromium is exercised locally and in CI; Safari/iOS and Firefox behavior (camera `capture`, `backdrop-filter`, bottom sheet) is unverified.
@@ -56,7 +60,7 @@ Not owned here: the command API, health and SSE endpoints (`service.md`), the of
 
 ## Tests
 
-- `tests/test_web_render.py`: sanitizer, fixed shopping notices, local return paths, sync off the event loop, stale tag chips, photo error split.
+- `tests/test_web_render.py`: sanitizer, fixed shopping notices, local return paths, sync off the event loop, stale tag chips, photo error split, browser write rejection at the mounted app, persisted-write uncertainty and unchanged pre-write validation.
 - `scripts/browser_check.py`: real Chromium against a throwaway copy of the checkout's sample `recipes/`, `data/` and `images/` under `.tmp/browser-*/` (screenshots in `shots/`); covers live search, facets, no-JS flows, photo normalization, double submit, confirmations, mobile and 320 px layouts and live SSE refresh. Its expectations (three cards, `kokos` -> 1 hit) depend on those sample files.
 - `scripts/pwa_check.py` (shopping) covers manifest, service worker and offline shell; `tests/test_packaging.py` (lifecycle) the packaged assets and the web dependency list.
 
@@ -66,3 +70,9 @@ Read these only when your task matches - not by default.
 
 - Changing colors, type, layout, motion, icons, page structure or UI copy tone, or adding a page or component -> `web/design.md`
 - Changing `app.js` behavior (live search, filter panel, live reload, submit guard, confirmations, photo preview) or the list markup it reads -> `web/live-pages.md`
+- Changing page revisions or diagnosing live-update journal failures -> `storage/change-journal.md`
+- Changing host-level JSON error text that an API client can receive -> `web/agent-facing-text.md`
+
+## Agent-facing text
+
+This domain owns the host-level JSON write-rejection message and shared mutation-uncertainty notice in `gusto/web.py`. Before changing a sentence, read `web/agent-facing-text.md` and update its reason row. Operation-specific API errors belong to `service.md`; CLI help and skill wording belong to `cli.md`.

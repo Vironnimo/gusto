@@ -8,15 +8,15 @@ Catalog rules live in the recipe sections of `gusto/core.py` (create, categories
 
 ## Terms
 
-Shared: GLOSSARY -> Rezeptarchiv (deletion means reversible archive).
+Shared: GLOSSARY -> Recipe archive (deletion means reversible archive).
 
 ### Facet
 
-A tag category used as one filter dimension. Selected tags are ORed within one facet and ANDed across facets; selected tags without a category form one shared OR group.
+A tag category used as one filter dimension. Filtering and presentation rules are in Interfaces.
 
 ### Cover image
 
-The recipe image shown on cards and at the top of the detail page. At runtime a missing or stale stored selection falls back to the first image, but `check` treats images without a valid stored `cover_image_id` as an error.
+The recipe image shown on cards and at the top of the detail page. Selection and fallback rules are in Interfaces.
 
 ## Data Model
 
@@ -32,22 +32,22 @@ The slug joins Markdown, metadata, images, archive, log entries, shopping source
 ## Interfaces
 
 - Callers receive `Recipe`, `ArchivedRecipe` and `RecipeImage` objects or JSON-ready dicts. `recipe_references()` maps every active or archived slug to `{slug, title, archived}` for other stores; an active recipe wins.
-- Title and H1 are one Core-enforced contract. Titles are non-empty, single-line and at most 150 characters after trimming. Every Core write of a title or body passes the body through one rule: a first line that is an H1 (`#` plus whitespace) becomes `# <title>`, otherwise `# <title>` and a blank line are prepended; line endings become LF. Re-applying the same title repairs drift. A title-only update needs the Markdown file. Surfaces may rebuild the H1 themselves but are not the source of truth.
+- Title and H1 are one Core-enforced contract. Titles are non-empty, single-line and at most 150 characters after trimming. Creating or updating a title or body normalizes line endings to LF and replaces a first line of bare `#` or `#` plus whitespace with `# <title>`. Otherwise it prepends the title and a blank line to a non-empty body; empty content becomes only the title and a newline. Re-applying the same title repairs drift. A title-only update needs the Markdown file. Surfaces may rebuild the H1 themselves but are not the source of truth.
 - Body replacement is `update_recipe(content=...)`, reached through API `recipe.content.set` by CLI `edit` and `content set`. `new` without content writes a template with `## Zutaten` and `## Zubereitung`.
 - Duration, servings, time caps and day windows must be positive integers; the suggestion limit must be non-negative (0 returns nothing). `update_recipe` has explicit clear flags; setting and clearing the same value together is rejected.
 - Recipe tags are trimmed single-line strings, deduplicated case-insensitively keeping the first spelling; an empty list clears them. Create and tag-changing updates through the API add `warnings: [{code: "uncategorized_tags", message, tags}]` for tags without a named facet; the recipe is saved anyway and the tags share the runtime `Sonstige` facet until `categories assign` maps them.
 - Category mutations validate keys (`[a-z0-9][a-z0-9_-]*`; `other` and `__other__` are reserved for `Sonstige`), labels (non-empty, single line) and tags. Assigning moves a tag out of any other category and adopts the existing category spelling, else the first catalog spelling, else the given one. Positions are 1-based. Removing or unassigning never changes recipe tags; removal reports `now_uncategorized`.
 - Facet listing (`tag_groups`): in used mode only used tags, case-insensitively deduplicated; named categories in configured order and spelling, empty ones dropped, then one `other`/`Sonstige` group of unassigned tags in first catalog spelling, sorted case-insensitively. The all mode lists defined categories only. Listing never rewrites metadata.
-- Search: tag facets as defined above; a time cap excludes recipes with unknown duration; query terms are whitespace-split, lowercased substrings matched against title and tags first and against the Markdown body only for terms metadata did not settle (ALL may combine metadata and body hits). `match` accepts only `any` or `all`.
-- Cooking: `log_cooked` requires an active recipe and an exact `YYYY-MM-DD` calendar date no later than today (default today). `load_log(days)` keeps entries within the window; windows beyond the calendar include all history.
+- Search: selected tags are ORed within a facet and ANDed across facets; selected tags without a category form one shared OR group. A time cap excludes recipes with unknown duration; query terms are whitespace-split, lowercased substrings matched against title and tags first and against the Markdown body only for terms metadata did not settle (ALL may combine metadata and body hits). `match` accepts only `any` or `all`.
+- Cooking: `log_cooked` requires an active recipe and an exact `YYYY-MM-DD` calendar date no later than today (default today). Every call appends an entry, even for the same slug and date; callers must not retry an uncertain outcome blindly. `load_log(days)` includes the cutoff date (`today - days`); windows beyond the calendar include all history.
 - Suggestions: active recipes not cooked within `days` (default 7), ordered by oldest `last_cooked`, never-cooked first. Deliberately simple; meal intelligence belongs to the calling agent combining log, search and list.
-- Images: Core copies a local file (the API materializes uploads, `service.md`). It accepts `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif` after extension and header/dimension validation without optional libraries; role defaults to `gallery`; role and caption are single-line and open-ended (`result`, `ingredients`, `step`). The first image or an explicit cover becomes the cover; removing the cover promotes the first remaining image; removing the last image deletes the empty folder. Upload size limits and browser photo normalization are transport and web rules (`cli.md`, `service.md`, `web.md`).
+- Images: Core copies a local file (the API materializes uploads, `service.md`). It accepts `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif` after extension and header/dimension validation without optional libraries; role defaults to `gallery`; role and caption are single-line and open-ended (`result`, `ingredients`, `step`). The first image or an explicit cover becomes the cover; removing the cover promotes the first remaining image; removing the last image deletes the empty folder. At runtime a missing or stale stored cover selection falls back to the first image, but `check` treats images without a valid stored `cover_image_id` as an error. Upload size limits and browser photo normalization are transport and web rules (`cli.md`, `service.md`, `web.md`).
 - Shopping uses `get`, `Recipe.content()` and `recipe_references()`; ingredient parsing under `## Zutaten` belongs to `shopping.md`.
 
 ## Conventions
 
 - Every catalog mutation is one storage transaction holding the `catalog` lock across read-modify-write; cooking also holds `log`, purge also `shopping` (`storage.md` -> Interfaces). Never call a locked Core function from inside another.
-- In multi-file mutations (create, body or title update, cooking, archive, restore, image add) the `data/recipes.json` save is the commit point. Write owned files first and the index last. A failure before the index commit rolls back the files and stays a clean rejection without a change event; a failure after it keeps the files the committed index references and surfaces as `PostMutationError` with an event.
+- In multi-file mutations (create, body or title update, cooking, archive, restore, image add) the `data/recipes.json` save is the commit point. Write owned files first and the index last. A failure before the index commit attempts to roll back the files; only a completed rollback is a clean rejection without a change event. A failed rollback, or a failure after the index commit, surfaces as `PostMutationError`; committed index references keep their files. Remaining changes publish an event unless the journal write itself fails (`storage.md`).
 - A failed image import removes its partial copy; failing to remove that copy counts as a storage change (uncertain outcome), not as a clean rejection.
 - All catalog files, including `data/categories.json`, are server-owned. Clients use the service; direct edits bypass validation, locking and change events.
 - `images/_favorites/` belongs to shopping; recipe image diagnostics ignore it and no slug may claim it.
@@ -71,3 +71,4 @@ Read these only when your task matches - not by default.
 
 - Changing archive, restore or purge, or repairing an interrupted archive transaction -> `catalog/archive.md`
 - Changing `check`, adding a diagnostic, or interpreting or repairing a finding -> `catalog/check.md`
+- Changing catalog transaction events or diagnosing journal failures -> `storage/change-journal.md`

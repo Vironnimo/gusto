@@ -11,6 +11,8 @@ import sys
 import tempfile
 import venv
 import zipfile
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -269,9 +271,11 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
 
 with tempfile.TemporaryDirectory(prefix="gusto-dry-run-") as temporary:
     destination = Path(temporary) / "app"
+    dry_data = Path(temporary) / "data"
     result = subprocess.run(
         [sys.executable, os.fspath(ROOT / "install.py"), "--dry-run",
-         "--install-dir", os.fspath(destination), "--json"],
+         "--install-dir", os.fspath(destination),
+         "--data-dir", os.fspath(dry_data), "--json"],
         cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
     )
     check(result.returncode == 0 and not destination.exists(),
@@ -280,6 +284,16 @@ with tempfile.TemporaryDirectory(prefix="gusto-dry-run-") as temporary:
     check(value["status"] == "dry_run" and value["autostart"] in {
         "windows_task", "systemd_user",
     }, "installer dry-run must describe the user service")
+    plain = StringIO()
+    with redirect_stdout(plain):
+        plain_exit = install.main([
+            "--dry-run", "--install-dir", os.fspath(destination),
+            "--data-dir", os.fspath(dry_data),
+        ])
+    check(plain_exit == 0 and plain.getvalue().startswith("Trockenlauf:")
+          and "ist installiert und läuft" not in plain.getvalue()
+          and not destination.exists() and not dry_data.exists(),
+          "plain installer dry-run must report a plan without claiming a running app")
 
     # A second bootstrap is not the update flow and must fail before touching
     # the existing managed root.

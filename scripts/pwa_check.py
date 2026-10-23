@@ -622,6 +622,52 @@ try:
               "opaque IDs: deleted item stays absent after sync")
         ctx.close()
 
+        # E6: a stale visible source can outlive its recipe on an offline
+        # device. Reject atomically, explain recovery, and keep other edits.
+        reset_shopping()
+        stale = itm("2099-01-01T00:00:00.000Z", id="stale-source", text="Milch",
+                    source="purged-sync-source")
+        api_sync([dict(stale, deleted=True, updated_at=past_iso())])
+        valid = itm(past_iso(), id="unsynced-bread", text="Brot")
+        ctx = browser.new_context(viewport={"width": 320, "height": 740},
+                                  service_workers="block")
+        ctx.add_init_script(
+            "localStorage.setItem('gusto.shopping', "
+            + json.dumps(json.dumps({"items": [stale, valid]})) + ");")
+        page = ctx.new_page()
+        page.clock.install()
+        sync_requests = []
+        page.on("request", lambda request: sync_requests.append(request)
+                if request.url.endswith("/api/shopping/sync") else None)
+        page.goto(BASE + "/shopping", wait_until="load")
+        notice = page.locator("#shop-sync-error")
+        notice.wait_for(state="visible")
+        check("purged-sync-source" in notice.inner_text(),
+              "rejected sync: notice identifies the invalid recipe source")
+        check(len(api_get()) == 1 and api_get()[0]["deleted"]
+              and wait_item_once(page, "Milch") and wait_item_once(page, "Brot"),
+              "rejected sync: atomic rejection keeps both local edits")
+        page.clock.fast_forward(65000)
+        page.evaluate("""() => {
+            window.dispatchEvent(new Event('online'));
+            document.dispatchEvent(new CustomEvent('gusto:change',
+                {detail: {resources: ['shopping']}}));
+        }""")
+        check(len(sync_requests) == 1,
+              "rejected sync: unchanged state is not retried by timers or events")
+        check(page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"),
+              "rejected sync: recovery notice fits a 320px phone")
+        page.screenshot(path=str(TESTDATA / "sync-rejected.png"), full_page=True)
+        page.locator("#shop-client .shop-item", has_text="Milch").locator(".shop-x").click()
+        check(wait_server(lambda its: any(
+            item["id"] == "unsynced-bread" and not item["deleted"] for item in its
+        ) and any(item["id"] == "stale-source" and item["deleted"] for item in its)),
+              "rejected sync: removing the stale item saves the unrelated offline edit")
+        notice.wait_for(state="detached")
+        check(wait_item_once(page, "Brot"),
+              "rejected sync: successful recovery clears the notice and keeps the valid item")
+        ctx.close()
+
         browser.close()
 finally:
     srv.terminate()

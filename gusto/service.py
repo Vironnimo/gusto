@@ -77,7 +77,17 @@ def default_linux_unit_path(
 
 
 def managed_paths(app_root: str | Path | None = None) -> ManagedPaths:
-    root = Path(app_root or default_app_root()).expanduser().resolve()
+    """Use an explicit root, the executing managed runtime, or the user default."""
+    if app_root is None:
+        runtime = Path(sys.prefix).resolve()
+        candidate = runtime.parent.parent
+        if (runtime.parent.name == "versions"
+                and (candidate / STATE_FILENAME).is_file()
+                and (candidate / CURRENT_FILENAME).is_file()):
+            app_root = candidate
+        else:
+            app_root = default_app_root()
+    root = Path(app_root).expanduser().resolve()
     home = Path.home().resolve()
     if root == Path(root.anchor).resolve() or root == home:
         raise ServiceError("Der App-Pfad ist zu breit für eine verwaltete Installation.")

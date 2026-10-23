@@ -1,6 +1,6 @@
 # Push Workflow
 
-How to push `main`. Commits and merges run static checks only, so `main` may hold a commit that breaks a test elsewhere. The push is where every such failure is found and fixed: `python scripts/push.py` checks the commit `main` points to completely and pushes exactly that commit only when every check passes. Nothing red reaches the remote.
+How to push `main` or an explicitly selected release tag. Commits and merges run static checks only, so `main` may hold a commit that breaks a test elsewhere. The push is where every such failure is found and fixed: `python scripts/push.py` checks the commit `main` points to completely and pushes exactly that commit only when every check passes. Nothing red reaches the remote.
 
 A push is finished only when the CI run it starts is green. Never use a plain `git push`.
 
@@ -14,9 +14,11 @@ From the primary checkout:
 python scripts/push.py
 ```
 
-It checks the commit in a private checkout, not the working tree, so other sessions' uncommitted work does not affect the result, and runs every check listed in `.vorch/PROJECT.md` -> Testing (static checks and the complete suites). A run takes several minutes; use a shell timeout of at least 30 minutes. An interrupted run pushes nothing.
+It checks the commit in a private checkout, not the working tree, so other sessions' uncommitted work does not affect the result, and runs every check listed in `.vorch/PROJECT.md` -> Testing (static checks and the complete suites). A run takes several minutes; use a shell timeout of at least 30 minutes. An interrupted check pushes nothing; interruption during publication requires inspecting the remote refs before retrying.
 
-Exit code 0 means the commit is pushed, or the remote's `main` already had it. Continue with step 4.
+Exit code 0 means the commit is pushed, or the remote's `main` already had it. For a new push, continue with step 4; otherwise inspect the existing CI run for that commit.
+
+Release tags also use this wrapper: `python scripts/push.py --tag v<version>` (the complete release procedure is `release-workflow.md`). The named local tag must be annotated, point to the selected `main` commit and match the version in that commit's `pyproject.toml`. The wrapper captures the tag object and commit before checking, reruns every check even when `main` is already remote, and publishes only those two refs atomically. An identical remote tag is an idempotent success after checks; a different remote tag or a local tag changed during the checks is refused. The wrapper never creates, moves or overwrites a tag. Watch release CI as described in the release workflow.
 
 ### 2. Find the cause of every failure
 
@@ -53,6 +55,7 @@ Tell the user which commit was pushed, the green CI run, and what you fixed on t
 ## Gotchas
 
 - **Remote moved:** when the remote's `main` has commits that local `main` lacks, the command pushes nothing. Tell the user and stop; do not bring those commits in on your own, and never force-push.
-- **Only the checked commit is pushed:** commits that reach `main` while the command runs go with the next run.
-- **Checks only:** `python scripts/push.py --no-push` runs every check without pushing.
+- **Only the checked commit is pushed:** commits that reach `main` while the command runs go with the next run. Tags are published only with explicit `--tag`; Git's `push.followTags` cannot add incidental tags.
+- **Checks only:** `python scripts/push.py --no-push` runs every check without pushing, even when `main` is already remote. Combine it with `--tag v<version>` to validate that release selection without publishing. No CI run starts.
+- **Push failure after checks:** a lost response can leave the remote outcome unknown. Inspect its refs with `git ls-remote --heads --tags origin` before retrying. A server without atomic-push support rejects the push; never bypass the wrapper.
 - **Leftover checkouts:** a killed run can leave `.worktrees/.push-*` behind; the next run removes it.

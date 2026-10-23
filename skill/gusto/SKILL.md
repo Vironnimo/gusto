@@ -109,8 +109,8 @@ returned id, and do not race reorder/remove/cover with changes to that collectio
    compare `date` values when deciding what was cooked recently.
 
 Tags are facets: repeated `--tag` values are OR within a category and AND across
-categories. `gusto tags --json` shows used facets; `--all` adds unused configured
-tags. Matching ignores case; displayed choices use category spelling or the
+categories. `gusto tags --json` shows used facets; `--all` shows all configured
+categories and tags. Matching ignores case; displayed choices use category spelling or the
 first catalog spelling for an unassigned tag.
 
 ### Save or edit a recipe
@@ -162,6 +162,7 @@ first catalog spelling for an unassigned tag.
 2. To import ingredients use `gusto shopping add-recipe <slug> --json`. It
    rejects an empty ingredient section or a repeat while any visible sourced
    items remain, including checked items and `shopping add --source <slug>`.
+   Both ingredient import and new `--source` attribution require an active recipe.
    Report the existing import instead of clearing it to bypass the guard.
 3. Set explicit states with `shopping check <id>` or `shopping uncheck <id>`.
    Repeating the same state is idempotent. Remove one with `shopping remove

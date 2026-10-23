@@ -46,7 +46,8 @@ SETUP_COMMANDS: list[list[str]] = [
     [sys.executable, "-m", "venv", ".venv"],
     [_VENV_PYTHON, "-m", "pip", "install", "-q", "-e", ".[web,test,dev]"],
 ]
-"""Commands run in a new worktree, in order; a failure removes the worktree again.
+"""Commands run in a new task or merged landing checkout, in order.
+The caller removes the checkout after failure; main stays unchanged.
 They get VORCH_WORKTREE_NAME, VORCH_WORKTREE_PATH, VORCH_WORKTREE_PORT and
 VORCH_PRIMARY_ROOT in their environment; a relative executable is resolved
 inside the new worktree. Install each worktree's own dependencies
@@ -251,6 +252,28 @@ class Worktrees:
 # --- Commands ----------------------------------------------------------------------
 
 
+def _setup_checkout(trees: Worktrees, path: Path, name: str,
+                    port: int | None = None) -> None:
+    """Install this checkout's dependencies before its commit hook can run."""
+    env = {
+        **os.environ,
+        "VORCH_WORKTREE_NAME": name,
+        "VORCH_WORKTREE_PATH": str(path),
+        "VORCH_WORKTREE_PORT": "" if port is None else str(port),
+        "VORCH_PRIMARY_ROOT": str(trees.root),
+    }
+    for command in SETUP_COMMANDS:
+        print(f"setup: {' '.join(command)}", flush=True)
+        local = path / command[0]
+        executable = str(local) if local.is_file() else shutil.which(command[0]) or command[0]
+        try:
+            result = subprocess.run([executable, *command[1:]], cwd=path, env=env, check=False)
+        except OSError as error:
+            raise WorktreeError(f"setup command could not run: {command}: {error}") from error
+        if result.returncode != 0:
+            raise WorktreeError(f"setup command failed (exit {result.returncode}): {command}")
+
+
 def create(trees: Worktrees, args: argparse.Namespace) -> int:
     name: str = args.name
     path = trees.path(name)
@@ -274,21 +297,11 @@ def create(trees: Worktrees, args: argparse.Namespace) -> int:
         }
         (path / MARKER_FILE_NAME).write_text(json.dumps(marker, indent=2) + "\n", encoding="utf-8")
 
-    env = {
-        **os.environ,
-        "VORCH_WORKTREE_NAME": name,
-        "VORCH_WORKTREE_PATH": str(path),
-        "VORCH_WORKTREE_PORT": "" if port is None else str(port),
-        "VORCH_PRIMARY_ROOT": str(trees.root),
-    }
-    for command in SETUP_COMMANDS:
-        print(f"setup: {' '.join(command)}", flush=True)
-        local = path / command[0]
-        executable = str(local) if local.is_file() else shutil.which(command[0]) or command[0]
-        result = subprocess.run([executable, *command[1:]], cwd=path, env=env, check=False)
-        if result.returncode != 0:
-            trees.remove(path, name, force=True)
-            raise WorktreeError(f"setup command failed and the worktree was removed: {command}")
+    try:
+        _setup_checkout(trees, path, name, port)
+    except WorktreeError as error:
+        trees.remove(path, name, force=True)
+        raise WorktreeError(f"{error}; the worktree was removed") from error
 
     show(name=name, branch=name, path=posix(path), **({"port": port} if port is not None else {}))
     return 0
@@ -379,11 +392,17 @@ def _land(trees: Worktrees, name: str, branch: str, message: str) -> str:
             if git("rev-parse", "-q", "--verify", "MERGE_HEAD", cwd=landing).returncode != 0:
                 return base  # main already contains the branch
 
+            try:
+                _setup_checkout(trees, landing, name)
+            except WorktreeError as error:
+                raise WorktreeError(f"{error}; main is unchanged") from error
             print("checking the merge commit (no output until done)...", flush=True)
             committed = git("commit", "-m", message, cwd=landing)
+            report = (committed.stdout + committed.stderr).strip()
+            if report:
+                print(report)
             commit = git_out("rev-parse", "HEAD", cwd=landing)
             if committed.returncode != 0 or commit == base:
-                print((committed.stdout + committed.stderr).strip())
                 raise WorktreeError(
                     "the merge commit failed the commit check; main is unchanged\n"
                     f"hint: in the worktree run `git rebase {PRIMARY_BRANCH}`, fix the problems "

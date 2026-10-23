@@ -251,34 +251,11 @@ def _acquire_file_lock(path: Path):
     """Acquire one byte as an advisory lock on Windows or POSIX."""
     path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
-    try:
-        descriptor = os.open(
-            path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600,
-        )
-    except FileExistsError:
-        # The process which atomically created a new lock file writes its one
-        # lockable byte before exposing the handle to mutation code. Wait out
-        # that tiny initialization window instead of racing a second write on
-        # Windows (which sporadically raises PermissionError).
-        while True:
-            try:
-                if path.stat().st_size >= 1:
-                    break
-            except FileNotFoundError:
-                pass
-            if time.monotonic() >= deadline:
-                raise ValueError(
-                    f"Gusto-Sperrdatei konnte nicht initialisiert werden: {path}"
-                )
-            time.sleep(0.01)
-        handle = path.open("r+b", buffering=0)
-    else:
-        try:
-            os.write(descriptor, b"\0")
-        except Exception:
-            os.close(descriptor)
-            raise
-        handle = os.fdopen(descriptor, "r+b", buffering=0)
+    # Both native locks work on empty files; Windows permits locking beyond
+    # EOF. Never initialize or replace the inode: a crash between creation
+    # and writing a sentinel byte must not strand every later mutation.
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    handle = os.fdopen(descriptor, "r+b", buffering=0)
 
     while True:
         try:
@@ -434,7 +411,7 @@ def _load_change_journal() -> dict:
         }
     try:
         state = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ValueError(f"Ungültiges Gusto-Änderungsjournal: {error}") from error
     if not isinstance(state, dict):
         raise ValueError("Ungültiges Gusto-Änderungsjournal: JSON-Objekt erwartet.")
@@ -449,16 +426,23 @@ def _load_change_journal() -> dict:
             or not isinstance(events, list)
             or isinstance(compacted_revision, bool)
             or not isinstance(compacted_revision, int)
-            or compacted_revision < 0
+            or not 0 <= compacted_revision <= revision
             or not isinstance(compacted_resources, list)
             or not all(isinstance(item, str) for item in compacted_resources)):
         raise ValueError("Ungültiges Gusto-Änderungsjournal.")
+    previous_revision = compacted_revision
+    for event in events:
+        if (not isinstance(event, dict)
+                or isinstance(event.get("revision"), bool)
+                or not isinstance(event.get("revision"), int)
+                or not previous_revision < event["revision"] <= revision
+                or not isinstance(event.get("resources"), list)
+                or not all(isinstance(item, str) for item in event["resources"])):
+            raise ValueError("Ungültiges Gusto-Änderungsjournal.")
+        previous_revision = event["revision"]
     # Safely migrate a journal written before compacted resources were
     # persisted. A broad refresh is preferable to silently missing a change.
-    retained_revisions = [
-        event.get("revision") for event in events
-        if isinstance(event, dict) and isinstance(event.get("revision"), int)
-    ]
+    retained_revisions = [event["revision"] for event in events]
     if compacted_revision == 0 and revision:
         first_retained = min(retained_revisions, default=revision + 1)
         if first_retained > 1:
@@ -1994,6 +1978,11 @@ def check() -> dict:
     # Corrupted data files must be reported as integrity errors instead of
     # crashing the whole diagnostic with a raw loader exception.
     invalid_data_files: list[str] = []
+
+    try:
+        _load_change_journal()
+    except ValueError as error:
+        invalid_data_files.append(f"{changes_path()}: {error}")
 
     def directory_entries(path: Path) -> list[Path]:
         try:

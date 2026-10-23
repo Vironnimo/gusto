@@ -63,6 +63,11 @@ Running the installer again is rejected. Use its explicit `--repair` /
 `gusto start`, `gusto stop`, and `gusto restart` control the current-user
 service. Gusto does not start before login.
 
+Service control and `update` use the managed installation containing the running
+CLI, including custom app directories. From a checkout or unmanaged Python they
+use the platform-default application path; `--app-root PATH` explicitly selects
+another managed installation.
+
 The HTTP API is intentionally anonymous on the trusted home LAN. There are no
 tokens to distribute to the CLI or browser. Do not expose port 8000 directly
 to the public internet.
@@ -92,9 +97,11 @@ normal updates and app-only uninstall. `gusto home --json` reports the server,
 service reachability and the server-owned data directory. `GUSTO_URL` or the
 global `--server` option selects another Gusto server explicitly.
 
-A development checkout carries `gusto.settings.json` with the isolated
-`gusto-dev` data path. `python -m gusto serve` runs that development service;
-normal installed commands still default to `http://127.0.0.1:8000`.
+A development checkout's `gusto.settings.json` selects the shared `gusto-dev`
+data path for a locally started service. It does not select the CLI's remote
+server: without `--server` or `GUSTO_URL`, checkout commands target
+`http://127.0.0.1:8000`. Installed commands use their runtime's configured URL,
+including the port chosen during installation.
 
 ### Development checkout
 
@@ -102,11 +109,15 @@ normal installed commands still default to `http://127.0.0.1:8000`.
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # Linux:   source .venv/bin/activate
-python -m pip install -e ".[web,test]"
+python -m pip install -e ".[web,test,dev]"
+git config core.hooksPath .githooks
 ```
 
-The checkout's `gusto.settings.json` keeps manual development isolated from
-production data. The CLI HTTP client itself uses only the standard library.
+For isolated development, set `GUSTO_HOME` to a throwaway directory under `.tmp/`,
+start `python -m gusto serve --port <free-port>`, and pass
+`--server http://127.0.0.1:<free-port>` on checkout CLI calls. Verify
+`home --json` reports that directory as `server_data_path` before writing.
+The CLI HTTP client itself uses only the standard library.
 
 ## Service and web UI
 
@@ -199,7 +210,7 @@ they remain stored under `Sonstige` until an agent resolves them with
 `categories assign`. Category definition, ordering, assignment and removal all
 go through `gusto categories ...`, never direct JSON edits. `--max-time`
 excludes recipes whose duration is unknown. `shopping add --source` accepts
-only an existing recipe,
+only an active recipe,
 and the sourced item participates in the same duplicate-import guard as
 `shopping add-recipe`. A rejected recipe import reports the number of visible
 sourced items. `shopping remove-done` removes checked items; `shopping clear`

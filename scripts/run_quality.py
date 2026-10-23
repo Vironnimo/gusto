@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 import argparse
+import os
+import signal
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 
@@ -31,12 +35,64 @@ SCRIPT_CHECKS = (
     "tests/test_temp.py",
     "tests/test_packaging.py",
     "tests/test_ci.py",
+    "tests/test_worktree.py",
+    "tests/test_push.py",
 )
 
 BROWSER_CHECKS = (
     "scripts/browser_check.py",
     "scripts/pwa_check.py",
 )
+
+# A gate is one standalone script, not an individual assertion. The slowest
+# local gate takes about 40 seconds; leave room for the slower CI platforms.
+GATE_TIMEOUT_SECONDS = 180
+
+
+def gate_environment(root: Path) -> dict[str, str]:
+    """Keep default user paths and stores inside this gate's scratch directory."""
+    environment = dict(os.environ)
+    if "PLAYWRIGHT_BROWSERS_PATH" not in environment:
+        if sys.platform == "win32":
+            cache = Path(environment.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
+        elif sys.platform == "darwin":
+            cache = Path.home() / "Library/Caches"
+        else:
+            cache = Path(environment.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+        environment["PLAYWRIGHT_BROWSERS_PATH"] = os.fspath(cache / "ms-playwright")
+    home = root / "home"
+    local = home / "AppData/Local"
+    roaming = home / "AppData/Roaming"
+    for directory in (home, local, roaming):
+        directory.mkdir(parents=True, exist_ok=True)
+    environment.update({
+        "HOME": os.fspath(home),
+        "USERPROFILE": os.fspath(home),
+        "LOCALAPPDATA": os.fspath(local),
+        "APPDATA": os.fspath(roaming),
+        "GUSTO_HOME": os.fspath(root / "store"),
+        "PYTHONUTF8": "1",
+    })
+    for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "GUSTO_URL"):
+        environment.pop(name, None)
+    return environment
+
+
+def stop_process_tree(process: subprocess.Popen) -> None:
+    """Stop a hung gate and the servers or CLI children it started."""
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        )
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    if process.poll() is None:
+        process.kill()
+    process.wait()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,31 +101,50 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "suite",
-        choices=("scripts", "browser", "all"),
-        help="Script-Tests, echte Browser-Checks oder beide Gruppen.",
+        choices=("scripts", "browser", "all", *SCRIPT_CHECKS, *BROWSER_CHECKS),
+        help="Script-Tests, Browser-Checks, beide Gruppen oder ein einzelnes Gate.",
     )
     return parser
 
 
-def run(paths: tuple[str, ...]) -> int:
+def run(paths: tuple[str, ...], *, timeout: float = GATE_TIMEOUT_SECONDS) -> int:
     for relative in paths:
         print(f"\n==> {relative}", flush=True)
-        result = subprocess.run(
-            [sys.executable, relative],
-            cwd=ROOT,
-        )
-        if result.returncode:
+        started = time.monotonic()
+        with tempfile.TemporaryDirectory(prefix="quality-") as temporary:
+            process = subprocess.Popen(
+                [sys.executable, relative], cwd=ROOT,
+                env=gate_environment(Path(temporary)),
+                start_new_session=sys.platform != "win32",
+            )
+            try:
+                returncode = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                stop_process_tree(process)
+                print(
+                    f"\nFEHLER: {relative} hat das Zeitlimit von {timeout:g} s "
+                    "ueberschritten; der Prozess und seine Kinder wurden beendet.",
+                    file=sys.stderr,
+                )
+                return 124
+            except BaseException:
+                stop_process_tree(process)
+                raise
+        print(f"Dauer: {time.monotonic() - started:.2f} s", flush=True)
+        if returncode:
             print(
                 f"\nFEHLER: {relative} endete mit Status "
-                f"{result.returncode}.",
+                f"{returncode}.",
                 file=sys.stderr,
             )
-            return result.returncode
+            return returncode
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.suite in (*SCRIPT_CHECKS, *BROWSER_CHECKS):
+        return run((args.suite,))
     if args.suite in {"scripts", "all"}:
         result = run(SCRIPT_CHECKS)
         if result:

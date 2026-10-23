@@ -10,14 +10,17 @@ push is where every check runs (``.vorch/workflows/push-workflow.md``):
    so other sessions' uncommitted work cannot affect the result, and every step in
    ``STEPS`` runs there. Each step's complete output goes to a log file.
 3. Only when every step passed is that commit pushed to the remote's main, as a
-   fast-forward. Commits that reached main meanwhile go with the next run.
+   fast-forward. ``--tag v<version>`` also publishes exactly one annotated tag
+   of that commit, atomically with main. No other tags are pushed.
 
-``--no-push`` runs the checks only. Configure the steps for the project below.
+``--no-push`` runs the checks only, even when main is already remote. Configure
+the steps for the project below.
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -56,6 +59,7 @@ STEPS: list[Step] = [
         requires=("venv",),
     ),
     Step("ruff", [PY, "-m", "ruff", "check", "."], requires=("install",)),
+    Step("domain maps", [PY, "scripts/domain_maps.py", "--check"], requires=("venv",)),
     Step("script gates", [PY, "scripts/run_quality.py", "scripts"], requires=("install",)),
     Step("chromium", [PY, "-m", "playwright", "install", "chromium"], requires=("install",)),
     Step(
@@ -86,14 +90,52 @@ def primary_root() -> Path:
 
 def remote_is_behind(root: Path, commit: str) -> tuple[bool, str]:
     """Fetch the remote's main; return whether *commit* contains it, and its commit."""
-    fetched = git("fetch", "-q", REMOTE, PRIMARY_BRANCH, cwd=root)
+    fetched = git("fetch", "-q", "--no-tags", REMOTE, PRIMARY_BRANCH, cwd=root)
     if fetched.returncode != 0:
         raise SystemExit(
             f"error: fetching {REMOTE}/{PRIMARY_BRANCH} failed: {fetched.stderr.strip()}"
         )
-    remote = git("rev-parse", f"{REMOTE}/{PRIMARY_BRANCH}", cwd=root).stdout.strip()
+    remote = git("rev-parse", "FETCH_HEAD^{commit}", cwd=root).stdout.strip()
     contained = git("merge-base", "--is-ancestor", remote, commit, cwd=root).returncode == 0
     return contained, remote
+
+
+def release_tag(root: Path, name: str, commit: str) -> str:
+    """Capture an annotated release tag of the selected, version-matching commit."""
+    if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", name):
+        raise ValueError(f"tag {name!r} must have the form vMAJOR.MINOR.PATCH")
+    resolved = git("rev-parse", "--verify", f"refs/tags/{name}", cwd=root)
+    if resolved.returncode:
+        raise ValueError(f"local tag {name!r} does not exist")
+    tag = resolved.stdout.strip()
+    if git("cat-file", "-t", tag, cwd=root).stdout.strip() != "tag":
+        raise ValueError(f"tag {name!r} must be annotated")
+    target = git("rev-parse", "--verify", f"{tag}^{{commit}}", cwd=root)
+    if target.returncode or target.stdout.strip() != commit:
+        raise ValueError(f"tag {name!r} must point to {PRIMARY_BRANCH} at {commit[:12]}")
+    project = git("show", f"{commit}:pyproject.toml", cwd=root)
+    section = re.search(r"(?ms)^\[project\]\s*\n(.*?)(?=^\[|\Z)", project.stdout)
+    version = re.search(
+        r'''(?m)^version\s*=\s*["']([0-9]+\.[0-9]+\.[0-9]+)["']\s*(?:#.*)?$''',
+        section.group(1) if section else "",
+    )
+    if project.returncode or not version or name != f"v{version.group(1)}":
+        expected = f"v{version.group(1)}" if version else "a numeric project version"
+        raise ValueError(f"tag {name!r} does not match {expected} in committed pyproject.toml")
+    return tag
+
+
+def remote_tag(root: Path, name: str, tag: str) -> bool:
+    """Return whether the same tag is already published; refuse a different object."""
+    reference = f"refs/tags/{name}"
+    result = git("ls-remote", "--refs", REMOTE, reference, cwd=root)
+    if result.returncode:
+        raise ValueError(f"reading {REMOTE}/{reference} failed: {result.stderr.strip()}")
+    published = dict(line.split(maxsplit=1)[::-1] for line in result.stdout.splitlines())
+    current = published.get(reference)
+    if current is not None and current != tag:
+        raise ValueError(f"{REMOTE}/{reference} already names another object; tags are never overwritten")
+    return current == tag
 
 
 def remove_checkout(root: Path, checkout: Path) -> None:
@@ -139,11 +181,29 @@ def main(argv: list[str] | None = None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="replace")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--no-push", action="store_true", help="run the checks only")
+    parser.add_argument("--no-push", action="store_true",
+                        help="run every check without publishing main or a tag")
+    parser.add_argument(
+        "--tag", metavar="vMAJOR.MINOR.PATCH",
+        help="also publish this annotated tag of main after checking its package version; "
+             "omit to publish only main",
+    )
     args = parser.parse_args(argv)
 
     root = primary_root()
-    commit = git("rev-parse", PRIMARY_BRANCH, cwd=root).stdout.strip()
+    selected = git("rev-parse", "--verify", f"refs/heads/{PRIMARY_BRANCH}^{{commit}}", cwd=root)
+    if selected.returncode:
+        print(f"error: local {PRIMARY_BRANCH} does not name a commit; nothing pushed.")
+        return 1
+    commit = selected.stdout.strip()
+    tag = None
+    if args.tag:
+        try:
+            tag = release_tag(root, args.tag, commit)
+            remote_tag(root, args.tag, tag)
+        except ValueError as error:
+            print(f"error: {error}; nothing checked or pushed.")
+            return 1
     contained, remote = remote_is_behind(root, commit)
     if not contained:
         print(
@@ -152,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
             "force-push."
         )
         return 1
-    if remote == commit:
+    if remote == commit and not args.no_push and tag is None:
         print(f"{REMOTE}/{PRIMARY_BRANCH} already has {commit[:12]}; nothing to push.")
         return 0
 
@@ -168,7 +228,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: the private checkout could not be created: {added.stderr.strip()}")
         return 1
 
-    print(f"checking {commit[:12]} in {checkout.as_posix()}", flush=True)
+    target = f"{commit[:12]}" + (f" with tag {args.tag} ({tag[:12]})" if tag else "")
+    print(f"checking {target} in {checkout.as_posix()}", flush=True)
     results: dict[str, bool | None] = {}
     try:
         for step in STEPS:
@@ -196,26 +257,45 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     if args.no_push:
-        print(f"\nEvery check passed for {commit[:12]}; not pushed (--no-push).")
+        print(f"\nEvery check passed for {target}; not pushed (--no-push).")
         return 0
 
     contained, remote = remote_is_behind(root, commit)
     if not contained:
         print(f"error: {REMOTE}/{PRIMARY_BRANCH} moved during the checks; nothing pushed.")
         return 1
-    pushed = subprocess.run(
-        ["git", "push", REMOTE, f"{commit}:refs/heads/{PRIMARY_BRANCH}"], cwd=root, check=False
-    )
+    tag_published = False
+    if tag:
+        current = git("rev-parse", "--verify", f"refs/tags/{args.tag}", cwd=root)
+        if current.returncode or current.stdout.strip() != tag:
+            print(f"error: local tag {args.tag!r} changed during the checks; nothing pushed.")
+            return 1
+        try:
+            tag_published = remote_tag(root, args.tag, tag)
+        except ValueError as error:
+            print(f"error: {error}; nothing pushed.")
+            return 1
+    if remote == commit and (tag is None or tag_published):
+        print(f"\nEvery check passed; {REMOTE} already has {target}. Nothing pushed.")
+        return 0
+    refspecs = [f"{commit}:refs/heads/{PRIMARY_BRANCH}"]
+    if tag:
+        refspecs.append(f"{tag}:refs/tags/{args.tag}")
+    pushed = git("push", "--atomic", "--no-follow-tags", REMOTE, *refspecs, cwd=root)
     if pushed.returncode != 0:
-        print("error: the push was refused; nothing pushed.")
+        print(pushed.stderr.strip())
+        print(f"error: the push did not complete successfully; verify {REMOTE}'s refs before retrying.")
         return 1
     print(f"\npushed {commit[:12]} to {REMOTE}/{PRIMARY_BRANCH}.")
+    if tag:
+        print(f"published tag {args.tag} ({tag[:12]}).")
     head = git("rev-parse", PRIMARY_BRANCH, cwd=root).stdout.strip()
     if head != commit:
         print(
             f"note: {PRIMARY_BRANCH} moved on to {head[:12]} meanwhile; it goes with the next run."
         )
-    print("Now watch the CI run to green (.vorch/workflows/push-workflow.md, step 4).")
+    workflow = "release-workflow.md, step 6" if tag else "push-workflow.md, step 4"
+    print(f"Now watch the CI run to green (.vorch/workflows/{workflow}).")
     return 0
 
 

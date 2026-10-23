@@ -8,9 +8,9 @@ Entry points: console script `gusto` and `python -m gusto` both run
 `gusto.cli:main`; the windowless GUI script `gusto-autostart` runs
 `gusto.cli:autostart_main` (registered by `lifecycle.md`).
 
-Normal domain commands call `_remote`, which sends exactly one command
-operation through `gusto/client.py` (`service.md`) and only formats the
-result. Local commands act on the CLI machine without the service: `home`,
+Normal domain commands use `_remote`; each call sends one command operation
+through `gusto/client.py` (`service.md`). Editor round-trips and plain `log`
+make multiple calls as described below. Local commands act on the CLI machine without the service: `home`,
 `check --offline`, `serve`, `status|start|stop|restart`, `update`, `uninstall`
 and `install-skill`. They are thin wrappers over Core (`home`,
 `check --offline`), uvicorn with `gusto.web:app` (`serve`) and the lifecycle
@@ -38,9 +38,11 @@ classification (`service.md`), lifecycle behavior and result shapes
 **Parsing:**
 - `--json` exists only on leaf parsers and must follow the command path
   (`gusto shopping list --json`); `gusto --json list` is a usage error.
-- `--server URL` is accepted before the command and after it on every leaf
-  except `install-skill`, which rejects it (exit 2). Local commands other than
-  `home` accept and ignore it. Resolution order: `service.md`.
+- `--server URL` is accepted globally before the command. Every leaf except
+  `install-skill` also accepts it after the command; that placement is a usage
+  error for `install-skill` (exit 2), while its global placement is accepted
+  and ignored. Other local commands except `home` likewise ignore it.
+  Resolution order: `service.md`.
 - `--tag` is repeatable and comma-separated and is flattened; `--tags`
   (`new`, `set`) is one comma-separated value, and `set --tags ""` clears all
   tags.
@@ -115,6 +117,8 @@ classification (`service.md`), lifecycle behavior and result shapes
   both install paths before any startup output. Then `--json` prints one
   `{status:"starting", host, port, url, reload}` notice and runs uvicorn in the
   foreground; the notice is not readiness. Defaults: host `0.0.0.0`, port 8000.
+  The advertised local URL maps wildcard IPv4 to `127.0.0.1`, wildcard IPv6
+  to `[::1]`, and brackets other IPv6 literals without changing the bind host.
 - `autostart_main` runs `serve` with its arguments, appends stdout and stderr
   to `gusto-autostart.log` in the active data root (platform default when
   settings resolution fails), preserves `SystemExit` codes, returns 130 on
@@ -175,9 +179,6 @@ Every managed runtime carries the skill below `share/gusto/skill/gusto`;
   default port collides with that service. Development and tests start their
   own server on another port with `GUSTO_HOME` and pass `--server`, then verify
   `server_data_path`.
-- `serve --host ::` prints `http://127.0.0.1:<port>`, while
-  `gusto/service.py` uses `[::1]` for that bind; on a v6-only socket the
-  printed URL may not answer.
 - `gusto/cli.py` is about 1,900 lines, above the project's soft limit; split it
   along command groups behind `main` and `build_parser` before growing it.
 
@@ -185,8 +186,13 @@ Every managed runtime carries the skill below `share/gusto/skill/gusto`;
 
 This domain owns the shipped skill (`skill/gusto/SKILL.md` and
 `skill/gusto/references/*.md`), the CLI help texts and the CLI result and error
-messages in `gusto/cli.py`. A reasons file (`cli/agent-facing-text.md`) does
-not exist yet; until it does, treat every sentence of these texts as
-load-bearing, check `docs/audit-2026-09-22.md` and `docs/audit-2026-10-10.md`
-for the failures they record, and record the reason for each sentence you add
-or change.
+messages in `gusto/cli.py`. Before changing a sentence, read
+`cli/agent-facing-text.md` for its reason and supporting contract. Update its
+row whenever the sentence changes. Historical failures are labeled separately
+from reasons inferred from the current implementation.
+
+## References
+
+Read these only when your task matches - not by default.
+
+- Changing the shipped skill, CLI help, result or error text -> `cli/agent-facing-text.md`
