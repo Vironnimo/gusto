@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import os
+import subprocess
 import sys
 import tempfile
 from contextlib import redirect_stdout
@@ -64,8 +65,13 @@ with tempfile.TemporaryDirectory(prefix="gusto-push-test-") as directory:
 
         visited = []
 
-        def run(arguments, *, passed=True, during=None):
+        def private_checkouts():
+            return {path for path in (root / ".worktrees").glob(".push-*")
+                    if path.name != ".push-logs"}
+
+        def run(arguments, *, passed=True, during=None, preserved=False):
             visited.clear()
+            existing = private_checkouts()
 
             def check_step(step, checkout, log):
                 assert checkout.resolve().is_relative_to(sandbox)
@@ -81,9 +87,9 @@ with tempfile.TemporaryDirectory(prefix="gusto-push-test-") as directory:
                     patch.object(push, "run_step", side_effect=check_step), \
                     redirect_stdout(output):
                 result = push.main(arguments)
-            check(not [path for path in (root / ".worktrees").glob(".push-*")
-                       if path.name != ".push-logs"],
-                  "every attempted check must remove its private checkout")
+            if not preserved:
+                check(private_checkouts() == existing,
+                      "every check must remove only its own private checkout")
             return result, output.getvalue()
 
         git("init", "-q", "-b", "main")
@@ -99,11 +105,76 @@ with tempfile.TemporaryDirectory(prefix="gusto-push-test-") as directory:
         initial = commit("0.1.0")
         git("push", "-q", "--no-follow-tags", "origin", "main")
 
+        worktrees = root / ".worktrees"
+        old_log = worktrees / ".push-logs" / "earlier-run" / "fixture.log"
+        old_log.parent.mkdir(parents=True)
+        old_log.write_text("retained failure evidence\n", encoding="utf-8")
+        foreign = worktrees / ".push-active"
+        git("worktree", "add", "--detach", str(foreign), initial)
+        foreign_sentinel = foreign / "ongoing-check.txt"
+        foreign_sentinel.write_text("another run's work\n", encoding="utf-8")
+        unknown = worktrees / ".push-unknown"
+        unknown.mkdir()
+        unknown_sentinel = unknown / "unrecognized-owner.txt"
+        unknown_sentinel.write_text("preserve me\n", encoding="utf-8")
+
         # A dry check still runs when there is nothing new to push.
         result, output = run(["--no-push"])
         check(result == 0 and visited == [initial] and "--no-push" in output
               and remote_ref("refs/heads/main") == initial,
               "--no-push must check the captured commit even when it is already remote")
+        check(old_log.read_text(encoding="utf-8") == "retained failure evidence\n"
+              and foreign_sentinel.read_text(encoding="utf-8") == "another run's work\n"
+              and unknown_sentinel.read_text(encoding="utf-8") == "preserve me\n",
+              "startup must retain logs, another checkout and unrecognized leftover directories")
+
+        # Runs started in the same second own distinct logs, preserving prior output.
+        before = set(old_log.parent.parent.iterdir())
+        with patch.object(push.time, "strftime", return_value="same-second"):
+            first, _ = run(["--no-push"])
+            second, _ = run(["--no-push"])
+        new_logs = set(old_log.parent.parent.iterdir()) - before
+        check(first == second == 0 and len(new_logs) == 2
+              and all((path / "fixture.log").read_text(encoding="utf-8") == "fixture check\n"
+                      for path in new_logs),
+              "same-second checks must not overwrite each other's logs")
+
+        def overlapping_run():
+            before = private_checkouts()
+            contender = subprocess.run(
+                [sys.executable, "-c", (
+                    "from pathlib import Path; import sys; from scripts import push; "
+                    "push.primary_root = lambda: Path(sys.argv[1]); "
+                    "raise SystemExit(push.main(['--no-push']))"
+                ), str(root)], cwd=ROOT, capture_output=True, text=True, timeout=10,
+            )
+            check(contender.returncode == 1 and "another push check" in contender.stdout
+                  and private_checkouts() == before and all(path.exists() for path in before)
+                  and foreign_sentinel.exists() and old_log.exists(),
+                  "a concurrent public invocation must fail before touching the active run or its logs")
+
+        result, _ = run(["--no-push"], during=overlapping_run)
+        check(result == 0 and visited == [initial],
+              "the owning run must finish normally after refusing a concurrent invocation")
+
+        initial_tag = tag("v0.1.0")
+        real_git = push.git
+
+        def refuse_removal(*arguments, cwd):
+            if arguments[:2] == ("worktree", "remove"):
+                return subprocess.CompletedProcess(arguments, 1, "", "fixture: checkout locked")
+            return real_git(*arguments, cwd=cwd)
+
+        before = private_checkouts()
+        with patch.object(push, "git", side_effect=refuse_removal):
+            result, output = run(["--tag", "v0.1.0"], preserved=True)
+        retained = private_checkouts() - before
+        check(result == 1 and "preserved" in output and len(retained) == 1
+              and remote_ref("refs/tags/v0.1.0") is None
+              and all((path / "pyproject.toml").exists() for path in retained),
+              "Git removal refusal must preserve the owned checkout and block publication")
+        for path in retained:
+            git("worktree", "remove", "--force", str(path))
 
         git("tag", "v9.9.8")
         tag("v9.9.9")
@@ -113,7 +184,6 @@ with tempfile.TemporaryDirectory(prefix="gusto-push-test-") as directory:
                   and remote_ref(f"refs/tags/{invalid}") is None,
                   "malformed, missing, lightweight and version-mismatched tags must be refused")
 
-        initial_tag = tag("v0.1.0")
         result, output = run(["--tag", "v0.1.0", "--no-push"])
         check(result == 0 and visited == [initial] and "v0.1.0" in output
               and remote_ref("refs/tags/v0.1.0") is None,
