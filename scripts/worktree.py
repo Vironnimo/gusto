@@ -40,15 +40,21 @@ MARKER_FILE_NAME = ".vorch-worktree"
 """JSON in each worktree's root (git-ignored): name, branch, port. Dev tooling reads it
 to pick the worktree's port or data directory."""
 
-SETUP_COMMANDS: list[list[str]] = []
+_VENV_PYTHON = ".venv/Scripts/python.exe" if sys.platform == "win32" else ".venv/bin/python"
+
+SETUP_COMMANDS: list[list[str]] = [
+    [sys.executable, "-m", "venv", ".venv"],
+    [_VENV_PYTHON, "-m", "pip", "install", "-q", "-e", ".[web,test,dev]"],
+]
 """Commands run in a new worktree, in order; a failure removes the worktree again.
 They get VORCH_WORKTREE_NAME, VORCH_WORKTREE_PATH, VORCH_WORKTREE_PORT and
-VORCH_PRIMARY_ROOT in their environment. Install each worktree's own dependencies
+VORCH_PRIMARY_ROOT in their environment; a relative executable is resolved
+inside the new worktree. Install each worktree's own dependencies
 (for example ``["npm", "ci", "--prefix", "webui"]``); never link folders of another
 checkout into a worktree, and never reinstall an editable package into an
 environment that other checkouts share."""
 
-PORT_BASE: int | None = None
+PORT_BASE: int | None = 8100
 """When set, each worktree gets its own block of ports starting above this one."""
 PORTS_PER_WORKTREE = 10
 
@@ -277,7 +283,8 @@ def create(trees: Worktrees, args: argparse.Namespace) -> int:
     }
     for command in SETUP_COMMANDS:
         print(f"setup: {' '.join(command)}", flush=True)
-        executable = shutil.which(command[0]) or command[0]
+        local = path / command[0]
+        executable = str(local) if local.is_file() else shutil.which(command[0]) or command[0]
         result = subprocess.run([executable, *command[1:]], cwd=path, env=env, check=False)
         if result.returncode != 0:
             trees.remove(path, name, force=True)
