@@ -7,8 +7,9 @@ The service domain is the versioned anonymous LAN API over Core (`gusto/api.py`)
 `gusto/api.py` defines one FastAPI `APIRouter` under `/api/v1` with three routes:
 health, command and events. It has no app of its own: `gusto.web:app` mounts it,
 so API, browser UI and PWA run in one process (the service). The API validates
-and materializes transport input, calls exactly one Core function per command
-and serializes the result. Domain rules, locking and the change journal stay in
+and materializes transport input, delegates the requested operation to Core
+and serializes the result; some handlers also read related data for presentation.
+Domain rules, locking and the change journal stay in
 Core (`catalog.md`, `shopping.md`, `storage.md`).
 
 `gusto/client.py` resolves the server URL, sends one command envelope per call,
@@ -24,21 +25,29 @@ Not owned here:
 
 The API is anonymous by design for a trusted home LAN: no tokens or auth
 headers, also not for EventSource. Do not add authentication workarounds and do
-not expose the port to the public internet.
+not expose the port to the public internet. The web host checks browser-origin
+metadata before writes, including command requests; headerless non-browser
+clients remain supported (`web.md` -> Interfaces).
 
 ## Terms
 
 ### Command operation
 
-**Definition:** A dotted name such as `recipe.content.set` registered in `api._OPERATIONS`; one per normal CLI domain command. **Not** a CLI command name: lifecycle and local commands have no operation.
+A dotted name such as `recipe.content.set` registered in `api._OPERATIONS` that
+selects one service action. Not a CLI command name: editor workflows compose
+several operations, while lifecycle and local commands have no operation.
 
 ### Uncertain outcome
 
-**Definition:** A failed command whose effect is unknown - it may already have been applied - marked `outcome_unknown: true`. **Not** a rejection: a definite rejection proves nothing changed.
+A failed command whose effect is unknown - it may already have been applied -
+marked `outcome_unknown: true`. Not a rejection: a definite rejection proves
+nothing changed.
 
 ### Change event
 
-**Definition:** One SSE message `{revision, resources}` naming which sources of truth (`catalog`, `log`, `favorites`, `shopping`) changed at a persisted change revision; it does not name entities.
+A notification that named sources of truth changed at a persisted change
+revision, telling clients what to refresh rather than which entities changed.
+The wire contract is in Interfaces; persisted revisions belong to `storage.md`.
 
 ## Interfaces
 
@@ -62,7 +71,8 @@ gates compare `data_path` before acting.
   and may be `null` (`favorites.match` without a match).
 - Failure: `{ok:false, error}` with a German message and status 400
   (validation or domain rejection), 404 (unknown entity), 413 (size) or 500 with
-  `outcome_unknown:true`.
+  `outcome_unknown:true`. The web host rejects foreign browser writes with 403
+  and the same definite-failure envelope before the API runs.
 - 404 vs 400 comes from the German prefix of Core's `ValueError` message
   (`_not_found_error`: `Kein Rezept `, `Kein archiviertes Rezept `,
   `Kein Einkaufsbedarf `, `Kein Einkauf-Item `, `Kein Bild `,
@@ -84,7 +94,8 @@ gates compare `data_path` before acting.
 **Operations:** `_OPERATIONS` covers every normal CLI domain command (49
 entries); lifecycle and local commands are unknown operations (400). Handlers
 validate strictly through `_arguments` (unknown or missing names are 400 and
-named) and typed helpers; `null` for an optional field means absent.
+named) and typed helpers. Nullable string, integer and list fields treat `null`
+as absent; omittable boolean flags still require JSON booleans when supplied.
 `recipe.update`, `image.set` and `favorites.product.set` reject a request
 without an effective change, while an empty string is a real change.
 
@@ -95,8 +106,9 @@ operation rejects them. Each is exactly `{name, filename, content_base64}`;
 content is strict Base64 of at most 25 MiB decoded (413). The API writes them
 into a private `tempfile.TemporaryDirectory(prefix="gusto-api-")`, passes the
 paths to Core (which copies what it keeps) and always removes the directory.
-Commands without attachments allocate no directory. Server filesystem paths
-never appear in the API.
+Commands without attachments allocate no directory. Clients upload file bytes,
+never a server-side source path; health and failure diagnostics can expose
+server paths.
 
 **Events** `GET /api/v1/events?after=N` (Server-Sent Events):
 - `after` must be a canonical nonnegative integer; `-1`, `+1` or `01` are 400
@@ -169,10 +181,10 @@ never appear in the API.
   because reads also use POST. Never list a mutation there.
 - Health reads the change journal on every call. A corrupt `data/changes.json`
   makes `/api/v1/health` a plain-text 500: `gusto home` then reports the server
-  as unreachable, lifecycle health checks fail, every mutation reports an
+  as unreachable, lifecycle health checks fail, committed mutations report an
   uncertain outcome and the event stream breaks, while domain reads still work.
-  `check` does not diagnose the journal (probe against a scratch store,
-  2026-10-23).
+  `check` reports the journal with its file path in `invalid_data_files`; it
+  neither repairs nor resets it. Recovery belongs to `storage/change-journal.md`.
 - A lost response cannot be told apart from a failure before execution. Do not
   "fix" uncertainty by retrying or by downgrading connection errors to
   rejections.
@@ -182,3 +194,19 @@ never appear in the API.
   client limit is inclusive. The 40 MiB body limit leaves room for one Base64
   attachment plus the envelope.
 - Each open EventSource reads the journal every 0.2 s in the thread pool.
+
+## Agent-facing text
+
+This domain owns the API validation/errors and client failure/recovery messages
+in `gusto/api.py` and `gusto/client.py`, which the CLI passes to agents. Before
+changing, adding or deleting a sentence, read `service/agent-facing-text.md`
+and update its reason row. Domain messages passed through from Core keep their
+owning catalog, shopping or storage contract; CLI presentation and the shipped
+skill belong to `cli.md`.
+
+## References
+
+Read these only when your task matches - not by default.
+
+- Changing API or client runtime messages shown to agents -> `service/agent-facing-text.md`
+- Changing health revisions, event replay or journal-failure recovery -> `storage/change-journal.md`

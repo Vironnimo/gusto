@@ -110,12 +110,23 @@ wird in den zum Antwortzeitpunkt aktuellen lokalen Stand gemergt. Sie ersetzt
 ihn nicht blind: Änderungen während einer laufenden Anfrage bleiben erhalten.
 Ändert sich die Liste während eines Syncs, folgt ein weiterer Sync.
 
-Sync läuft beim Start, nach lokalen Änderungen, beim `online`-Ereignis und bei
-einem `shopping`-Änderungsereignis des Dienstes. Offline bleiben Änderungen
-lokal. Bei Netzwerk- oder Serverfehlern bleibt der lokale Stand erhalten;
-online versucht der Client bis zu fünf Wiederholungen mit wachsendem Abstand.
-Erfolg oder eine neue Online-Verbindung setzt dieses Wiederholungsbudget
-zurück.
+Sync runs at startup, after local changes, on `online`, and on a service
+`shopping` event. Offline changes remain local. Network failures and non-2xx
+responses other than 400 preserve local state and schedule up to five retries
+with backoff. Success or a new online connection resets that retry budget.
+
+A 400 rejects the whole merge before any write. Its optional `detail` explains
+the validation failure; the browser renders it as plain text and keeps every
+local item. It pauses the identical rejected payload, including timer and
+event-triggered attempts, until the local state changes. For a stale visible
+item whose recipe was purged elsewhere, removing that item creates a valid
+tombstone and lets the other local changes sync. The item can then be re-added
+without the missing source. Success clears the rejection notice. No local
+record is discarded or automatically repaired.
+
+A failure after persistence returns HTTP 500 with `outcome_unknown: true`,
+never a definite 400 rejection. Full-state sync may safely retry it because
+already accepted versions do not cause another write.
 
 Online-Änderungen kommen über `/api/v1/events`. Ein `favorites`-Ereignis lädt
 den Präferenzkatalog neu; ein `catalog`-Ereignis aktualisiert Rezeptquellen,

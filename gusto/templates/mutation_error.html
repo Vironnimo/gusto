@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Speicherstand prüfen · Gusto</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="masthead">
+    <a class="brand" href="/">
+      <span class="brand-mark" aria-hidden="true">❖</span>
+      <span class="brand-text">Gusto</span>
+    </a>
+  </header>
+  <main class="wrap" id="main-content">
+    <div class="empty" data-outcome-unknown>
+      <p class="eyebrow">Aktion unterbrochen</p>
+      <h1 class="page-title">Speicherstand prüfen</h1>
+      <p class="error" role="alert">{{ notice }}</p>
+      <a class="btn" href="{{ destination }}">{{ label }}</a>
+    </div>
+  </main>
+</body>
+</html>

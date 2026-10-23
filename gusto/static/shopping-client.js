@@ -18,6 +18,8 @@
   var sourceReferences = {};
   var memoryItems = [];
   var storageWriteFailed = false;
+  var rejectedPayload = null;
+  var syncRejection = "";
 
   // --- localStorage binding --------------------------------------------------
 
@@ -290,6 +292,16 @@
     }
     while (clientEl.lastChild && clientEl.lastChild !== addPanel) {
         clientEl.removeChild(clientEl.lastChild);
+    }
+
+    if (syncRejection) {
+      var notice = el("div", "error");
+      notice.id = "shop-sync-error";
+      notice.setAttribute("role", "alert");
+      notice.textContent = "Abgleich angehalten: " + syncRejection
+        + " Deine Einträge bleiben auf diesem Gerät. Entferne den betroffenen Eintrag"
+        + " und füge ihn bei Bedarf neu hinzu. Bei einer Änderung versuchen wir es erneut.";
+      clientEl.appendChild(notice);
     }
 
     if (openItems.length === 0 && doneItems.length === 0) {
@@ -838,10 +850,12 @@
   function sync() {
     if (!navigator.onLine) return;
     if (syncing) { pending = true; return; } // changed during sync -> follow up
+    var payload = JSON.stringify({ items: loadItems() });
+    // A rejected full state cannot succeed unchanged. Keep it locally and
+    // let an actual list change unblock sync, including an in-flight edit.
+    if (payload === rejectedPayload) return;
     syncing = true;
     pending = false;
-
-    var payload = JSON.stringify({ items: loadItems() });
 
     fetch(SYNC_URL, {
       method: "POST",
@@ -849,17 +863,34 @@
       body: payload,
     })
       .then(function (res) {
+        if (res.status === 400) {
+          return res.json().catch(function () { return {}; }).then(function (data) {
+            var error = new Error(data && typeof data.detail === "string"
+              ? data.detail : "Ein Eintrag konnte nicht übernommen werden.");
+            error.syncRejected = true;
+            throw error;
+          });
+        }
         if (!res.ok) throw new Error("sync failed: " + res.status);
         return res.json();
       })
       .then(function (data) {
         resetRetry();
+        rejectedPayload = null;
+        syncRejection = "";
         var incoming = data && Array.isArray(data.items) ? data.items : [];
         // merge against the CURRENT state, do not blindly overwrite.
         saveItems(mergeInto(loadItems(), incoming));
         render();
       })
-      .catch(function () {
+      .catch(function (error) {
+        if (error.syncRejected) {
+          resetRetry();
+          rejectedPayload = payload;
+          syncRejection = error.message;
+          render();
+          return;
+        }
         // Network/server error -> keep the local state, do not render, and
         // retry with backoff so an offline change is not left unsynchronized
         // until an unrelated event happens to fire.

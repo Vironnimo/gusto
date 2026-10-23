@@ -22,6 +22,7 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 from PIL import Image
+from fastapi.testclient import TestClient
 from starlette.datastructures import UploadFile
 from starlette.requests import Request
 
@@ -193,6 +194,90 @@ def test_shopping_sync_keeps_server_responsive():
     asyncio.run(exercise())
 
 
+def test_browser_writes_require_same_origin():
+    client = TestClient(web.app, follow_redirects=False)
+    rejected = [
+        {"Origin": "https://foreign.example"},
+        {"Origin": "http://testserver:81"},
+        {"Origin": "null"},
+        {"Origin": "http://testserver:invalid"},
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Sec-Fetch-Site": "same-site"},
+        {"Referer": "https://foreign.example/form"},
+    ]
+    payload = json.dumps({"operation": "shopping.add", "arguments": {"text": "Fremd"}})
+    before = web.core.shopping_load()
+    for headers in rejected:
+        # text/plain avoids a browser CORS preflight, so the guard must run
+        # before the mounted command API parses even a perfectly valid body.
+        response = client.post("/api/v1/command", content=payload,
+                               headers={**headers, "Content-Type": "text/plain"})
+        check(response.status_code == 403 and response.json().get("ok") is False,
+              f"foreign browser command must be definitely rejected: {headers}")
+        response = client.post("/shopping/add", data={"text": "Fremd"}, headers=headers)
+        check(response.status_code == 403,
+              f"foreign browser forms must be rejected: {headers}")
+    check(web.core.shopping_load() == before, "rejected writes must not change the store")
+    for headers in ({}, {"Origin": "http://TESTSERVER:80", "Sec-Fetch-Site": "same-origin"},
+                    {"Referer": "http://testserver/shopping"}, {"Sec-Fetch-Site": "none"}):
+        response = client.post("/shopping/add", data={"text": "Erlaubt"}, headers=headers)
+        check(response.status_code == 303,
+              "same-origin browser forms and headerless CLI requests must keep working")
+    response = client.post("/api/v1/command", content=payload)
+    check(response.status_code == 200 and response.json().get("ok") is True,
+          "the command API must remain usable by headerless CLI clients")
+    response = client.get("/api/v1/health", headers=rejected[0])
+    check(response.status_code == 200, "foreign read requests must remain read-only and usable")
+
+
+def test_saved_mutations_never_look_rejected():
+    client = TestClient(web.app, follow_redirects=False)
+    recipe = web.core.add_recipe("Ungewisser Speicherstand")
+    with patch.object(web.core, "_record_change", side_effect=OSError("journal unavailable")):
+        response = client.post(f"/recipe/{recipe.slug}/cooked")
+    check(response.status_code == 500 and "data-outcome-unknown" in response.text,
+          "a committed cooking entry must show uncertainty instead of 404")
+    check(len(web.core.load_log()) == 1,
+          "a post-save failure must keep exactly the one cooking entry it committed")
+    check('href="/log"' in response.text and "<form" not in response.text
+          and "data-gusto-live" not in response.text,
+          "uncertainty must offer a read link without a resubmit form or live reload")
+
+    with patch.object(web.core, "_record_change", side_effect=OSError("journal unavailable")):
+        response = client.post("/new", data={"title": "Bereits gespeichert"})
+    check(response.status_code == 500 and web.core.get("bereits-gespeichert") is not None,
+          "a saved recipe must not return a validation form with HTTP 400")
+    with patch.object(web.core, "_record_change", side_effect=OSError("journal unavailable")):
+        response = client.post(f"/recipe/{recipe.slug}/delete")
+    check(response.status_code == 500 and web.core.get_archived(recipe.slug) is not None,
+          "moving the recipe must not turn a post-save failure into not-found")
+
+    with patch.object(web.core, "shopping_toggle", side_effect=web.core.PostMutationError("saved")), \
+            patch.dict(web.templates.env.globals,
+                       {"gusto_change_state": lambda: (_ for _ in ()).throw(ValueError("bad journal"))}):
+        response = client.post("/shopping/item/toggle")
+    check(response.status_code == 500 and 'href="/shopping"' in response.text,
+          "the recovery page must render without reading the failed journal")
+
+    with patch.object(web.core, "shopping_merge", side_effect=web.core.PostMutationError("saved")):
+        response = client.post("/api/shopping/sync", json={"items": []})
+    check(response.status_code == 500 and response.json().get("outcome_unknown") is True,
+          "a saved sync must report uncertainty, never invalid input")
+    with patch.object(web.core, "shopping_merge", side_effect=ValueError("invalid recipe source")):
+        response = client.post("/api/shopping/sync", json={"items": []})
+    check(response.status_code == 400 and response.json().get("detail") == "invalid recipe source",
+          "a rejected sync must include its validation detail for recovery")
+    with patch.object(web.core, "update_recipe_image"), \
+            patch.object(web.core, "set_recipe_cover", side_effect=ValueError("missing image")):
+        response = client.post("/recipe/any/images/image/set", data={"cover": "1"})
+    check(response.status_code == 500 and "data-outcome-unknown" in response.text,
+          "a failed cover change after saved metadata must not imply total rejection")
+    check(client.post("/recipe/missing/cooked").status_code == 404,
+          "missing recipes before a write remain definite not-found errors")
+    check(client.post("/new", data={"title": "Invalid", "duration": "not a number"}).status_code == 400,
+          "validation before a write must still return the submitted form")
+
+
 def test_tag_filters_keep_stale_selections_removable():
     # A bookmark can outlive the last recipe carrying its tag. Every active
     # tag must retain a removal link, including case-duplicate query values.
@@ -238,6 +323,20 @@ def test_prepared_photo_translates_only_preparation_errors():
     check(isinstance(caught, ValueError) and "gelesen" in str(caught),
           f"unreadable photos must yield the German notice, got {caught!r}")
 
+    # A failed upload copy must also clean the temporary source it opened.
+    temporary_file = tempfile.NamedTemporaryFile
+    with tempfile.TemporaryDirectory() as scratch:
+        with patch.object(web.tempfile, "NamedTemporaryFile",
+                          side_effect=lambda **kwargs: temporary_file(dir=scratch, **kwargs)), \
+                patch.object(web.shutil, "copyfileobj", side_effect=OSError("disk full")):
+            try:
+                with web._prepared_photo(upload_png(), None):
+                    raise AssertionError("a failed copy must never reach Core")
+            except OSError:
+                pass
+        check(not list(Path(scratch).iterdir()),
+              "a failed upload copy must not leave its partial temporary file behind")
+
 
 def main():
     test_xss_is_neutralized()
@@ -247,6 +346,8 @@ def main():
     test_shopping_error_notice_is_fixed_text()
     test_return_destination_stays_local()
     test_shopping_sync_keeps_server_responsive()
+    test_browser_writes_require_same_origin()
+    test_saved_mutations_never_look_rejected()
     test_tag_filters_keep_stale_selections_removable()
     test_prepared_photo_translates_only_preparation_errors()
     print(f"OK: {checks} checks passed")
