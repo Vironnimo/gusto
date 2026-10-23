@@ -20,6 +20,13 @@ How to write and change Gusto's quality gates. The rules on what to test are in 
 
 ## Assertions
 
+For a test-suite refactor, compare the affected owner's line and branch coverage
+before and after with Coverage.py from the `test` extra. Collect child Python
+processes with its `subprocess` patch when the gate tests CLI or lifecycle
+subprocesses. Keep reports and coverage configuration under the checkout's
+`.tmp/`; coverage instrumentation must preserve the gate's isolated environment.
+Coverage is audit evidence, not a new default quality gate or percentage target.
+
 - Exact strings only for stable contracts: JSON keys and values the CLI or API promises, persisted file formats, exit codes, `outcome_unknown`, the Markdown H1 rule. German UI and error prose is editable; assert structured fields, status codes or the presence of an identifier instead of whole sentences.
 - CLI behavior is checked through the JSON result and exit code, the way an agent sees it.
 
