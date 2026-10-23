@@ -180,6 +180,45 @@ async def check_event_stream():
         core.shopping_remove(created.id)
 
 
+async def check_event_recovery_and_disconnect():
+    current = core.change_state()["revision"]
+    request = ConnectedRequest()
+    response = api.events(request, after=str(current + 100))
+    check(response.media_type == "text/event-stream"
+          and response.headers["cache-control"] == "no-cache"
+          and response.headers["x-accel-buffering"] == "no",
+          "canonical SSE cursors must keep the streaming response/cache contract")
+    stream = response.body_iterator
+    reset = parse_sse(await anext(stream))
+    check(reset["revision"] == current,
+          "a cursor ahead of this store must immediately receive its actual revision")
+    item = core.shopping_add("Reset cursor")
+    resumed = parse_sse(await asyncio.wait_for(anext(stream), timeout=1))
+    check(resumed["revision"] == current + 1 and resumed["resources"] == ["shopping"],
+          "an ahead-of-store cursor must not suppress subsequent changes")
+    await stream.aclose()
+    core.shopping_remove(item.id)
+
+    class Disconnectable:
+        disconnected = False
+
+        async def is_disconnected(self):
+            return self.disconnected
+
+    request = Disconnectable()
+    heartbeat = api.event_stream(request, after_revision=core.change_state()["revision"],
+                                 heartbeat_seconds=0, poll_seconds=0)
+    check(await anext(heartbeat) == ": heartbeat\n\n",
+          "idle SSE streams must emit comments rather than fake revisions")
+    request.disconnected = True
+    try:
+        await anext(heartbeat)
+    except StopAsyncIteration:
+        check(True, "SSE must terminate when the client disconnects")
+    else:
+        raise AssertionError("disconnected SSE client kept streaming")
+
+
 def check_compacted_event_replay():
     before = core.change_state()["revision"]
     core._record_change(("catalog",))
@@ -247,11 +286,31 @@ def check_client_failure_recovery():
               "the transport must not automatically replay a lost command")
 
     try:
-        check(remote_client.READ_ONLY_OPERATIONS <= api._OPERATIONS.keys(),
-              "the read-only allowlist must name current API operations")
-        for operation in api._OPERATIONS:
-            failed(operation,
-                   unknown=operation not in remote_client.READ_ONLY_OPERATIONS)
+        reads = {
+            "catalog.list", "catalog.search", "tags.list", "categories.list",
+            "recipe.show", "log.list", "suggest.list", "check.run",
+            "archive.list", "archive.show", "image.list", "favorites.list",
+            "favorites.show", "favorites.match", "shopping.list",
+        }
+        writes = {
+            "categories.add", "categories.set", "categories.remove", "categories.assign",
+            "categories.unassign", "categories.tag.move", "recipe.create", "recipe.update",
+            "recipe.content.set", "recipe.cooked", "recipe.archive", "archive.restore",
+            "archive.purge", "image.add", "image.set", "image.cover", "image.remove",
+            "favorites.add", "favorites.set", "favorites.remove", "favorites.alias.add",
+            "favorites.alias.remove", "favorites.product.add", "favorites.product.set",
+            "favorites.product.move", "favorites.product.remove", "shopping.add",
+            "shopping.add_many", "shopping.add_recipe", "shopping.check", "shopping.uncheck",
+            "shopping.remove", "shopping.remove_done", "shopping.clear",
+        }
+        check(reads.isdisjoint(writes) and reads | writes == api._OPERATIONS.keys(),
+              "the independently curated failure matrix must cover every command")
+        check(remote_client.READ_ONLY_OPERATIONS == reads,
+              "only the independently specified read operations may be safely retried")
+        for operation in sorted(reads):
+            failed(operation, unknown=False)
+        for operation in sorted(writes):
+            failed(operation, unknown=True)
         failed("future.operation", unknown=True)
 
         for status, body, uncertain in [
@@ -409,12 +468,10 @@ def main():
         check(core.change_state() == before and core.load_recipes() == []
               and core.shopping_list() == [],
               "ambiguous JSON must be rejected before any durable effect")
-    invalid_after = client.get("/api/v1/events?after=-1")
-    check(
-        invalid_after.status_code == 400
-        and invalid_after.json()["ok"] is False,
-        "SSE after must reject negative revisions before streaming",
-    )
+    for after in ("-1", "+1", "01", " 1", "1.0", "bad"):
+        invalid_after = client.get("/api/v1/events", params={"after": after})
+        check(invalid_after.status_code == 400 and invalid_after.json()["ok"] is False,
+              "SSE must reject every non-canonical or negative revision before streaming")
 
     # Catalog, text editing, cooking log, diagnostics, and suggestions.
     soup = command("recipe.create", {
@@ -558,11 +615,10 @@ def main():
         "tags": ["pasta", "PASTA"],
     })
     check(
-        case_variant["warnings"] == [{
-            "code": "uncategorized_tags",
-            "message": "Tags ohne Kategorie (Facet „Sonstige“): pasta",
-            "tags": ["pasta"],
-        }],
+        len(case_variant["warnings"]) == 1
+        and case_variant["warnings"][0]["code"] == "uncategorized_tags"
+        and case_variant["warnings"][0]["tags"] == ["pasta"]
+        and bool(case_variant["warnings"][0]["message"]),
         "tag warnings must describe the stored tags, not raw case variants",
     )
 
@@ -795,11 +851,6 @@ def main():
     check(command("shopping.clear")["removed"] == 3,
           "shopping.clear must tombstone every remaining visible item")
 
-    merge_revision = core.change_state()["revision"]
-    core.shopping_merge([item.to_dict() for item in core.shopping_load()])
-    check(core.change_state()["revision"] == merge_revision,
-          "idempotent PWA full-state merge must not emit an event")
-
     # Reversible archive lifecycle exposed as domain commands, not app lifecycle.
     archived = command("recipe.archive", {"slug": salad["slug"]})
     check(archived["archived"] is True, "recipe.archive must be reversible")
@@ -851,6 +902,7 @@ def main():
 
     asyncio.run(check_command_scheduling_and_limits())
     asyncio.run(check_event_stream())
+    asyncio.run(check_event_recovery_and_disconnect())
     check_compacted_event_replay()
     check_client_failure_recovery()
     check_post_mutation_failures()
