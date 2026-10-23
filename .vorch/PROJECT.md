@@ -1,298 +1,111 @@
 # Project Context
 
-This is the **single source of truth for project-specific knowledge**. Every agent reads it before starting work and maintains it when authorized repository work changes project facts. Work as a standalone agent; no Vorch role is required.
-
-Remove sections that don't apply to your project. Keep entries short and factual — this is working notes for agents, not polished documentation.
-
 ## Project
 
-Gusto is a self-hosted, German-language recipe system for home use on Windows
-and Linux. A Raspberry Pi is the first Linux deployment target, not an
-exclusive platform. Recipes remain portable Markdown files while metadata,
-cooking history, and the shopping list live in JSON. Every user capability must
-also be available through the JSON-capable CLI so an agent can operate the product.
+Gusto is a self-hosted, German-language recipe system for one household on Windows and Linux, reachable from every device on the local network. It replaces paper recipes and lets an agent answer questions such as "what should I cook today?" or "what can I make with these ingredients?" through the CLI. Recipes are portable Markdown files; metadata, cooking log, shopping list and preferred products live in JSON next to them.
+
+One per-user Gusto service owns the data store and serves the browser UI, the shopping PWA and the anonymous LAN command API. The `gusto` CLI and the browser are thin clients of that running service; agents operate Gusto through the CLI with `--json`, guided by the shipped skill in `skill/gusto/`.
 
 ## Architecture
 
-Python 3.10+ with a stdlib-only Core and CLI HTTP client. Windows releases carry
-a pinned, hash-verified app-private Python; Linux uses a suitable system Python.
-FastAPI, Jinja2, Markdown, Uvicorn, python-multipart, and Pillow form the
-always-installed service/UI runtime. Core owns recipe, search, log, suggestion, shopping-list,
-and sync behavior. The versioned anonymous LAN API exposes that Core; browser
-and normal CLI commands are thin clients of the same running service with no
-tokens and no local CLI fallback. A persisted revision journal drives
-server-sent change events. The shopping PWA keeps its localStorage,
-full-state last-writer-wins sync, tombstones, offline app shell, and offline
-preferred-product display. Cross-process transaction locks serialize mutations
-per catalog, favorites, or shopping source of truth while allowing independent
-domains and reads to run in parallel.
+**Stack:** Python 3.10+ (CI runs 3.10 and 3.14). Core (`gusto/core.py`) and the CLI HTTP client use only the standard library. The service adds FastAPI, Uvicorn, Jinja2, Markdown, python-multipart and Pillow (`pyproject.toml` extra `web`; unpinned). Browser code is plain JavaScript and CSS without a build step, framework or TypeScript. Windows releases carry a pinned, hash-verified app-private CPython; Linux uses the system Python.
 
-## Conventions
+**Layers:**
+```
+gusto/core.py        Core: all domain behavior and persistence; imports no other gusto module
+gusto/api.py         versioned anonymous command API and change events over Core
+gusto/web.py         FastAPI host: mounts the API, serves templates/, static/ and the PWA
+gusto/client.py      stdlib HTTP client the CLI uses to reach the service
+gusto/cli.py         CLI: domain commands only through client; lifecycle and recovery commands local
+gusto/service.py     per-user autostart and service control; update.py, uninstall.py and
+                     skill_install.py build on it; install.py is the bootstrap installer
+skill/gusto/         the agent skill shipped in every runtime
+scripts/, tests/     developer harness: quality gates, browser checks, release build, Vorch tooling
+```
 
-Recipes contain no frontmatter. Metadata is linked to Markdown by the filename
-slug; the metadata title and first Markdown H1 are one enforced contract.
-Reversible recipe snapshots live under `archive/<slug>/`. Product copy and data
-fields are German; code identifiers are English.
-Writes to JSON are atomic. Features are implemented in Core, API, and CLI
-before web, and every CLI command accepts `--json`. Complete Core mutations,
-not only their final JSON replacement, hold the matching resource lock. Normal
-domain commands require a reachable server; only explicit lifecycle/recovery
-commands (`serve`, `home`, service control, update/uninstall,
-`install-skill`, and `check --offline`) operate locally. MCP is explicitly out
-of scope.
+Each `gusto/*.py` module's top-level functions are its interface; names with a leading underscore are internal. Soft limit: about 1,000 lines per source file. `core.py` and `cli.py` are above it today; do not grow them further without splitting along the domain boundaries below.
 
-## Development
+Split an oversized source file into focused internal units behind the owning module and its public contract: a large file costs context on every inspection and edit, and cohesion alone does not justify a multi-thousand-line file. Avoid arbitrary chunks, method-binding tables or compressed formatting; a split follows the units a typical edit would read on their own.
 
-`scripts/build_release.py` creates a schema-2 manifest plus individually hashed
-Wheel, installer, bootstrap, and pinned Windows Python assets. There is no outer
-Gusto release ZIP.
-`.github/workflows/quality.yml` is the reusable PR/main/release gate: all script
-checks run on Windows and Linux with Python 3.10 and the current feature
-release, while real Chromium browser/PWA checks run on both operating systems.
-`.github/workflows/release.yml` verifies version tags, builds the release once,
-smoke-installs that exact artifact on fresh Windows and Linux runners, creates
-build-provenance attestations, and only then publishes the assets. Public
-`install.ps1`/`install.sh` bootstraps install the application and its
-version-matched skill payload. Agent-host registration remains separate and
-explicit through `gusto install-skill vbot`. Managed application roots use
-versioned side-by-side runtimes and a current pointer under
-`%LOCALAPPDATA%\Programs\Gusto` or `~/.local/opt/gusto`; data stays separate
-under `%LOCALAPPDATA%\Gusto` or the XDG user-data directory. Installation is
-current-user only. Windows needs no preinstalled Python and builds each Gusto
-version as a venv from the app-private runtime; Linux needs Python 3.10+.
-Installation registers a limited Windows logon task or `systemd --user`, starts
-immediately, and must pass health without admin/root. `gusto update` is
-the sole normal update path and rolls back a failed activation; installer
-reruns require explicit repair mode. Browser/PWA tests always use throwaway
-data through `GUSTO_HOME`. Checkout scratch files live under `.tmp/`:
-`gusto/_temp.py` configures Python and inherited `TMPDIR`/`TEMP`/`TMP` on source
-import; standalone tests/scripts initialize it before allocating their data.
-Browser data and screenshots share unique `.tmp/browser-*/` directories; PWA
-runs use `.tmp/pwa-*/`. CI bootstraps and release build intermediates follow the
-same policy. Installed packages keep the caller's temp policy, and atomic
-same-filesystem staging remains beside its target.
+**Agent-first:** every user capability exists in Core, the API and the CLI (with `--json`) before or together with the web UI; never build a feature only in the browser. When CLI, service or installation behavior changes, the shipped skill (`skill/gusto/`) changes in the same commit (`cli.md`).
 
-## Testing
+**One service, thin clients:** normal CLI domain commands require a reachable server and never fall back to local Core or file access; only the explicit lifecycle and recovery commands run locally (`service.md`, `cli.md`).
 
-Tests are standalone Python scripts rather than a pytest suite. Browser and PWA
-checks start isolated servers and drive real Chromium through Playwright.
-`python scripts/run_quality.py scripts|browser|all` is the shared
-cross-platform entry point used locally and by CI.
-The script gate covers every `tests/test_*.py`, including web rendering.
-Browser/PWA checks allocate unique throwaway stores and ports and verify the
-health endpoint's data path before testing.
+**Persistence:** only Core reads and writes the data store. JSON writes are atomic, and every Core mutation holds the cross-process lock of its source of truth (catalog, favorites or shopping) for its whole duration (`storage.md`). Clients, agents and tests never edit the store's Markdown or JSON files directly.
 
-Quality gates:
-
-- `python tests/test_packaging.py`
-- `python tests/test_api.py`
-- `python tests/test_shopping.py`
-- `python tests/test_favorites.py`
-- `python tests/test_merge.py`
-- `python tests/test_concurrency.py`
-- `python tests/test_recipes.py`
-- `python tests/test_cli.py`
-- `python tests/test_web_render.py`
-- `python tests/test_agent_contract.py`
-- `python tests/test_skill_install.py`
-- `python tests/test_service.py`
-- `python tests/test_update.py`
-- `python tests/test_autostart.py`
-- `python tests/test_uninstall.py`
-- `python tests/test_paths.py`
-- `python tests/test_temp.py`
-- `python tests/test_ci.py`
-- `python scripts/browser_check.py`
-- `python scripts/pwa_check.py`
-
-## Context
-
-- 2026-07-13: The application, Python package, CLI, module entry point, and
-  runtime-home variable are consistently named Gusto (`gusto`, `python -m
-  gusto`, and `GUSTO_HOME`).
-- 2026-07-13: Fresh web installs now declare form support and pass an isolated
-  installation smoke test.
-- 2026-07-13: Shopping sync versions now use millisecond timestamps and advance
-  monotonically per item. Existing second-precision data remains compatible;
-  rapid add-then-check is covered end to end.
-- 2026-07-13: Recipes may own multiple images stored by Gusto. Agents inspect
-  images and add them through the CLI. One image can be selected as the cover;
-  all images may carry a free role and caption and appear in the recipe gallery.
-- 2026-07-15: Shared household shopping needs now map exact learned aliases to
-  manually ranked preferred-product cards with optional owned photos, store,
-  and notes. Shopping recommendations and photos remain readable offline;
-  catalog changes intentionally require an online server or the CLI.
-- 2026-07-15: Recipe and preferred-product forms now offer separate native
-  camera and image-library actions. Recipe images are fully manageable in the
-  web UI; all browser photo uploads are converted to metadata-free WebP with a
-  1920 px maximum edge, while CLI image imports remain unchanged.
-- 2026-07-17: Built wheels include all templates, static assets, manifest, and
-  PWA icons. `install.py` is the shared Windows/Linux installer; platform
-  autostart is a separate optional systemd or Windows logon adapter.
-- 2026-07-17: Normal installs store data in the operating system's per-user
-  directory. `GUSTO_HOME` remains the explicit override, existing checkout data
-  has a non-destructive fallback, and `gusto home --json` explains the result.
-- 2026-07-17: Optional recipe duration/servings can be removed in web and CLI;
-  recipe titles and numeric metadata are validated in core. Malformed shopping
-  sync states are rejected with HTTP 400 before persistence.
-- 2026-07-19: Private-repository deployment uses a transferable release ZIP
-  with a wheel and standalone installer. Application runtimes live outside the
-  source checkout; bundled Windows/systemd adapters point at that installed
-  runtime, while recipe and shopping data remain in the platform data store.
-- 2026-07-19: Each runtime reads its own `gusto.settings.json` for the data
-  directory. The checkout uses the separate `gusto-dev` store; installers write
-  the production store into the installed runtime. `GUSTO_HOME` remains the
-  highest-precedence override for isolated tests.
-- 2026-07-19: Windows installation persists Gusto's command directory in the
-  user `PATH`, making `gusto` directly available to newly opened consoles.
-- 2026-07-20: Windows logon autostart directly invokes the installed
-  `gusto-autostart` GUI launcher instead of PowerShell or the Console CLI. It
-  delegates to the normal `serve` path, preserves exit codes, records output in
-  the active data store, and the adapter stops then migrates/restarts existing
-  scheduled tasks before updating in-use Windows launchers.
-- 2026-07-20: `gusto uninstall` removes only a verified managed installed
-  runtime, its autostart integration, and its exact Windows PATH entry by
-  default while preserving the separately stored recipes and household data.
-  Permanent data removal is a distinct confirmed choice; a one-shot external
-  helper performs self-deletion after the CLI exits.
-- 2026-07-20: Transferable release ZIPs include the complete, validated
-  `skill/gusto/` agent skill alongside the application artifacts. Agent-host
-  registration remains an explicit action rather than an installer side effect.
-- 2026-07-21: Agent-visible mutations use cross-process catalog, favorites, and
-  shopping transaction locks on Windows and POSIX, preventing lost updates
-  from parallel tool calls without globally serializing independent domains.
-  `gusto shopping add-many` adds a free-text group in one transaction; unique
-  temporary files preserve atomic JSON replacement under contention.
-- 2026-07-22: CLI command failures under `--json` now return structured JSON on
-  stdout with exit 1, while argparse usage failures remain stderr/exit 2.
-  Cooking dates and suggestion limits are boundary-validated; shopping state
-  retries preserve sync timestamps, and recipe ingredient imports reject empty
-  or already-visible same-recipe imports. Recipe mutations warn immediately
-  about tags without named facets; duration caps explicitly exclude unknown
-  durations. Sourced single shopping adds validate their recipe and participate
-  in the import guard, whose rejection now reports the blocking count; CLI docs
-  flag that cleared tombstones have no restore command. Release version is
-  0.1.2.
-- 2026-07-23: Shopping removal commands now describe their scope directly:
-  `gusto shopping clear` atomically tombstones the complete visible list, while
-  `gusto shopping remove-done` removes only checked entries. Core, CLI,
-  server-rendered web, offline PWA, Telegram handoff, and the shipped Gusto
-  skill share this contract.
-- 2026-07-23: Recipe `delete` now means reversible archive. Markdown, complete
-  metadata, and owned images move together under `archive/<slug>/`; CLI and web
-  expose list/show/restore and separately confirmed purge. Log and shopping
-  remain separate sources of truth whose visible references resolve active or
-  archived slugs; purge refuses visible shopping dependencies.
-- 2026-07-23: Catalog title updates rewrite the Markdown H1 in the same Core
-  transaction. `check` now distinguishes hard integrity errors (full
-  diagnostics plus exit 1) from warnings and covers active/archive titles,
-  files, images, covers, interrupted moves, collisions, shopping sources,
-  favorite data, and historical log references. Time/day ranges must be
-  positive, ports stay within 1–65535, and `edit`/`serve` now honor `--json`.
-- 2026-07-27: Gusto 0.1.5 centralizes normal browser and CLI behavior on one
-  anonymous LAN service/API. CLI business commands have no local fallback;
-  explicit recovery/lifecycle commands remain local. Persisted change
-  revisions and SSE keep online browser pages current while shopping PWA
-  offline operation and merge behavior remain intact.
-- 2026-07-27: Public Windows/Linux one-shot bootstraps install versioned
-  per-user runtimes, register login autostart, start immediately, and require a
-  healthy service without admin rights. `gusto update` verifies public release
-  assets, switches side-by-side, and rolls back unhealthy activation.
-  Installer reruns are repair-only; app installation carries the skill payload
-  but never mutates an agent host automatically.
-- 2026-07-27: Reusable CI runs every script contract on Windows/Linux at Python
-  3.10 and 3.14 plus real Chromium/PWA suites on both systems. Tagged releases
-  build once, smoke-install the exact artifact on both systems, retain failure
-  diagnostics, attest provenance, and grant write authority only to the final
-  publish job.
-- 2026-07-29: Gusto 0.1.6 refuses to stop, replace, start, or remove a Windows
-  Scheduled Task that is merely named `Gusto` unless its fixed description
-  identifies it as Gusto-owned. Install, repair/update, service control,
-  uninstall, and the compatibility adapter share this collision guard.
-- 2026-07-31: Gusto 0.1.7 installs the canonical Gusto skill payload into every
-  managed runtime. The local JSON-capable `gusto install-skill vbot` command
-  stages and fully replaces `~/.vbot/skills/gusto`; update refreshes the runtime
-  source while host refresh remains explicit. The compact main skill routes
-  exact CLI, installation, and Telegram detail to on-demand references, and a
-  fresh-agent contract test locks all 59 leaf commands to `--json` and docs.
-- 2026-07-31: Tag-category definition, ordering, assignment, unassignment, and
-  removal are catalog mutations behind Core/API/CLI `gusto categories ...`.
-  Agents can resolve `uncategorized_tags` without direct JSON edits; mutations
-  use the catalog lock and publish catalog change events.
-- 2026-07-31: Public releases no longer publish or consume the private-era
-  outer Gusto ZIP/checksum pair. Schema-2 manifests hash each direct asset.
-  Windows PowerShell downloads the pinned official CPython NuGet runtime and
-  needs no existing Python; Gusto stores it under the managed app root and
-  builds every application version in its own venv. Updates retain Python
-  runtimes needed for rollback, and uninstall removes the complete app-owned
-  Python tree. Linux continues to use system Python 3.10+.
-
-- 2026-09-22: Repository audit fixed Windows atomic-write contention, sync
-  versions within the same millisecond, archive/merge source races, portable
-  recipe slugs, orphan-file protection, ingredient parsing, and malformed-data
-  diagnostics. Lost CLI replies now report uncertain outcomes; failed edits
-  retain their local copy, and stdin recipe content is UTF-8. Updates prepare
-  venvs at their final inactive path because installed launchers are not
-  relocatable; installers recheck ownership after acquiring the update lock.
-  Browser filters/search, live form preservation, keyboard focus, and fresh
-  PWA metadata were verified in real Chromium against disposable data. Audit
-  evidence and remaining platform limits: `docs/audit-2026-09-22.md`.
-
-- 2026-09-23: Store-aware shopping. A preferred-product card's `store` names
-  where it is sold (comma-separated, empty = everywhere); `favorites
-  match|show --store S` returns the ranking narrowed to S plus
-  `other_products`. Walking-route order through a store is deliberately not
-  persisted: agents order the list on the fly per the skill's
-  `references/shopping-trip.md` (user-described route, else a typical German
-  supermarket route) and use that order for answers and Telegram checklists.
-
-- 2026-10-03: Tag and UX polish deduplicates case-equivalent used tags across
-  recipes while retaining configured category spelling/order and stored recipe
-  spelling. Search text survives quick tag clicks; stale responses cannot
-  overwrite newer input, and unused bookmarked filters remain removable.
-  Facet grids, long text/media, narrow shopping/favorite forms, recipe links,
-  mobile captions, and keyboard/screen-reader cues were corrected. Browser
-  checks use isolated data; audit evidence: `docs/audit-2026-10-03.md`.
-
-- 2026-10-10: Agent-interface audit covered all 59 leaf CLI commands, the
-  operating skill, and current agent-facing contracts. Help explains arguments
-  and effects; plain output includes reusable IDs. File uploads accept Unicode
-  BOMs, while stdin remains UTF-8. Post-save API/journal failures report
-  uncertain outcomes instead of rejection; read-only calls remain retryable.
-  Partial uninstall failures preserve confirmed effects. The skill distinguishes
-  local paths from the selected server, keeps imports within the requested
-  overwrite scope, and uses successful mutation results without redundant
-  integrity scans. Historical plans are labeled as such. Evidence:
-  `docs/audit-2026-10-10.md`.
-
-- 2026-10-11: The Telegram shopping checklist uses vBot's built-in
-  `channel_send` `checklist` parameter instead of a vBot extension plus a
-  `chk:`/`run:done` button convention. vBot toggles taps in the message and
-  reports only the items changed since posting, by Gusto item id, so the agent
-  writes `shopping check|uncheck` for those alone and changes made elsewhere in
-  the meantime survive. Contract: `docs/telegram-shopping-handoff.md`; agent
-  steps: `skill/gusto/references/telegram.md`.
-
-- 2026-10-23: Repository audit improved metadata-first search, no-op shopping
-  sync, request serialization and server responsiveness. Browser storage
-  failures preserve current-page shopping state; opaque sync IDs and timestamp
-  bounds have regression coverage. Diagnostics continue across unreadable
-  recipe files. Editor commands support arguments; runtime probes use isolated
-  imports and IPv6 binds use matching local health addresses. Failed post-save
-  cleanup reports uncertain outcomes and publishes changes; complete rollbacks
-  retain the original rejection. Evidence and platform limits:
-  `docs/audit-2026-10-23.md`.
+**Recipes:** a recipe is pure Markdown without frontmatter, starting with `# Title`; its metadata lives in `data/recipes.json`, linked by the slug (`catalog.md`).
 
 ## Domain Maps
 
-Domain-specific documentation lives in `.vorch/domain-maps/`. A **domain** is any module or subsystem that has its own folder or clear boundary in the codebase — a chunk of code that has a distinct responsibility and that agents need context about before touching it. This includes technical modules (`hooks`, `tools`, `storage`), infrastructure modules (`server`, `channel`), and business modules (`auth`, `payments`). Size doesn't matter — what matters is that working on it without context risks misunderstanding its interfaces or conventions.
+How to read the maps: `AGENTS.md` -> Load context for the task.
 
-Use `.vorch/workflows/domain-map-workflow.md` when creating, auditing, or updating domain maps, under the standalone-agent instructions in the project guide.
-
-**When working on a domain: read its domain map.** Your task will list which maps are relevant — treat that as a starting point, not a ceiling. Read additional maps if you need them.
-
-| Domain map | Domain | What it covers |
+| Map | Domain | Covers |
 |---|---|---|
-| `catalog.md` | Catalog | Recipes, metadata, images, tag facets, cooking history, suggestions, and consistency checks. |
-| `shopping.md` | Shopping | Shopping-list persistence, ingredient import, preferred products, tombstones, offline behavior, and full-state sync. |
-| `surfaces.md` | Surfaces | CLI, web, packaging, runtime entry points, templates, static assets, and verification boundaries. |
+| catalog.md | `gusto/core.py` (recipe sections) | Recipes, archive, images, tag facets, cooking log, suggestions, `check` diagnostics |
+| shopping.md | `gusto/core.py` (shopping section), `gusto/static/shopping-client.js`, `gusto/static/sw.js` | Shopping list, preferred products, tombstones, full-state sync, offline PWA |
+| storage.md | `gusto/core.py` (paths, locks, load/save), `gusto/_temp.py`, `gusto.settings.json` | Data-directory selection, mutation locks, atomic writes, change revisions, temp-file policy |
+| service.md | `gusto/api.py`, `gusto/client.py` | Versioned command API, change-event stream, HTTP client, uncertain outcomes |
+| cli.md | `gusto/cli.py`, `gusto/__main__.py`, `skill/gusto/` | Command surface, `--json` contract, exit codes, server selection, the shipped agent skill |
+| web.md | `gusto/web.py`, `gusto/templates/`, `gusto/static/` | FastAPI host, server-rendered UI, no-JS fallback, photo uploads, design |
+| lifecycle.md | `install.py`, `install.ps1`, `install.sh`, `gusto/service.py`, `gusto/update.py`, `gusto/uninstall.py`, `gusto/skill_install.py`, `deploy/`, `scripts/build_release.py` | Per-user install, autostart, update and rollback, uninstall, skill install, release assets |
+| development.md | `scripts/`, `tests/`, `.githooks/`, `.github/workflows/quality.yml`, `pyproject.toml` | Quality gates, test isolation, commit hook, push check, CI, worktrees |
+
+## Conventions
+
+**Language:** product UI, CLI messages and persisted data fields are German; code identifiers, comments and all project documentation are English.
+
+**Errors:** CLI commands report expected failures under `--json` as `{"ok": false, "error": "..."}` on stdout with exit 1; usage errors stay on stderr with exit 2. A mutation whose result is unknown reports `outcome_unknown: true` and is never retried automatically (`cli.md`, `service.md`).
+
+**Temporary files:** scratch files in a checkout belong under `.tmp/`, never in the system temp directory or new `.testdata*` folders. Importing `gusto` from a checkout points Python's temp directory and the `TMPDIR`, `TEMP` and `TMP` of child processes there; a standalone test or script imports `gusto` before it allocates temp files (`storage.md`).
+
+**Line endings:** `.gitattributes` stores text files with LF; PowerShell scripts check out with CRLF.
+
+## Development
+
+**Setup** (Windows paths; on Linux use `.venv/bin/python`):
+```bash
+python -m venv .venv
+.venv/Scripts/python -m pip install -e ".[web,test,dev]"
+.venv/Scripts/python -m playwright install chromium
+git config core.hooksPath .githooks   # once per clone; worktrees share it
+```
+
+**Run:** `python -m gusto serve` starts the foreground development server on port 8000. The checkout's `gusto.settings.json` selects the `gusto-dev` store under the per-user data directory, which every checkout of this repository shares; `GUSTO_HOME` overrides the store. The installed production service owns its own store and is never used for development or tests. Starting the app to check a change, in the browser or through the CLI: read `.vorch/workflows/live-testing-workflow.md`.
+
+**Worktrees:** `python scripts/worktree.py create|list|merge|delete <task-name>`. `create` prints the absolute path and a port block of its own and sets up the worktree's own `.venv`; `merge` runs no tests and moves `main` only once the merge commit passed the commit hook. Never link a folder of another checkout into a worktree: Git for Windows' `git worktree remove` follows junctions and deletes the target's contents. Conflicts and gotchas: `.vorch/workflows/worktree-workflow.md`.
+
+**Push:** Read `.vorch/workflows/push-workflow.md` when the user asks to push. A push is finished only when the CI run it starts is green.
+
+**Release:** Read `.vorch/workflows/release-workflow.md` when the user requests a release.
+
+## Testing
+
+Tests are standalone Python scripts, not a pytest suite: each `tests/test_<owner>.py` runs its checks top to bottom, prints `OK - <n> ... checks passed` and exits non-zero on the first failure. `scripts/browser_check.py` and `scripts/pwa_check.py` drive real Chromium through Playwright against an isolated server with throwaway data. Every gate allocates its own store under `.tmp/` through `GUSTO_HOME` and never touches real data.
+
+Before writing or changing a test, read `development/testing.md`: what to assert, how to wait, and what the gates isolate.
+
+**Running tests and checks:** Call the tools directly; what to test: `AGENTS.md` -> Testing.
+```bash
+python tests/test_recipes.py                  # one gate
+python scripts/run_quality.py scripts         # every script gate
+python scripts/run_quality.py browser         # Chromium browser and PWA checks
+python scripts/run_quality.py all             # the complete suite
+python -m ruff check .                        # lint, as the commit hook and CI run it
+```
+The complete suite is `python scripts/run_quality.py all`; the push check and CI run it.
+
+**Commit hook:** `.githooks/pre-commit` and `.githooks/pre-merge-commit` run `scripts/commit_check.py` on every commit and merge commit, in every checkout: `ruff check` on staged Python files, domain-map checks, and a refusal of AI tool identities; no tests. It blocks when the checkout's `.venv` lacks the ruff version `pyproject.toml` pins and prints the install command. Details: `development.md` -> Commit hook.
+
+**CI:** `.github/workflows/quality.yml` runs on pull requests and pushes to `main`: lint plus the commit-authorship history, every script gate on Windows and Linux with Python 3.10 and 3.14, and the Chromium browser and PWA checks on both systems. `release.yml` reuses it before building a release.
+
+## Context
+
+- Target platforms: Windows and Linux, installed per user without admin or root. A Raspberry Pi is the first Linux deployment target, not an exclusive platform.
+- No MCP, ever: explicit, final user decision. Do not propose or build an MCP server; agents use the CLI.
+- Ask first, then build: new features and larger steps start with a concept the user approves (`AGENTS.md` -> Working with the user).
+- 2026-07-23: removing a recipe means reversible archive; only an explicitly confirmed purge destroys it (`catalog.md`).
+- 2026-07-27: one central service with thin clients replaced local CLI access; `gusto update` is the only normal update path, installer reruns are repair-only (`lifecycle.md`).
+- 2026-09-23: store walking routes are deliberately not persisted; agents order a shopping list per trip (`shopping.md`).
+- In progress: Telegram shopping checklist through vBot's `channel_send` `checklist`. Gusto's side is ready; the live phone round-trip waits for vBot (`docs/telegram-shopping-handoff.md`). Alternative without Telegram: the PWA over HTTPS in the LAN (`docs/https-pwa-option.md`).
+- Under discussion: a weekly meal plan.
+- Repository audits with evidence and known platform limits: `docs/audit-*.md`.

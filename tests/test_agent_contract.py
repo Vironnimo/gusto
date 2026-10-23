@@ -144,28 +144,15 @@ def main():
         check(required in normalized_installation,
               f"installation reference lost skill lifecycle guidance: {required}")
 
-    for guide_name in ("CLAUDE.md", "AGENTS.override.md"):
-        guide = (ROOT / guide_name).read_text(encoding="utf-8")
-        for required in (
-            "gusto categories assign",
-            "gusto install-skill vbot",
-            "gusto/skill_install.py",
-            "outcome_unknown:true",
-            "recovery_path",
-            "server_data_path",
-        ):
-            check(required in guide,
-                  f"{guide_name} is stale: missing {required}")
-        check("sort the tag into `categories.json`" not in guide,
-              f"{guide_name} still instructs agents to bypass the service")
-
     entry = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    check("AGENTS.override.md" in entry and "standalone" in entry,
-          "the agent entry point must route to the standalone project guide")
-    codex_guide = (ROOT / "AGENTS.override.md").read_text(encoding="utf-8")
-    claude_guide = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-    check(codex_guide.splitlines()[1:] == claude_guide.splitlines()[1:],
-          "the full project guides must share the same operating contract")
+    check("skill/gusto/SKILL.md" in entry,
+          "the repository agent guide must route Gusto operation to the shipped skill")
+    check("sort the tag into `categories.json`" not in entry,
+          "AGENTS.md still instructs agents to bypass the service")
+    check((ROOT / "CLAUDE.md").read_text(encoding="utf-8").strip() == "@AGENTS.md",
+          "CLAUDE.md must import AGENTS.md instead of carrying a second guide")
+    check(not (ROOT / "AGENTS.override.md").exists(),
+          "AGENTS.override.md would shadow AGENTS.md for Codex")
 
     print(f"OK - {checks} fresh-agent contract checks passed")
 
