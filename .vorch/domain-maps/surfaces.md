@@ -43,6 +43,8 @@ inspect the selected server's state before repeating a mutation. Read-only
 operations remain retryable even though they use POST. A post-save failure in
 the change journal or result construction is HTTP 500 with that uncertainty
 flag, not a rejected write. The client does not automatically replay commands.
+An exception after a confirmed persisted change, including failed image
+cleanup, also publishes the affected resource and reports an uncertain outcome.
 Duplicate JSON object keys are rejected
 at API dispatch before executing the request.
 
@@ -65,6 +67,11 @@ The API router under `/api/v1` exposes:
 Attachments are named Base64 payloads materialized in private temporary files,
 limited to 25 MB each and always cleaned. This supports CLI image imports
 without making server filesystem paths part of the API.
+The CLI rejects image inputs above 25 MiB before encoding/transmission and
+serializes each request once. Commands without attachments allocate no
+attachment directory. The command route enforces its 40 MiB cap on streamed
+bytes even when Content-Length is absent or incorrect. Blocking command/sync
+work and SSE journal reads run in worker threads to keep the event loop free.
 
 `gusto edit` downloads a recipe into a temporary Markdown file and uploads the
 final content after the editor exits. Headless callers use `gusto content set
@@ -75,6 +82,9 @@ returns `slug` plus `recovery_path`; successful upload is not reported as failed
 merely because deleting the temporary file failed.
 File input accepts UTF-8 with optional BOM and UTF-16 with BOM. `content set
 --file` never removes its source; temporary cleanup belongs to `edit`.
+`EDITOR` accepts an executable path or a command with arguments. Windows uses
+native command-line quoting, POSIX uses shell-style argument splitting; neither
+launches a shell. Editors that detach need their own wait flag.
 Every leaf help describes its command and arguments, with exit codes. Plain
 suggestion/log, product, and bulk shopping outputs include reusable target IDs;
 stored single-line fields escape line breaks/control characters. Raw recipe
@@ -150,6 +160,10 @@ formats.
   wrappers. Windows also owns `python/<python-version>`; state records the exact
   Python kind/version/path/hash. Data remains under `%LOCALAPPDATA%\Gusto` or
   XDG user data.
+- Install/repair runtime probes use isolated Python imports (`-I`), so a
+  checkout or PYTHONPATH cannot conceal a missing installed package. Local
+  health URLs for IPv6 wildcard binds use `[::1]`; IPv4 wildcard binds use
+  `127.0.0.1`.
 - First install is per-user and no-admin. Windows registers a limited
   current-user logon Scheduled Task, current-user Installed Apps entry, Start
   Menu URL, and exact user PATH entry. Linux writes and enables a

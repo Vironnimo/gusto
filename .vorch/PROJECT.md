@@ -273,6 +273,16 @@ Quality gates:
   the meantime survive. Contract: `docs/telegram-shopping-handoff.md`; agent
   steps: `skill/gusto/references/telegram.md`.
 
+- 2026-10-23: Repository audit improved metadata-first search, no-op shopping
+  sync, request serialization and server responsiveness. Browser storage
+  failures preserve current-page shopping state; opaque sync IDs and timestamp
+  bounds have regression coverage. Diagnostics continue across unreadable
+  recipe files. Editor commands support arguments; runtime probes use isolated
+  imports and IPv6 binds use matching local health addresses. Failed post-save
+  cleanup reports uncertain outcomes and publishes changes; complete rollbacks
+  retain the original rejection. Evidence and platform limits:
+  `docs/audit-2026-10-23.md`.
+
 ## Domain Maps
 
 Domain-specific documentation lives in `.vorch/domain-maps/`. A **domain** is any module or subsystem that has its own folder or clear boundary in the codebase — a chunk of code that has a distinct responsibility and that agents need context about before touching it. This includes technical modules (`hooks`, `tools`, `storage`), infrastructure modules (`server`, `channel`), and business modules (`auth`, `payments`). Size doesn't matter — what matters is that working on it without context risks misunderstanding its interfaces or conventions.
