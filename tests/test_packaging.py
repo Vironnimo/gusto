@@ -238,19 +238,9 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
           second_skill_install.stdout + second_skill_install.stderr)
 
     if sys.platform.startswith("win"):
-        runtime = output / "runtime with spaces"
-        venv.EnvBuilder(with_pip=True).create(runtime)
-        installed = subprocess.run(
-            [
-                os.fspath(runtime / "Scripts" / "python.exe"),
-                "-m", "pip", "install", "--no-deps", os.fspath(wheel_path),
-            ],
-            capture_output=True, text=True, encoding="utf-8",
-        )
-        check(installed.returncode == 0, installed.stdout + installed.stderr)
-        check(pe_subsystem(runtime / "Scripts" / "gusto.exe") == 3,
+        check(pe_subsystem(skill_runtime / "Scripts" / "gusto.exe") == 3,
               "gusto launcher must use the Console subsystem")
-        check(pe_subsystem(runtime / "Scripts" / "gusto-autostart.exe") == 2,
+        check(pe_subsystem(skill_runtime / "Scripts" / "gusto-autostart.exe") == 2,
               "autostart launcher must use the GUI subsystem")
     else:
         environment = dict(os.environ)

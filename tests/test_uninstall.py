@@ -75,6 +75,58 @@ with tempfile.TemporaryDirectory(prefix="gusto-uninstall-") as temporary:
     check(uninstall.validate_removal(targets, delete_data=True) == data.resolve(),
           "confirmed data deletion must target only the verified store")
 
+    # Exercise removal's own public safety boundary, independent of the
+    # installer's target validation. Preserving a broad separate data path is
+    # safe; deleting it is not. A nested store has the opposite preservation
+    # problem because removing the app necessarily removes that store.
+    for unsafe_app in (Path(app.anchor).resolve(), Path.home().resolve()):
+        for delete_data in (False, True):
+            expect_error(
+                lambda: uninstall.validate_removal(
+                    replace(targets, application=unsafe_app), delete_data=delete_data,
+                ),
+                f"uninstall must reject broad application root {unsafe_app}",
+            )
+
+    for unsafe_data in (
+        Path(data.anchor).resolve(), Path.home().resolve(),
+        Path(tempfile.gettempdir()).resolve(), app.parent.resolve(),
+    ):
+        candidate = replace(targets, data=unsafe_data)
+        check(uninstall.validate_removal(candidate, delete_data=False) is None,
+              "preserving a separate store must not claim its deletion")
+        expect_error(
+            lambda: uninstall.validate_removal(candidate, delete_data=True),
+            f"uninstall must reject broad/ancestor data deletion {unsafe_data}",
+        )
+
+    for nested_data in (app.resolve(), (app / "nested-data").resolve()):
+        candidate = replace(targets, data=nested_data)
+        expect_error(
+            lambda: uninstall.validate_removal(candidate, delete_data=False),
+            "uninstall cannot preserve data contained in the removed app",
+        )
+        check(uninstall.validate_removal(candidate, delete_data=True) is None,
+              "nested data deletion is included in the app, never a separate target")
+
+    unrecognized = root / "unrelated-folder"
+    unrecognized.mkdir()
+    sentinel = unrecognized / "keep.txt"
+    sentinel.write_bytes(b"unrelated data")
+    for recognizable in ((), ("recipes", "images")):
+        for name in recognizable:
+            (unrecognized / name).mkdir(exist_ok=True)
+        candidate = replace(targets, data=unrecognized)
+        check(uninstall.validate_removal(candidate, delete_data=False) is None,
+              "preserving unrelated data does not require store recognition")
+        expect_error(
+            lambda: uninstall.validate_removal(candidate, delete_data=True),
+            "all three store directories must be present before deleting data",
+        )
+    check(sentinel.read_bytes() == b"unrelated data" and app.is_dir()
+          and all((data / name).is_dir() for name in ("recipes", "images", "data")),
+          "validation must leave the installation, store and foreign data untouched")
+
     service.write_current(paths, "1.2.2", previous_version="1.2.3")
     paths.version("1.2.2").mkdir()
     expect_error(

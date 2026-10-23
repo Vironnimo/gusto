@@ -7,13 +7,11 @@ import os
 import subprocess
 import sys
 import tempfile
-import threading
 import time
-import urllib.request
+import urllib.error
 import zipfile
 from contextlib import contextmanager, redirect_stdout
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -157,6 +155,36 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         orchestration.append(("activate", service.read_current(paths_arg)["version"]))
         return {"ok": True}
 
+    # Only verified, recognized Gusto versions are owned cleanup targets.
+    # Older foreign or incomplete siblings must survive a successful update.
+    sibling_markers = {
+        "0.8.0": {"version": "0.8.0", "verified": True, "python_runtime": "system"},
+        "0.7.0": {"version": "9.9.9", "verified": True, "python_runtime": "system"},
+        "0.6.0": {"version": "0.6.0", "verified": False, "python_runtime": "system"},
+        "0.5.0": {"version": "0.5.0", "verified": True},
+        "0.4.0": "{broken",
+        "0.3.0": [],
+        "0.2.0": None,
+        "foreign-tools": {"version": "foreign-tools", "verified": True,
+                          "python_runtime": "system"},
+    }
+    for name, marker in sibling_markers.items():
+        sibling = paths.versions / name
+        sibling.mkdir()
+        (sibling / "keep.txt").write_bytes(name.encode("ascii"))
+        if marker is not None:
+            (sibling / ".gusto-runtime.json").write_text(
+                marker if isinstance(marker, str) else json.dumps(marker),
+                encoding="utf-8",
+            )
+    ordinary_file = paths.versions / "unrelated.txt"
+    ordinary_file.write_bytes(b"foreign file")
+    preserved_siblings = {
+        path.relative_to(paths.versions).as_posix(): path.read_bytes()
+        for path in paths.versions.rglob("*")
+        if path.is_file() and "0.8.0" not in path.parts
+    }
+
     health_expectations = []
     result = update.run_update(
         app_root=app, manifest_url=os.fspath(manifest),
@@ -185,6 +213,12 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
           "current and previous versions must remain side by side")
     check(service.read_state(paths)["data_dir"] == os.fspath(data),
           "updates must preserve the data path")
+    check(result["removed_versions"] == ["0.8.0"]
+          and not paths.version("0.8.0").exists()
+          and all((paths.versions / relative).read_bytes() == content
+                  for relative, content in preserved_siblings.items()),
+          "successful update must remove only old verified Gusto runtimes "
+          "and preserve foreign/unverified siblings byte for byte")
 
     # A competing update can finish while this caller fetches the manifest.
     # The current pointer and Python state must be read together under the
@@ -238,33 +272,6 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         checks += 1
     else:
         raise AssertionError("ZIP traversal must be rejected")
-
-    rollback_manifest = fixture(root, "1.2.0")
-    health_count = 0
-
-    def failing_health(url, **kwargs):
-        global health_count
-        health_count += 1
-        if health_count == 1:
-            raise service.ServiceError("forced health failure")
-        return {"ok": True}
-
-    try:
-        update.run_update(
-            app_root=app, manifest_url=os.fspath(rollback_manifest),
-            runtime_installer=runtime_installer,
-            service_controller=controller,
-            service_installer=service_installer,
-            health_waiter=failing_health,
-        )
-    except update.UpdateError as error:
-        check("wiederhergestellt" in str(error),
-              "activation failure must report successful rollback")
-    else:
-        raise AssertionError("forced health failure must fail the update")
-    check(service.read_current(paths)["version"] == "1.1.0"
-          and not paths.version("1.2.0").exists(),
-          "rollback must restore the pointer and discard failed runtime")
 
     managed_root = root / "managed-python-update"
     managed_paths = service.managed_paths(managed_root / "app")
@@ -554,7 +561,8 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
             health_waiter=switch_then_fail,
         )
     except update.UpdateError as error:
-        check("wiederhergestellt" in str(error),
+        check(error.result["status"] == "update_failed"
+              and error.result["rollback"] is True,
               "the forced activation failure must report a completed rollback")
     else:
         raise AssertionError("a forced activation failure must fail the update")
@@ -568,6 +576,42 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
           and not rollback_paths.version("1.1.0").exists(),
           "the rollback must restore the pointer and drop the failed runtime")
 # ==== F1 end ====
+
+    events.clear()
+
+    def both_health_checks_fail(url, **kwargs):
+        version = kwargs["expected_version"]
+        events.append(("health", version))
+        raise service.ServiceError(f"unhealthy runtime {version}")
+
+    try:
+        update.run_update(
+            app_root=rollback_app, manifest_url=os.fspath(rollback_manifest),
+            runtime_installer=rollback_runtime_installer,
+            service_controller=rollback_controller,
+            service_installer=rollback_service_installer,
+            health_waiter=both_health_checks_fail,
+        )
+    except update.UpdateError as error:
+        check(error.result["ok"] is False
+              and error.result["status"] == "rollback_failed"
+              and error.result["rollback"] is False
+              and error.result["previous_version"] == "1.0.0"
+              and error.result["attempted_version"] == "1.1.0"
+              and "unhealthy runtime 1.1.0" in error.result["error"]
+              and "unhealthy runtime 1.0.0" in error.result["error"],
+              "activation plus rollback failure must report both errors "
+              "without claiming a healthy restored service")
+    else:
+        raise AssertionError("a failed rollback must fail the update")
+    check(events[-4:] == [
+        ("health", "1.1.0"), ("stop",), ("activate", "1.0.0"),
+        ("health", "1.0.0"),
+    ] and service.read_current(rollback_paths)["version"] == "1.0.0"
+          and rollback_paths.version("1.0.0").is_dir()
+          and rollback_paths.version("1.1.0").is_dir(),
+          "rollback must attempt old-version health after stopping the failed service; "
+          "a failed recovery retains both runtimes for diagnosis")
 
 # ==== F2a: --json error contract ====
     contract_app = root / "contract-app"
@@ -840,56 +884,44 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
 
 # ==== F6: download retries ====
     served = []
+    location = "https://release.fixture"
+    response = BytesIO(b"verified-release-bytes")
 
-    class DownloadHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            served.append(self.path)
-            if self.path == "/flaky" and served.count("/flaky") == 1:
-                self.send_error(503, "try later")
-                return
-            if self.path == "/missing":
-                self.send_error(404, "not here")
-                return
-            body = b"verified-release-bytes"
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+    def release_opener(request, *, timeout):
+        served.append(request.full_url)
+        if (request.full_url.endswith("/flaky")
+                and served.count(request.full_url) == 1):
+            raise urllib.error.HTTPError(request.full_url, 503, "try later", {}, None)
+        if request.full_url.endswith("/missing"):
+            raise urllib.error.HTTPError(request.full_url, 404, "not here", {}, None)
+        return response
 
-        def log_message(self, *args):
-            pass
+    class RetrySleeper:
+        def __init__(self):
+            self.delays = []
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), DownloadHandler)
-    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-    server_thread.start()
-    location = f"https://127.0.0.1:{server.server_address[1]}"
+        def sleep(self, delay):
+            self.delays.append(delay)
 
-    def local_opener(request, **kwargs):
-        return urllib.request.urlopen(
-            request.full_url.replace("https://", "http://", 1), **kwargs,
-        )
-
-    try:
-        with patch.object(update, "RETRY_BASE_DELAY_SECONDS", 0.0, create=True):
-            payload = update.fetch_bytes(location + "/flaky", opener=local_opener)
-            check(payload == b"verified-release-bytes",
-                  "a transient download failure must be retried and succeed")
-            check(served.count("/flaky") == 2,
-                  "HTTP 503 must use exactly one retry before the successful "
-                  "attempt")
-            try:
-                update.fetch_bytes(location + "/missing", opener=local_opener)
-            except update.UpdateError as error:
-                check("404" in str(error),
-                      "a permanent download failure must name its HTTP status")
-            else:
-                raise AssertionError("a 404 download must not be retried")
-        check(served.count("/missing") == 1,
-              "4xx download failures must fail immediately without retries")
-    finally:
-        server.shutdown()
-        server.server_close()
-        server_thread.join(timeout=5)
+    retry_sleeper = RetrySleeper()
+    with patch.object(update, "time", retry_sleeper):
+        payload = update.fetch_bytes(location + "/flaky", opener=release_opener)
+        check(payload == b"verified-release-bytes" and response.closed,
+              "a transient download must retry, read the payload and close the response")
+        check(served.count(location + "/flaky") == 2
+              and len(retry_sleeper.delays) == 1,
+              "HTTP 503 must schedule exactly one retry before the successful attempt")
+        try:
+            update.fetch_bytes(location + "/missing", opener=release_opener)
+        except update.UpdateError as error:
+            check(isinstance(error.__cause__, urllib.error.HTTPError)
+                  and error.__cause__.code == 404,
+                  "a permanent failure must preserve its HTTP status")
+        else:
+            raise AssertionError("a 404 download must fail")
+    check(served.count(location + "/missing") == 1
+          and len(retry_sleeper.delays) == 1,
+          "4xx download failures must fail immediately without retries or sleeps")
 # ==== F6 end ====
 
 # ==== F7: Windows wrapper quoting ====
