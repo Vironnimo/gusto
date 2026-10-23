@@ -21,6 +21,7 @@ os.environ["GUSTO_HOME"] = os.fspath(HOME)
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from starlette.requests import Request  # noqa: E402
 
 from gusto import __version__, api, client as remote_client, core  # noqa: E402
 
@@ -82,6 +83,56 @@ def parse_sse(chunk):
 class ConnectedRequest:
     async def is_disconnected(self):
         return False
+
+
+def body_request(chunks, headers=()):
+    remaining = iter(chunks)
+
+    async def receive():
+        chunk = next(remaining, None)
+        return {"type": "http.request", "body": chunk or b"",
+                "more_body": chunk is not None}
+
+    return Request({"type": "http", "method": "POST", "path": "/api/v1/command",
+                    "headers": list(headers)}, receive)
+
+
+async def check_command_scheduling_and_limits():
+    payload = json.dumps({"operation": "catalog.list"}).encode()
+    started = threading.Event()
+    release = threading.Event()
+    responsive = []
+
+    def slow_command(*args):
+        started.set()
+        responsive.append(release.wait(timeout=2))
+        return []
+
+    async def other_request():
+        while not started.is_set():
+            await asyncio.sleep(0.001)
+        release.set()
+
+    with patch.object(api, "execute_command", side_effect=slow_command):
+        response, _ = await asyncio.gather(
+            api.command(body_request([payload])), other_request(),
+        )
+    check(response.status_code == 200 and responsive == [True],
+          "a blocked command must leave the event loop available to other requests")
+
+    with patch.object(api, "MAX_REQUEST_BYTES", len(payload) - 1), \
+            patch.object(api, "execute_command") as execute:
+        for headers in ((), ((b"content-length", b"1"),)):
+            response = await api.command(body_request(
+                [payload[:10], payload[10:]], headers,
+            ))
+            check(response.status_code == 413,
+                  "actual streamed bytes must enforce the limit without trusting Content-Length")
+        check(not execute.called, "oversized streams must never execute a command")
+    with patch.object(api.tempfile, "TemporaryDirectory",
+                      side_effect=AssertionError("unexpected scratch allocation")):
+        check(api.execute_command("catalog.list", {}) is not None,
+              "commands without attachments must not create temporary directories")
 
 
 async def check_event_stream():
@@ -793,6 +844,7 @@ def main():
     check(removed_need["removed"] is True,
           "favorites.remove must return the removed id")
 
+    asyncio.run(check_command_scheduling_and_limits())
     asyncio.run(check_event_stream())
     check_compacted_event_replay()
     check_client_failure_recovery()

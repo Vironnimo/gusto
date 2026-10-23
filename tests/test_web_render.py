@@ -11,15 +11,19 @@ server-side errors.
 from __future__ import annotations
 
 from io import BytesIO
+import asyncio
+import json
 import os
 import sys
 import tempfile
+import threading
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 from PIL import Image
 from starlette.datastructures import UploadFile
+from starlette.requests import Request
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -147,6 +151,48 @@ def test_shopping_error_notice_is_fixed_text():
           "foreign/unknown error parameters must render nothing")
 
 
+def test_return_destination_stays_local():
+    for value in ("//example.org", "/\\example.org", "/\t/example.org",
+                  "/\r/example.org", "https://example.org"):
+        check(web._safe_return_to(value, "/shopping") == "/shopping",
+              "browser URL normalization must not turn a return path into an external redirect")
+    local = "/favorites/einkauf?text=Milch%20%26%20Brot"
+    check(web._safe_return_to(local, "/shopping") == local,
+          "local return paths and encoded query values must survive")
+
+
+def test_shopping_sync_keeps_server_responsive():
+    async def exercise():
+        started = threading.Event()
+        release = threading.Event()
+        responsive = []
+
+        def slow_merge(items):
+            started.set()
+            responsive.append(release.wait(timeout=2))
+            return []
+
+        async def receive():
+            return {"type": "http.request", "body": b'{"items": []}',
+                    "more_body": False}
+
+        async def other_request():
+            while not started.is_set():
+                await asyncio.sleep(0.001)
+            release.set()
+
+        request = Request({"type": "http", "headers": []}, receive)
+        with patch.object(web.core, "shopping_merge", side_effect=slow_merge):
+            response, _ = await asyncio.gather(
+                web.api_shopping_sync(request), other_request(),
+            )
+        check(json.loads(response.body) == {"items": []}
+              and responsive == [True],
+              "shopping sync waiting on a file lock must not block other requests")
+
+    asyncio.run(exercise())
+
+
 def test_tag_filters_keep_stale_selections_removable():
     # A bookmark can outlive the last recipe carrying its tag. Every active
     # tag must retain a removal link, including case-duplicate query values.
@@ -199,6 +245,8 @@ def main():
     test_attribute_allowlist()
     test_dropped_tags_keep_children()
     test_shopping_error_notice_is_fixed_text()
+    test_return_destination_stays_local()
+    test_shopping_sync_keeps_server_responsive()
     test_tag_filters_keep_stale_selections_removable()
     test_prepared_photo_translates_only_preparation_errors()
     print(f"OK: {checks} checks passed")

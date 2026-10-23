@@ -19,6 +19,7 @@ from typing import Callable
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from . import __version__, core
 
@@ -236,6 +237,9 @@ def _validate_attachments(operation: str, attachments) -> list[dict]:
 
 @contextmanager
 def _materialized_attachments(attachments: list[dict]):
+    if not attachments:
+        yield {}
+        return
     with tempfile.TemporaryDirectory(prefix="gusto-api-") as temporary:
         root = Path(temporary)
         paths: dict[str, Path] = {}
@@ -870,22 +874,10 @@ def health():
     }
 
 
-@router.post("/command")
-async def command(request: Request):
-    content_length = request.headers.get("content-length")
-    if content_length is not None:
-        try:
-            declared = int(content_length)
-        except ValueError:
-            return _error("Der Content-Length-Header muss eine ganze Zahl sein.")
-        if declared > MAX_REQUEST_BYTES:
-            return _error(
-                "Der Request-Body ist größer als "
-                f"{MAX_REQUEST_BYTES // (1024 * 1024)} MB.",
-                413,
-            )
+def _command_response(raw_body: bytes | bytearray) -> JSONResponse:
+    """Decode, execute and serialize away from the server's event loop."""
     try:
-        body = json.loads(await request.body(), object_pairs_hook=_json_object)
+        body = json.loads(raw_body, object_pairs_hook=_json_object)
     except CommandError as error:
         return _error(str(error), error.status_code)
     except Exception:
@@ -910,7 +902,36 @@ async def command(request: Request):
             str(error), error.status_code,
             outcome_unknown=error.outcome_unknown,
         )
-    return {"ok": True, "result": result}
+    return JSONResponse({"ok": True, "result": result})
+
+
+@router.post("/command")
+async def command(request: Request):
+    def too_large():
+        return _error(
+            "Der Request-Body ist größer als "
+            f"{MAX_REQUEST_BYTES // (1024 * 1024)} MB.", 413,
+        )
+
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared = int(content_length)
+        except ValueError:
+            return _error("Der Content-Length-Header muss eine ganze Zahl sein.")
+        if declared < 0:
+            return _error("Der Content-Length-Header darf nicht negativ sein.")
+        if declared > MAX_REQUEST_BYTES:
+            return too_large()
+    raw_body = bytearray()
+    try:
+        async for chunk in request.stream():
+            if len(raw_body) + len(chunk) > MAX_REQUEST_BYTES:
+                return too_large()
+            raw_body.extend(chunk)
+    except Exception:
+        return _error("Ungültiges JSON.")
+    return await run_in_threadpool(_command_response, raw_body)
 
 
 def _sse_data(event: dict) -> str:
@@ -928,7 +949,7 @@ async def event_stream(request: Request, *, after_revision: int | None = None,
                        poll_seconds: float = 0.2,
                        heartbeat_seconds: float = 15.0):
     """Yield an initial state/replay, then new retained events and heartbeats."""
-    current = core.change_state()
+    current = await run_in_threadpool(core.change_state)
     if after_revision is None:
         initial_events = [current]
         revision = current["revision"]
@@ -938,7 +959,7 @@ async def event_stream(request: Request, *, after_revision: int | None = None,
         initial_events = [current]
         revision = current["revision"]
     else:
-        initial_events = core.change_events(after_revision)
+        initial_events = await run_in_threadpool(core.change_events, after_revision)
         revision = after_revision
     for event in initial_events:
         yield _sse_data(event)
@@ -947,7 +968,7 @@ async def event_stream(request: Request, *, after_revision: int | None = None,
     while True:
         if await request.is_disconnected():
             return
-        events = core.change_events(revision)
+        events = await run_in_threadpool(core.change_events, revision)
         if events:
             for event in events:
                 yield _sse_data(event)

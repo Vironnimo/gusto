@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageOps, UnidentifiedImageError
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.concurrency import run_in_threadpool
 
 from . import api, core
 
@@ -242,7 +243,12 @@ def _favorite_dict(need: core.ShoppingNeed) -> dict:
 
 
 def _safe_return_to(value: str, fallback: str) -> str:
-    return value if value.startswith("/") and not value.startswith("//") else fallback
+    if (not value.startswith("/") or value.startswith("//")
+            or "\\" in value
+            or any(ord(character) < 32 or ord(character) == 127
+                   for character in value)):
+        return fallback
+    return value
 
 
 def _recipe_reference_map() -> dict[str, dict]:
@@ -849,6 +855,10 @@ async def api_shopping_sync(request: Request):
         items = []
     if not isinstance(items, list):
         return JSONResponse({"error": "invalid shopping state"}, status_code=400)
+    return await run_in_threadpool(_shopping_sync_response, items)
+
+
+def _shopping_sync_response(items: list) -> JSONResponse:
     try:
         merged = core.shopping_merge(items)
     except ValueError:
