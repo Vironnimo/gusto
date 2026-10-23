@@ -1,7 +1,7 @@
 # Sync-Kontrakt der Einkaufs-PWA
 
 Dieser Vertrag beschreibt den bestehenden Abgleich zwischen Einkaufs-PWA und
-Gusto-Dienst. Die Fachlogik liegt in `gusto/core.py`, die Browser-Endpunkte in
+Gusto-Dienst. Die Fachlogik liegt in `gusto/core/shopping.py`, die Browser-Endpunkte in
 `gusto/web.py`, der Offline-Client in `gusto/static/shopping-client.js` und die
 Cache-Regeln in `gusto/static/sw.js`. Normale CLI-Aufrufe verwenden die
 versionierte Command-API; sie schreiben keinen Browser-Sync-Stand direkt.
@@ -10,7 +10,7 @@ versionierte Command-API; sie schreiben keinen Browser-Sync-Stand direkt.
 
 `data/shopping_list.json` auf dem Server und der localStorage-Key
 `gusto.shopping` enthalten jeweils `{ "items": [...] }`, einschließlich
-Tombstones. Ein Eintrag entspricht `core.ShoppingItem.to_dict()`:
+Tombstones. Ein Eintrag entspricht `_records.ShoppingItem.to_dict()`:
 
 ```json
 {

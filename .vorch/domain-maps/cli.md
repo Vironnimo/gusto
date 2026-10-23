@@ -103,14 +103,14 @@ classification (`service.md`), lifecycle behavior and result shapes
   that the recipe was already created.
 
 **Local commands:**
-- `home` never needs the service: local `core.storage_info()` fields (`path`,
+- `home` never needs the service: local `storage.storage_info()` fields (`path`,
   `source` = `environment|settings|legacy|platform_default`,
   `platform_default`, `settings_path` when the file exists) plus `server_url`,
   `server_reachable`, `service_status` and, when reachable, `server_data_path`,
   `server_version`, `server_revision`, otherwise `service_error`. It exits 0
   when the server is unreachable. Local fields describe this machine's data
   selection; `server_data_path` is what the selected server uses.
-- `check --offline` runs `core.check()` on the local data selection; it is an
+- `check --offline` runs `checks.check()` on the local data selection; it is an
   explicit recovery tool, never a fallback.
 - `serve` preflights the web dependencies (fastapi, uvicorn, jinja2, markdown,
   python-multipart, pillow) and fails through the normal error contract naming

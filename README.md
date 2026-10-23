@@ -20,7 +20,7 @@ important Linux deployment target, not a separate or exclusive edition.
   resized to a 1920 px maximum edge, converted to WebP, and stripped of metadata.
 - **One running service, several thin clients:** the browser UI and normal
   `gusto` commands use the same anonymous LAN server and the same
-  `gusto/core.py`. Server-sent change events keep open browser pages current.
+  `gusto/core/`. Server-sent change events keep open browser pages current.
   The shopping PWA remains usable offline and merges when it reconnects.
 
 The UI and the data fields are German; the code is English.
@@ -235,7 +235,7 @@ data/recipes.json   metadata of all recipes
 data/categories.json tag categories, assignment and display order
 data/favorites.json shared shopping needs, exact aliases, ranked products
 data/log.json       cooking log
-gusto/core.py      all the logic
+gusto/core/      all the logic
 gusto/api.py       anonymous versioned command API + change events
 gusto/client.py    standard-library HTTP client
 gusto/cli.py       thin remote CLI plus local lifecycle commands

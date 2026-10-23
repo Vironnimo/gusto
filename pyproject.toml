@@ -22,8 +22,8 @@ gusto-autostart = "gusto.cli:autostart_main"
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["gusto"]
+[tool.setuptools.packages.find]
+include = ["gusto*"]
 
 [tool.setuptools.package-data]
 gusto = [

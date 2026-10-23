@@ -49,11 +49,13 @@ BASE = f"http://127.0.0.1:{PORT}"
 shutil.copytree(ROOT / "recipes", TESTDATA / "recipes")
 shutil.copytree(ROOT / "data", TESTDATA / "data")
 os.environ["GUSTO_HOME"] = str(TESTDATA)
-from gusto import core  # noqa: E402 - select the throwaway store before loading Core
+import gusto.core.favorites as core_favorites  # noqa: E402
+import gusto.core.records as core_records  # noqa: E402
+import gusto.core.shopping as core_shopping  # noqa: E402
 
-core.favorites_save([])
-need = core.favorite_add_need("Spaghetti", aliases=["200 g Spaghetti"])
-core.favorite_add_product(
+core_favorites.favorites_save([])
+need = core_favorites.favorite_add_need("Spaghetti", aliases=["200 g Spaghetti"])
+core_favorites.favorite_add_product(
     need.id, "De Cecco Spaghetti n. 12", brand="De Cecco", store="REWE",
     note="Bleibt schön bissfest",
     image=next((ROOT / "images" / "spaghetti-carbonara").glob("*.png")),
@@ -105,10 +107,10 @@ def mk(text, ts):
             "source": None, "created_at": ts, "updated_at": ts, "deleted": False}
 
 def reset_shopping():
-    core.shopping_save([])
+    core_shopping.shopping_save([])
 
 def seed_shopping(items):
-    core.shopping_save([core.ShoppingItem.from_dict(item) for item in items])
+    core_shopping.shopping_save([core_records.ShoppingItem.from_dict(item) for item in items])
 
 def api_get():
     with urllib.request.urlopen(BASE + "/api/shopping") as r:

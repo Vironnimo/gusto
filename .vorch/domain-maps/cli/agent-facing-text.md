@@ -8,7 +8,7 @@ Headings, navigation links, JSON field names and table data are not prose senten
 
 ## skill/gusto/SKILL.md
 
-Evidence: `.vorch/PROJECT.md` records the household/service scope, instance boundary and explicit no-MCP decision. `cli.cmd_home`, `main`, `_edit_remote`, `client.resolve_server_url` and `READ_ONLY_OPERATIONS` define invocation and recovery. `core.search`, `load_log`, `log_cooked`, `suggest`, `shopping_add`, `shopping_add_recipe`, `shopping_toggle` (with an explicit checked argument), `favorite_match` and `favorite_for_store` define the household operations. `api._tag_warnings`, `_recipe_create` and `_recipe_update` add organization warnings. Authorization and presentation guidance describes the skill policy, not enforcement by Core.
+Evidence: `.vorch/PROJECT.md` records the household/service scope, instance boundary and explicit no-MCP decision. `cli.cmd_home`, `main`, `_edit_remote`, `client.resolve_server_url` and `READ_ONLY_OPERATIONS` define invocation and recovery. `search.search`, `load_log`, `log_cooked`, `suggest`, `shopping_add`, `shopping_add_recipe`, `shopping_toggle` (with an explicit checked argument), `favorite_match` and `favorite_for_store` define the household operations. `api._tag_warnings`, `_recipe_create` and `_recipe_update` add organization warnings. Authorization and presentation guidance describes the skill policy, not enforcement by Core.
 
 
 ### Discovery
@@ -182,7 +182,7 @@ Evidence: `.vorch/PROJECT.md` records the household/service scope, instance boun
 | `Der Tag ‘schnell’ ist noch keiner Kategorie zugeordnet."` | Demonstrates an unresolved assignment alongside successful recipe storage. |
 ## skill/gusto/references/cli.md
 
-Evidence: `cli.build_parser` and the matching `cmd_*` handlers define calls, results and exits; `tests/test_agent_contract.py` checks leaf coverage. Core ownership and verified functions are indexed in `catalog.md` and `shopping.md`; their domain tests cover the effects. Encoding/editor evidence is in `tests/test_cli.py` (`check_edit_readback_contract`, `check_uncertain_delivery_contract` and the command round-trip cases). `core.check` owns diagnostic keys, including `invalid_data_files`. `service.managed_paths` owns runtime-root discovery; `service_action`, `update.run_update`, `uninstall.perform_uninstall` and `skill_install.install_skill` own local lifecycle results.
+Evidence: `cli.build_parser` and the matching `cmd_*` handlers define calls, results and exits; `tests/test_agent_contract.py` checks leaf coverage. Core ownership and verified functions are indexed in `catalog.md` and `shopping.md`; their domain tests cover the effects. Encoding/editor evidence is in `tests/test_cli.py` (`check_edit_readback_contract`, `check_uncertain_delivery_contract` and the command round-trip cases). `checks.check` owns diagnostic keys, including `invalid_data_files`. `service.managed_paths` owns runtime-root discovery; `service_action`, `update.run_update`, `uninstall.perform_uninstall` and `skill_install.install_skill` own local lifecycle results.
 
 
 ### Gusto CLI ? Full Reference
@@ -593,7 +593,7 @@ Evidence: `install.ps1`, `install.sh` and `install.main` define bootstrap/repair
 | `Remove it only through the agent host's own lifecycle and only when explicitly requested.` | Keeps host-copy removal under the host's lifecycle and explicit request. |
 ## skill/gusto/references/telegram.md
 
-Evidence: `docs/telegram-shopping-handoff.md` owns the external checklist contract. `cli.cmd_shopping_check` and `cmd_shopping_uncheck` pass explicit booleans; `core.shopping_toggle`, `shopping_remove_done` and `shopping_clear` own persistence/removal. Delivery authority is skill policy. The external vBot implementation and a live phone round-trip were not verified here.
+Evidence: `docs/telegram-shopping-handoff.md` owns the external checklist contract. `cli.cmd_shopping_check` and `cmd_shopping_uncheck` pass explicit booleans; `shopping.shopping_toggle`, `shopping_remove_done` and `shopping_clear` own persistence/removal. Delivery authority is skill policy. The external vBot implementation and a live phone round-trip were not verified here.
 
 
 ### Telegram shopping checklist through vBot
@@ -637,7 +637,7 @@ Evidence: `docs/telegram-shopping-handoff.md` owns the external checklist contra
 | `After adding, removing or reimporting items, post a new checklist when the user wants one; recipe imports...` | Avoids reusing stale IDs after list changes or a new recipe import. |
 ## skill/gusto/references/shopping-trip.md
 
-Evidence: `.vorch/PROJECT.md` -> Context records the 2026-09-23 decision not to persist store routes. `shopping.md` -> Store trips and `core.favorite_match`, `favorite_for_store`, `shopping_list` define available data. Route order, handling of ambiguous departments and presentation are the skill policy; the fallback supermarket order is explicitly an assumption, not verified store evidence.
+Evidence: `.vorch/PROJECT.md` -> Context records the 2026-09-23 decision not to persist store routes. `shopping.md` -> Store trips and `favorites.favorite_match`, `favorite_for_store`, `shopping_list` define available data. Route order, handling of ambiguous departments and presentation are the skill policy; the fallback supermarket order is explicitly an assumption, not verified store evidence.
 
 
 ### Shopping trip for a named store

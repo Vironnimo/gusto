@@ -48,7 +48,8 @@ shutil.copytree(ROOT / "data", TESTDATA / "data")
 if (ROOT / "images").exists():
     shutil.copytree(ROOT / "images", TESTDATA / "images")
 os.environ["GUSTO_HOME"] = str(TESTDATA)
-from gusto import core  # noqa: E402 - bind observations to the verified throwaway store
+import gusto.core.catalog.recipes as core_recipes  # noqa: E402
+import gusto.core.storage as core_storage  # noqa: E402
 
 CAMERA_PHOTO = TESTDATA / "camera-original.jpg"
 camera_image = Image.new("RGB", (2400, 1200), "#c96b42")
@@ -105,7 +106,7 @@ def observe_live(page):
 
 
 def double_cooked(page, selector):
-    before = len(core.load_log())
+    before = len(core_recipes.load_log())
     submitted = []
 
     def observe(request):
@@ -118,7 +119,7 @@ def double_cooked(page, selector):
     page.remove_listener("request", observe)
     # Navigation completion consumes the successful POST and redirected GET;
     # also count submissions so even an aborted duplicate cannot escape.
-    return len(submitted) == 1 and len(core.load_log()) == before + 1
+    return len(submitted) == 1 and len(core_recipes.load_log()) == before + 1
 
 try:
     if not wait_up():
@@ -642,7 +643,7 @@ try:
             "operation": "favorites.add", "arguments": {"name": "Audit Bedarf"},
         })
         check(foreign.ok, "foreign favorite mutation succeeds")
-        foreign_revision = core.change_state()["revision"]
+        foreign_revision = core_storage.change_state()["revision"]
         draft_page.wait_for_function(
             "revision => window.gustoEvents.revisions.includes(revision)", arg=foreign_revision)
         check(draft_page.evaluate("window.draftSurvived === true")

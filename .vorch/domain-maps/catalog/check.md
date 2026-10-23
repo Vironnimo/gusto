@@ -1,10 +1,10 @@
 # Catalog: consistency check
 
-Contract, coverage, extension and repair paths of `core.check()`.
+Contract, coverage, extension and repair paths of `checks.check()`.
 
 ## Contract
 
-`core.check()` (API `check.run`; CLI `check`; `check --offline` runs Core in the CLI process against its own data root) returns counts (`recipe_count`, `archive_count`, `favorite_need_count`), one list per diagnostic, `errors` and `warnings` as `[{code, items}]` for non-empty lists, and `ok` = no errors. The CLI exits 1 when `ok` is false, also with `--json`.
+`checks.check()` (API `check.run`; CLI `check`; `check --offline` runs Core in the CLI process against its own data root) returns counts (`recipe_count`, `archive_count`, `favorite_need_count`), one list per diagnostic, `errors` and `warnings` as `[{code, items}]` for non-empty lists, and `ok` = no errors. The CLI exits 1 when `ok` is false, also with `--json`.
 
 - Warnings, which never affect `ok`: `uncategorized_tags`, `unresolved_log_references`. Every other diagnostic is a hard error.
 - Read-only: never writes, never repairs, takes no lock. It can observe a concurrent multi-file mutation mid-way; re-run before acting on a finding.

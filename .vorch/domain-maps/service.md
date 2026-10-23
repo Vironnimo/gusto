@@ -73,12 +73,11 @@ gates compare `data_path` before acting.
   (validation or domain rejection), 404 (unknown entity), 413 (size) or 500 with
   `outcome_unknown:true`. The web host rejects foreign browser writes with 403
   and the same definite-failure envelope before the API runs.
-- 404 vs 400 comes from the German prefix of Core's `ValueError` message
-  (`_not_found_error`: `Kein Rezept `, `Kein archiviertes Rezept `,
-  `Kein Einkaufsbedarf `, `Kein Einkauf-Item `, `Kein Bild `,
-  `Kein Lieblingsprodukt `, `Keine Tag-Kategorie `). Rewording such a Core
-  message silently changes the status.
-- Server-side uncertainty: `core.PostMutationError` (Core saved, then the
+- Missing Core entities raise `gusto.core.errors.NotFoundError`, a `ValueError`
+  subclass mapped to 404 by type. Other `ValueError` rejections stay 400;
+  message wording does not classify status. Explicit lookup results of `None`
+  use `CommandError(..., 404)`. Missing favorite aliases remain validation (400).
+- Server-side uncertainty: `errors.PostMutationError` (Core saved, then the
   journal update, cleanup or a later step failed) and `OSError`/`ValueError`
   while building the result after the Core call (`_mutation_result`) become 500
   with `outcome_unknown:true`. Validation before the Core call stays a definite

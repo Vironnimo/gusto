@@ -1,6 +1,6 @@
 # Shopping: preferred products
 
-Shopping needs (`Einkaufsbedarf`), aliases and ranked preferred-product cards in `gusto/core.py` (`Preferred products` section), stored in `data/favorites.json` and `images/_favorites/`.
+Shopping needs (`Einkaufsbedarf`), aliases and ranked preferred-product cards in `gusto/core/favorites.py`, stored in `data/favorites.json` and `images/_favorites/`.
 
 ## Identity and labels
 

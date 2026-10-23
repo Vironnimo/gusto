@@ -10,6 +10,7 @@ import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from datetime import date, timedelta
 from unittest.mock import patch
 
 
@@ -23,7 +24,13 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from starlette.requests import Request  # noqa: E402
 
-from gusto import __version__, api, client as remote_client, core  # noqa: E402
+from gusto import __version__, api, client as remote_client  # noqa: E402
+import gusto.core.catalog.images as core_images  # noqa: E402
+import gusto.core.catalog.recipes as core_recipes  # noqa: E402
+import gusto.core.errors as core_errors  # noqa: E402
+import gusto.core.records as core_records  # noqa: E402
+import gusto.core.shopping as core_shopping  # noqa: E402
+import gusto.core.storage as core_storage  # noqa: E402
 
 
 checks = 0
@@ -140,7 +147,7 @@ async def check_event_stream():
         ConnectedRequest(), poll_seconds=0.001, heartbeat_seconds=60,
     )
     initial = parse_sse(await anext(stream))
-    item = core.shopping_add("SSE-Nachricht")
+    item = core_shopping.shopping_add("SSE-Nachricht")
     changed = parse_sse(await asyncio.wait_for(anext(stream), timeout=1))
     await stream.aclose()
     check(
@@ -151,11 +158,11 @@ async def check_event_stream():
         changed["resources"] == ["shopping"],
         "SSE must identify the changed resource",
     )
-    core.shopping_remove(item.id)
+    core_shopping.shopping_remove(item.id)
 
-    replay_after = core.change_state()["revision"]
-    first = core.shopping_add("Replay A")
-    second = core.shopping_add("Replay B")
+    replay_after = core_storage.change_state()["revision"]
+    first = core_shopping.shopping_add("Replay A")
+    second = core_shopping.shopping_add("Replay B")
     replay = api.event_stream(
         ConnectedRequest(), after_revision=replay_after,
         poll_seconds=0.001, heartbeat_seconds=60,
@@ -167,7 +174,7 @@ async def check_event_stream():
         == [replay_after + 1, replay_after + 2],
         "SSE after=N must replay retained events in revision order",
     )
-    third = core.shopping_add("Replay C")
+    third = core_shopping.shopping_add("Replay C")
     live_after_replay = parse_sse(
         await asyncio.wait_for(anext(replay), timeout=1),
     )
@@ -177,11 +184,11 @@ async def check_event_stream():
         "SSE must continue after replay without duplicating an event",
     )
     for created in (first, second, third):
-        core.shopping_remove(created.id)
+        core_shopping.shopping_remove(created.id)
 
 
 async def check_event_recovery_and_disconnect():
-    current = core.change_state()["revision"]
+    current = core_storage.change_state()["revision"]
     request = ConnectedRequest()
     response = api.events(request, after=str(current + 100))
     check(response.media_type == "text/event-stream"
@@ -192,12 +199,12 @@ async def check_event_recovery_and_disconnect():
     reset = parse_sse(await anext(stream))
     check(reset["revision"] == current,
           "a cursor ahead of this store must immediately receive its actual revision")
-    item = core.shopping_add("Reset cursor")
+    item = core_shopping.shopping_add("Reset cursor")
     resumed = parse_sse(await asyncio.wait_for(anext(stream), timeout=1))
     check(resumed["revision"] == current + 1 and resumed["resources"] == ["shopping"],
           "an ahead-of-store cursor must not suppress subsequent changes")
     await stream.aclose()
-    core.shopping_remove(item.id)
+    core_shopping.shopping_remove(item.id)
 
     class Disconnectable:
         disconnected = False
@@ -206,7 +213,7 @@ async def check_event_recovery_and_disconnect():
             return self.disconnected
 
     request = Disconnectable()
-    heartbeat = api.event_stream(request, after_revision=core.change_state()["revision"],
+    heartbeat = api.event_stream(request, after_revision=core_storage.change_state()["revision"],
                                  heartbeat_seconds=0, poll_seconds=0)
     check(await anext(heartbeat) == ": heartbeat\n\n",
           "idle SSE streams must emit comments rather than fake revisions")
@@ -220,13 +227,13 @@ async def check_event_recovery_and_disconnect():
 
 
 def check_compacted_event_replay():
-    before = core.change_state()["revision"]
-    core._record_change(("catalog",))
-    for _ in range(core._CHANGE_HISTORY_LIMIT):
-        core._record_change(("shopping",))
-    replay = core.change_events(before)
+    before = core_storage.change_state()["revision"]
+    core_storage._record_change(("catalog",))
+    for _ in range(core_storage._CHANGE_HISTORY_LIMIT):
+        core_storage._record_change(("shopping",))
+    replay = core_storage.change_events(before)
     check(
-        replay[-1]["revision"] == before + core._CHANGE_HISTORY_LIMIT + 1,
+        replay[-1]["revision"] == before + core_storage._CHANGE_HISTORY_LIMIT + 1,
         "compacted replay must reach the current revision",
     )
     check(
@@ -339,68 +346,68 @@ def check_client_failure_recovery():
 
 
 def check_post_mutation_failures():
-    journal = core.changes_path().read_text(encoding="utf-8")
+    journal = core_storage.changes_path().read_text(encoding="utf-8")
     try:
         for number, broken in enumerate((
             "{broken",
             '{"revision": 1, "resources": [], "events": [null]}',
         )):
-            core.changes_path().write_text(broken, encoding="utf-8")
+            core_storage.changes_path().write_text(broken, encoding="utf-8")
             text = f"Journal failure {number}"
             failure = command("shopping.add", {"text": text}, status=500)
             check(failure.get("outcome_unknown") is True
-                  and any(item.text == text for item in core.shopping_list()),
+                  and any(item.text == text for item in core_shopping.shopping_list()),
                   "a broken journal must not turn a persisted add into a "
                   "confirmed rejection")
     finally:
-        core.changes_path().write_text(journal, encoding="utf-8")
+        core_storage.changes_path().write_text(journal, encoding="utf-8")
 
-    with patch.object(core, "_record_change", side_effect=OSError("journal locked")):
+    with patch.object(core_storage, "_record_change", side_effect=OSError("journal locked")):
         failure = command("shopping.add", {"text": "Journal locked"}, status=500)
     check(failure.get("outcome_unknown") is True
-          and any(item.text == "Journal locked" for item in core.shopping_list()),
+          and any(item.text == "Journal locked" for item in core_shopping.shopping_list()),
           "a journal I/O failure must preserve structured uncertainty "
           "after committing the item")
 
-    categories = core.categories_path().read_text(encoding="utf-8")
+    categories = core_storage.categories_path().read_text(encoding="utf-8")
     try:
-        core.categories_path().write_text("{broken", encoding="utf-8")
+        core_storage.categories_path().write_text("{broken", encoding="utf-8")
         failure = command("recipe.create", {
             "title": "Post-save warning", "tags": ["new-tag"],
         }, status=500)
-        recipe = core.get("post-save-warning")
+        recipe = core_recipes.get("post-save-warning")
         check(failure.get("outcome_unknown") is True and recipe is not None,
               "failed tag warnings must not hide a created recipe")
         failure = command("recipe.update", {
             "slug": recipe.slug, "tags": ["changed-tag"],
         }, status=500)
         check(failure.get("outcome_unknown") is True
-              and core.get(recipe.slug).tags == ["changed-tag"],
+              and core_recipes.get(recipe.slug).tags == ["changed-tag"],
               "failed tag warnings must not hide a saved recipe update")
     finally:
-        core.categories_path().write_text(categories, encoding="utf-8")
+        core_storage.categories_path().write_text(categories, encoding="utf-8")
 
-    with patch.object(core.Recipe, "content", side_effect=ValueError("unreadable body")):
+    with patch.object(core_records.Recipe, "content", side_effect=ValueError("unreadable body")):
         failure = command("recipe.content.set", {
             "slug": recipe.slug, "content": "# Ignored title\n\nSaved body.\n",
         }, status=500)
     check(failure.get("outcome_unknown") is True
-          and "Saved body." in core.get(recipe.slug).content(),
+          and "Saved body." in core_recipes.get(recipe.slug).content(),
           "a failed content reread must not hide a saved replacement")
 
-    with patch.object(core, "list_recipe_images", side_effect=ValueError("reread failed")):
+    with patch.object(core_images, "list_recipe_images", side_effect=ValueError("reread failed")):
         failure = command("image.add", {"slug": recipe.slug}, [
             attachment("image", "image.png", png_pixel()),
         ], status=500)
-    images, _ = core.list_recipe_images(recipe.slug)
+    images, _ = core_images.list_recipe_images(recipe.slug)
     check(failure.get("outcome_unknown") is True and len(images) == 1,
           "a failed cover reread must not hide a saved image")
-    with patch.object(core, "list_recipe_images", side_effect=ValueError("reread failed")):
+    with patch.object(core_images, "list_recipe_images", side_effect=ValueError("reread failed")):
         failure = command("image.set", {
             "slug": recipe.slug, "id": images[0].id, "caption": "Saved caption",
         }, status=500)
     check(failure.get("outcome_unknown") is True
-          and core.list_recipe_images(recipe.slug)[0][0].caption == "Saved caption",
+          and core_images.list_recipe_images(recipe.slug)[0][0].caption == "Saved caption",
           "a failed cover reread must not hide saved image metadata")
 
     failure = command("shopping.add", {"text": ""}, status=400)
@@ -409,8 +416,8 @@ def check_post_mutation_failures():
 
 
 def main():
-    core.data_dir().mkdir(parents=True)
-    core.categories_path().write_text(json.dumps({
+    core_storage.data_dir().mkdir(parents=True)
+    core_storage.categories_path().write_text(json.dumps({
         "diet": {"label": "Ernährung", "tags": ["vegan"]},
         "dish": {"label": "Art", "tags": ["suppe"]},
     }), encoding="utf-8")
@@ -456,7 +463,7 @@ def main():
         '{"operation":"shopping.add","arguments":{"text":"First"},'
         '"arguments":{"text":"Second"}}',
     ):
-        before = core.change_state()
+        before = core_storage.change_state()
         response = client.post(
             "/api/v1/command", content=raw,
             headers={"Content-Type": "application/json"},
@@ -465,8 +472,8 @@ def main():
               and response.json()["ok"] is False
               and "mehrfach" in response.json()["error"],
               "duplicate JSON fields must not silently choose the last value")
-        check(core.change_state() == before and core.load_recipes() == []
-              and core.shopping_list() == [],
+        check(core_storage.change_state() == before and core_recipes.load_recipes() == []
+              and core_shopping.shopping_list() == [],
               "ambiguous JSON must be rejected before any durable effect")
     for after in ("-1", "+1", "01", " 1", "1.0", "bad"):
         invalid_after = client.get("/api/v1/events", params={"after": after})
@@ -594,8 +601,23 @@ def main():
         cleared["tags"] == [],
         "recipe.update must clear tags with an explicit empty list",
     )
-    cooked = command("recipe.cooked", {"slug": soup["slug"], "date": None})
-    check(cooked["ok"] is True, "recipe.cooked must return the CLI result shape")
+    today = date.today()
+    before_midnight = today - timedelta(days=1)
+
+    class Midnight(date):
+        calls = 0
+
+        @classmethod
+        def today(cls):
+            cls.calls += 1
+            return before_midnight if cls.calls == 1 else today
+
+    with patch.object(core_recipes, "date", Midnight):
+        cooked = command("recipe.cooked", {"slug": soup["slug"], "date": None})
+    check(cooked["ok"] is True
+          and cooked["date"] == before_midnight.isoformat()
+          and cooked["date"] == core_recipes.load_log()[-1]["date"],
+          "recipe.cooked must acknowledge its committed date across midnight")
     check(
         command("log.list", {"days": 7})[-1]["slug"] == soup["slug"],
         "log.list must expose cooking history",
@@ -836,9 +858,9 @@ def main():
           "shopping.list must expose pending visible items")
     checked = command("shopping.check", {"id": free_item["id"]})
     check(checked["checked"] is True, "shopping.check must set checked=true")
-    same_revision = core.change_state()["revision"]
+    same_revision = core_storage.change_state()["revision"]
     command("shopping.check", {"id": free_item["id"]})
-    check(core.change_state()["revision"] == same_revision,
+    check(core_storage.change_state()["revision"] == same_revision,
           "idempotent shopping.check must not emit a new revision")
     unchecked = command("shopping.uncheck", {"id": free_item["id"]})
     check(unchecked["checked"] is False, "shopping.uncheck must reopen an item")
@@ -896,6 +918,14 @@ def main():
     ]:
         command(operation, arguments, attachments, status=404)
 
+    # HTTP status belongs to the error type, independently of editable prose.
+    for error, expected_status in (
+        (core_errors.NotFoundError("Der gesuchte Eintrag fehlt."), 404),
+        (ValueError("Kein Rezept ist hier ein ungültiger gespeicherter Zustand."), 400),
+    ):
+        with patch.object(core_shopping, "shopping_toggle", side_effect=error):
+            command("shopping.check", {"id": "missing"}, status=expected_status)
+
     removed_need = command("favorites.remove", {"need": need["id"]})
     check(removed_need["removed"] is True,
           "favorites.remove must return the removed id")
@@ -911,13 +941,13 @@ def main():
     # errors and check.run integrity findings, not as raw 500s from crashing
     # loaders (verified live with a log entry lacking 'date' and a null
     # index title).
-    index_backup = core.index_path().read_text(encoding="utf-8")
+    index_backup = core_storage.index_path().read_text(encoding="utf-8")
     log_backup = (
-        core.log_path().read_text(encoding="utf-8")
-        if core.log_path().exists() else None
+        core_storage.log_path().read_text(encoding="utf-8")
+        if core_storage.log_path().exists() else None
     )
     try:
-        core.index_path().write_text(
+        core_storage.index_path().write_text(
             json.dumps([{"slug": "x", "title": None}]), encoding="utf-8")
         command("catalog.list", status=400)
         reported = command("check.run")
@@ -925,8 +955,8 @@ def main():
                   for message in reported["invalid_data_files"]),
               "check.run must report a null-title index entry as an "
               "integrity error")
-        core.index_path().write_text(index_backup, encoding="utf-8")
-        core.log_path().write_text(
+        core_storage.index_path().write_text(index_backup, encoding="utf-8")
+        core_storage.log_path().write_text(
             json.dumps([{"slug": "x"}]), encoding="utf-8")
         log_error = command("log.list", status=400)
         check("log.json" in log_error["error"],
@@ -936,11 +966,11 @@ def main():
                   for message in reported["invalid_data_files"]),
               "check.run must report a broken log entry as an integrity error")
     finally:
-        core.index_path().write_text(index_backup, encoding="utf-8")
+        core_storage.index_path().write_text(index_backup, encoding="utf-8")
         if log_backup is None:
-            core.log_path().unlink(missing_ok=True)
+            core_storage.log_path().unlink(missing_ok=True)
         else:
-            core.log_path().write_text(log_backup, encoding="utf-8")
+            core_storage.log_path().write_text(log_backup, encoding="utf-8")
 
     final_health = client.get("/api/v1/health").json()
     check(final_health["revision"] > 0,
