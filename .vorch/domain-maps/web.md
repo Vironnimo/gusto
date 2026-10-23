@@ -6,6 +6,10 @@ The web domain is the FastAPI host process and its server-rendered German browse
 
 `gusto/web.py` defines `gusto.web:app`, the single ASGI app that `gusto serve` and the installed service run. It includes the `/api/v1` router from `gusto/api.py` (see `service.md`), mounts `/static`, serves the root-scoped `/sw.js`, owned media and the Jinja templates in `gusto/templates/`. `gusto/static/app.js`, `photo-input.js`, `style.css`, `manifest.webmanifest` and `icons/` belong here; `shopping-client.js` and `sw.js` belong to the shopping domain (`shopping.md`).
 
+`gusto/rendering.py` owns recipe Markdown presentation: title omission,
+Markdown conversion and allowlist sanitization. Web routes consume its rendered
+HTML; it neither reads the store nor knows about HTTP or templates.
+
 Web routes call the owning modules under `gusto/core/` in-process; they are not clients of `/api/v1/command`. They only convert form input (comma-separated tags, blank numbers as clear flags, the `# {title}` line before the body) and present results. Domain rules, validation, locking and change events stay in Core (`catalog.md`, `shopping.md`). A web action exists only for a capability Core, API and CLI already offer (PROJECT.md).
 
 Not owned here: the command API, health and SSE endpoints (`service.md`), the offline shopping client, sync contract and service worker (`shopping.md`), starting and stopping the server (`cli.md`, `lifecycle.md`).
@@ -38,7 +42,7 @@ Not owned here: the command API, health and SSE endpoints (`service.md`), the of
 ## Conventions
 
 - Progressive enhancement: every page and form works without JavaScript through plain GET/POST; scripts only add live search, live reload, confirmation dialogs, the double-submit guard, photo previews and the offline shopping client. Keep a no-JS path for every new action.
-- HTML safety: templates autoescape; `|safe` is used only for `content_html` from `_render`, the single Markdown render point. It runs Python-Markdown (`extra`, `sane_lists`) and then a stdlib allowlist sanitizer: allowed tags with per-tag attributes, `javascript:`/`vbscript:`/`data:` URLs dropped, other tags removed while their text stays escaped. No sanitizer dependency is added for this. Scripts never assign server HTML through `innerHTML`; live search clones parsed nodes. Confirmation texts stay in `data-confirm` attributes, never in inline JS strings. Redirect targets from forms pass `_safe_return_to` (local absolute paths only).
+- HTML safety: templates autoescape; `|safe` is used only for `content_html` from `rendering.render_recipe`, the single Markdown render point. It runs Python-Markdown (`extra`, `sane_lists`) and then a stdlib allowlist sanitizer: allowed tags with per-tag attributes, `javascript:`/`vbscript:`/`data:` URLs dropped, other tags removed while their text stays escaped. No sanitizer dependency is added for this. Scripts never assign server HTML through `innerHTML`; live search clones parsed nodes. Confirmation texts stay in `data-confirm` attributes, never in inline JS strings. Redirect targets from forms pass `_safe_return_to` (local absolute paths only).
 - Most pages render the `error` query parameter as escaped text, so a crafted link can show any notice; `/shopping` shows only fixed notices for known markers (`SHOPPING_NOTICES`).
 - UI copy is German (PROJECT.md). Visual identity, tokens, responsive rules and copy tone: `web/design.md`.
 - A change to any precached or cache-first asset (`style.css`, `app.js`, `photo-input.js`, `manifest.webmanifest`, icons) or to the `/` or `/shopping` shell must bump `CACHE` in `sw.js` (shopping domain): every page registers the worker and static URLs carry no version, so installed browsers otherwise keep the old files.
@@ -56,7 +60,7 @@ Not owned here: the command API, health and SSE endpoints (`service.md`), the of
 - Core deliberately does not deduplicate cooking-log entries; the guard in `app.js` blocks a second submit of a POST form and disables its buttons only after the submit event (disabling during it cancels the submission in Chromium). GET forms are excluded because the clicked button carries the value (day switch).
 - The host's browser write check compares against the externally requested origin. Reverse proxies must preserve its Host and scheme; headerless LAN clients still have the anonymous access described in `service.md`. Purge confirmation is a form field, not authorization.
 - Web multipart uploads have no request-size cap; the 25 MiB check runs after the whole file is received (the command API enforces its own cap).
-- The rendered body omits the first `# ` line (`_split_title`); the edit form shows the body without it and the route rebuilds `# {title}`. Core still enforces the title/H1 invariant (`catalog.md`). Blank duration/servings on the edit form clear the values through Core's clear flags.
+- The rendered body omits the first `# ` line (`rendering.without_title`); the edit form shows the body without it and the route rebuilds `# {title}`. Core still enforces the title/H1 invariant (`catalog.md`). Blank duration/servings on the edit form clear the values through Core's clear flags.
 - Only Chromium is exercised locally and in CI; Safari/iOS and Firefox behavior (camera `capture`, `backdrop-filter`, bottom sheet) is unverified.
 - `EventSource` cannot send headers; the live stream stays anonymous by design. Do not add auth workarounds to it.
 

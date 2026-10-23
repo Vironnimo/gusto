@@ -32,7 +32,7 @@ import gusto  # noqa: E402, F401 - configure checkout temp before allocating dat
 HOME = Path(tempfile.mkdtemp(prefix="gusto-web-render-test-"))
 os.environ["GUSTO_HOME"] = os.fspath(HOME)
 
-from gusto import web # noqa: E402
+from gusto import web, rendering # noqa: E402
 import gusto.core.catalog.categories as core_categories  # noqa: E402
 import gusto.core.catalog.images as core_images  # noqa: E402
 import gusto.core.catalog.recipes as core_recipes  # noqa: E402
@@ -63,7 +63,7 @@ def upload_png() -> UploadFile:
 
 
 def test_xss_is_neutralized():
-    poison = web._render(
+    poison = rendering.render_recipe(
         "# Titel\n\n"
         "<img src=x onerror=alert(1)>\n\n"
         "Text mit [klick](javascript:alert(1)), "
@@ -84,7 +84,7 @@ def test_xss_is_neutralized():
 
 
 def test_normal_markdown_survives():
-    rendered = web._render(
+    rendered = rendering.render_recipe(
         "# Pasta Pomodoro\n\n"
         "## Zutaten\n\n"
         "- 500 g Tomaten\n- Basilikum\n\n"
@@ -107,7 +107,7 @@ def test_normal_markdown_survives():
     check('title="Hinweis"' in rendered, "link titles must survive")
     check("<h1>" not in rendered, "the H1 title line must stay dropped")
 
-    structure = web._render(
+    structure = rendering.render_recipe(
         "> Notiz\n\n**fett** und *kursiv*\n\n"
         "| A | B |\n|---|---|\n| 1 | 2 |\n\n"
         "```python\nprint(1)\n```\n"
@@ -122,7 +122,7 @@ def test_normal_markdown_survives():
 
 
 def test_attribute_allowlist():
-    sanitized = web._sanitize_html(
+    sanitized = rendering.sanitize_html(
         '<td colspan="2" rowspan="3" onclick="evil()" style="x">zelle</td>'
         '<a href="/ok" title="t" class="c" onclick="evil()">link</a>'
         '<img src="/p.webp" alt="a" width="10" height="5" onerror="evil()">'
@@ -141,7 +141,7 @@ def test_attribute_allowlist():
 
 
 def test_dropped_tags_keep_children():
-    dropped = web._sanitize_html(
+    dropped = rendering.sanitize_html(
         "<iframe>schaden</iframe><div><p>bleibt</p></div><p>offen"
     )
     check("schaden" in dropped and "<p>bleibt</p>" in dropped,
