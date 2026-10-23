@@ -18,3 +18,6 @@ If a mutation loses its
 response (`outcome_unknown:true`), inspect state on the same server before
 retrying; do not replay it automatically. Failed interactive edits retain
 `recovery_path`; compare `show` before uploading that copy again.
+
+Keep repository scratch files under `.tmp/`; see the canonical guide for
+Python/child-process setup and the same-filesystem atomic-write exception.

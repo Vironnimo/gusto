@@ -15,12 +15,14 @@ import tempfile
 from datetime import datetime, timezone
 from unittest.mock import patch
 
-# --- Hermetic: GUSTO_HOME to a throwaway directory, BEFORE the import -------
-os.environ["GUSTO_HOME"] = tempfile.mkdtemp(prefix="gusto-merge-test-")
-
 # Project root on the path so `gusto` is importable no matter where the script
 # is started from.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import gusto  # noqa: E402 - does not load Core or household data
+
+# --- Hermetic: GUSTO_HOME to a throwaway directory, BEFORE the import -------
+os.environ["GUSTO_HOME"] = tempfile.mkdtemp(prefix="gusto-merge-test-")
+
 
 from gusto import core  # noqa: E402
 

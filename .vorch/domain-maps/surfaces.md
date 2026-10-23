@@ -190,7 +190,14 @@ formats.
   home LAN, not permission to expose Gusto to the public internet.
 - Preserve German product copy and English code identifiers.
 - Starlette template calls pass request first.
-- Browser and PWA checks always use throwaway `GUSTO_HOME` data.
+- `gusto/_temp.py` activates repository `.tmp/` only for source checkouts,
+  replacing Python's cached temp path and exporting `TMPDIR`/`TEMP`/`TMP` to
+  children. Tests/scripts import Gusto before allocating data; installed
+  packages retain their caller's temp policy. Explicit atomic staging stays
+  beside its destination on the same filesystem.
+- Browser and PWA checks always use throwaway `GUSTO_HOME` data beneath `.tmp/`.
+  Browser screenshots share the run's `.tmp/browser-*/shots/` directory; CI
+  uploads `.tmp/browser-*/` and `.tmp/pwa-*/` including hidden files.
 - Browser/PWA checks create unique data directories and choose unused loopback
   ports; their health probe must match that exact data path before any action.
   The script gate is checked against every standalone `tests/test_*.py` file.

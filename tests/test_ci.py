@@ -68,6 +68,17 @@ check(
     set(browser_matrix) == {"ubuntu-latest", "windows-latest"},
     "real browser/PWA checks must run on Linux and Windows",
 )
+browser_upload = next(
+    step["with"] for step in quality["jobs"]["browser"]["steps"]
+    if step.get("name") == "Upload browser diagnostics after failure"
+)
+check(
+    browser_upload.get("include-hidden-files") == "true"
+    and {".tmp/browser-*/", ".tmp/pwa-*/"}.issubset(
+        set(browser_upload["path"].split())
+    ),
+    "failure artifacts must include the hidden repository temp directories",
+)
 
 jobs = release["jobs"]
 check(
@@ -101,6 +112,11 @@ check(
     "only the publish job should receive release and attestation authority",
 )
 release_text = RELEASE.read_text(encoding="utf-8")
+check(
+    "runner.temp" not in release_text
+    and '${{ github.workspace }}/.tmp/gusto-ci-smoke' in release_text,
+    "installation smoke tests must stay inside repository temp",
+)
 check(
     '--repo "$GITHUB_REPOSITORY"' in release_text,
     "release publication must not depend on a local Git checkout",

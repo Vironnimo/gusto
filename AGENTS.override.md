@@ -325,6 +325,15 @@ Full round-trip in the on-demand skill reference
 
 ## Tech / pitfalls
 
+- Repository scratch files belong in `.tmp/`, never system temp or new
+  `.testdata*` directories. Import `gusto` before allocating temp files in a
+  new test/script; checkout startup sets Python's temp directory plus `TMPDIR`,
+  `TEMP`, and `TMP` for child processes. For ad-hoc shell/browser tools, set
+  those three variables to the absolute repo `.tmp` path and keep output there.
+  Browser runs retain data and screenshots in `.tmp/browser-*/`; PWA runs use
+  `.tmp/pwa-*/`. Installed packages without a checkout retain the caller's temp
+  policy. Atomic replacement/staging stays beside its destination for same-
+  filesystem moves; test destinations must themselves be inside `.tmp`.
 - Python (stdlib-only core/CLI client). Server: FastAPI + uvicorn + Jinja2 + markdown +
   `python-multipart` (forms) + Pillow (photo normalization). Tests: Playwright.
 - Starlette ≥1.3: the signature is `TemplateResponse(request, "name.html", {...})`

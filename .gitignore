@@ -17,6 +17,7 @@ TODO.md
 *.tmp
 
 # Test- und Laufzeit-Artefakte
+.tmp/
 .testdata*/
 .clitest/
 .serve.log

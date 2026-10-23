@@ -9,7 +9,7 @@ Extends scripts/browser_check.py with the phase-2 flows (PWA + offline + sync):
   SW cache
 
 Like browser_check.py everything runs against a THROWAWAY copy of the data
-(GUSTO_HOME -> a unique .testdata-pwa-* directory); real data stays untouched.
+(GUSTO_HOME -> a unique .tmp/pwa-* directory); real data stays untouched.
 
 Usage:  .venv/Scripts/python.exe scripts/pwa_check.py
 """
@@ -35,7 +35,11 @@ except Exception:
     pass
 
 ROOT = Path(__file__).resolve().parent.parent
-TESTDATA = Path(tempfile.mkdtemp(prefix=".testdata-pwa-", dir=ROOT))
+sys.path.insert(0, str(ROOT))
+import gusto  # noqa: E402 - configure temp for this process and its children
+
+TESTDATA = Path(tempfile.mkdtemp(prefix="pwa-"))
+print(f"PWA test data: {TESTDATA}", flush=True)
 with socket.socket() as port_socket:
     port_socket.bind(("127.0.0.1", 0))
     PORT = str(port_socket.getsockname()[1])

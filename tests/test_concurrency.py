@@ -27,6 +27,9 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, os.fspath(ROOT))
+import gusto  # noqa: E402 - also configures spawned workers
+
 WORKERS = 6
 ITERATIONS = 4
 CLI_CALLS = 5

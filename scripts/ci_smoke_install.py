@@ -14,6 +14,9 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+import gusto  # noqa: E402 - configure temp for this process and its children
+
 
 
 def build_parser() -> argparse.ArgumentParser:

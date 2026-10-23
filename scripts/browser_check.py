@@ -1,7 +1,7 @@
 """End-to-end check of the web UI with Playwright.
 
 Starts its own uvicorn server against a THROWAWAY copy of the data
-(GUSTO_HOME -> a unique .testdata-browser-* directory), drives real Chromium, takes
+(GUSTO_HOME -> a unique .tmp/browser-* directory), drives real Chromium, takes
 screenshots and checks the most important flows. The real sample data stays
 untouched.
 
@@ -28,8 +28,12 @@ except Exception:
     pass
 
 ROOT = Path(__file__).resolve().parent.parent
-SHOTS = Path(__file__).resolve().parent / "shots"
-TESTDATA = Path(tempfile.mkdtemp(prefix=".testdata-browser-", dir=ROOT))
+sys.path.insert(0, str(ROOT))
+import gusto  # noqa: E402 - configure temp for this process and its children
+
+TESTDATA = Path(tempfile.mkdtemp(prefix="browser-"))
+SHOTS = TESTDATA / "shots"
+print(f"Browser test data and screenshots: {TESTDATA}", flush=True)
 with socket.socket() as port_socket:
     port_socket.bind(("127.0.0.1", 0))
     PORT = str(port_socket.getsockname()[1])

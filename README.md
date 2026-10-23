@@ -291,6 +291,16 @@ to the temporary log path returned by the command.
 
 ## Tests
 
+All checkout scratch files live in the ignored `.tmp/` directory. Direct test
+and script calls configure Python and child-process temp automatically; release
+builds also keep intermediate build trees there. Browser runs retain their
+throwaway data and screenshots together in `.tmp/browser-*/` (PWA: `.tmp/pwa-*/`).
+For ad-hoc tools, set `TMPDIR`, `TEMP`, and `TMP` to the absolute repository
+`.tmp` path and save their outputs there. Close running tests/preview servers
+and recover any retained editor copies before clearing this directory.
+Installed packages without a source checkout keep the caller's temp policy;
+atomic replacement files remain beside their targets on the same filesystem.
+
 ```bash
 python scripts/run_quality.py scripts  # every standalone contract/core test
 python scripts/run_quality.py browser  # Chromium UI + offline PWA
@@ -312,6 +322,7 @@ python tests/test_autostart.py     # windowless Windows launcher and exit codes
 python tests/test_uninstall.py     # safe app/data removal lifecycle
 python tests/test_packaging.py     # fresh-install dependency declaration
 python tests/test_paths.py         # Windows/Linux data-directory contract
+python tests/test_temp.py          # repository temp and child-process isolation
 python tests/test_ci.py            # CI matrix, permissions and release gates
 ```
 

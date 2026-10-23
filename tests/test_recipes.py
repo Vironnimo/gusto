@@ -11,9 +11,11 @@ from pathlib import Path
 import base64
 
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import gusto  # noqa: E402 - configure checkout temp before allocating data
+
 HOME = Path(tempfile.mkdtemp(prefix="gusto-recipes-test-"))
 os.environ["GUSTO_HOME"] = os.fspath(HOME)
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from gusto import core  # noqa: E402
 

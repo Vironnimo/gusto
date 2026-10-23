@@ -8,6 +8,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+import gusto  # noqa: E402 - configure temp for this process and its children
+
 
 SCRIPT_CHECKS = (
     "tests/test_api.py",
@@ -25,6 +28,7 @@ SCRIPT_CHECKS = (
     "tests/test_autostart.py",
     "tests/test_uninstall.py",
     "tests/test_paths.py",
+    "tests/test_temp.py",
     "tests/test_packaging.py",
     "tests/test_ci.py",
 )

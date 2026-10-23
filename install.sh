@@ -48,6 +48,14 @@ command -v "$python_bin" >/dev/null 2>&1 || {
   exit 1
 }
 
+# Only the source checkout overrides the caller's temp policy.
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  checkout_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -f "$checkout_root/pyproject.toml" && -f "$checkout_root/scripts/run_quality.py" ]]; then
+    mkdir -p -- "$checkout_root/.tmp"
+    export TMPDIR="$checkout_root/.tmp" TEMP="$checkout_root/.tmp" TMP="$checkout_root/.tmp"
+  fi
+fi
 temporary="$(mktemp -d "${TMPDIR:-/tmp}/gusto-install.XXXXXXXX")"
 trap 'rm -rf -- "$temporary"' EXIT
 manifest="$temporary/gusto-release.json"

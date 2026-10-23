@@ -16,6 +16,17 @@ if (-not $ReleaseBase) {
 }
 $ReleaseBase = $ReleaseBase.TrimEnd("/")
 
+# A source checkout keeps bootstrap downloads and child-process scratch local.
+# The published standalone script has no repository and uses the caller's temp.
+if ($PSScriptRoot -and
+    (Test-Path -LiteralPath (Join-Path $PSScriptRoot "pyproject.toml")) -and
+    (Test-Path -LiteralPath (Join-Path $PSScriptRoot "scripts/run_quality.py"))) {
+    $checkoutTemp = Join-Path $PSScriptRoot ".tmp"
+    New-Item -ItemType Directory -Path $checkoutTemp -Force | Out-Null
+    $env:TEMP = $checkoutTemp
+    $env:TMP = $checkoutTemp
+    $env:TMPDIR = $checkoutTemp
+}
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ("gusto-install-" + [Guid]::NewGuid())
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {

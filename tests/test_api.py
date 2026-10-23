@@ -13,9 +13,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import gusto  # noqa: E402 - configure checkout temp before allocating data
+
 HOME = Path(tempfile.mkdtemp(prefix="gusto-api-test-"))
 os.environ["GUSTO_HOME"] = os.fspath(HOME)
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

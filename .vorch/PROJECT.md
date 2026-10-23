@@ -64,7 +64,13 @@ Installation registers a limited Windows logon task or `systemd --user`, starts
 immediately, and must pass health without admin/root. `gusto update` is
 the sole normal update path and rolls back a failed activation; installer
 reruns require explicit repair mode. Browser/PWA tests always use throwaway
-data through `GUSTO_HOME`.
+data through `GUSTO_HOME`. Checkout scratch files live under `.tmp/`:
+`gusto/_temp.py` configures Python and inherited `TMPDIR`/`TEMP`/`TMP` on source
+import; standalone tests/scripts initialize it before allocating their data.
+Browser data and screenshots share unique `.tmp/browser-*/` directories; PWA
+runs use `.tmp/pwa-*/`. CI bootstraps and release build intermediates follow the
+same policy. Installed packages keep the caller's temp policy, and atomic
+same-filesystem staging remains beside its target.
 
 ## Testing
 
@@ -94,6 +100,7 @@ Quality gates:
 - `python tests/test_autostart.py`
 - `python tests/test_uninstall.py`
 - `python tests/test_paths.py`
+- `python tests/test_temp.py`
 - `python tests/test_ci.py`
 - `python scripts/browser_check.py`
 - `python scripts/pwa_check.py`

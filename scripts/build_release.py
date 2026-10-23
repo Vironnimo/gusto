@@ -16,6 +16,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+import gusto  # noqa: E402 - configure temp for this process and its children
+
 MANIFEST_NAME = "gusto-release.json"
 INSTALLER_NAME = "install.py"
 WINDOWS_PYTHON_VERSION = "3.13.14"
@@ -95,13 +98,23 @@ def build_release(
         stale.unlink(missing_ok=True)
     version = project_version()
     with tempfile.TemporaryDirectory(prefix="gusto-release-") as temporary:
+        # setuptools writes build/ and egg-info beside its input. Build a source
+        # copy so these intermediate files also remain below repository .tmp.
+        source_dir = Path(temporary) / "source"
+        source_dir.mkdir()
+        shutil.copy2(ROOT / "pyproject.toml", source_dir / "pyproject.toml")
+        for name in ("gusto", "skill"):
+            shutil.copytree(
+                ROOT / name, source_dir / name,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            )
         wheel_dir = Path(temporary) / "wheel"
         wheel_dir.mkdir()
         result = subprocess.run(
             [sys.executable, "-m", "pip", "wheel", "--no-deps",
              "--no-build-isolation", "--wheel-dir", os.fspath(wheel_dir),
-             os.fspath(ROOT)],
-            cwd=ROOT,
+             os.fspath(source_dir)],
+            cwd=source_dir,
         )
         if result.returncode:
             raise RuntimeError("Wheel-Build fehlgeschlagen.")
