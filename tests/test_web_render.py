@@ -11,7 +11,7 @@ server-side errors.
 from __future__ import annotations
 
 from io import BytesIO
-import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import sys
@@ -24,7 +24,6 @@ from urllib.parse import parse_qs, urlsplit
 from PIL import Image
 from fastapi.testclient import TestClient
 from starlette.datastructures import UploadFile
-from starlette.requests import Request
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -146,52 +145,110 @@ def test_dropped_tags_keep_children():
 
 
 def test_shopping_error_notice_is_fixed_text():
-    notice = web.SHOPPING_NOTICES.get(web.SHOPPING_EMPTY_MARKER)
-    check(bool(notice), "the empty-add marker must map to a fixed notice")
-    check(web.SHOPPING_NOTICES.get("<script>alert(1)</script>") is None,
-          "foreign/unknown error parameters must render nothing")
+    client = TestClient(web.app, follow_redirects=False)
+    before = client.get("/api/shopping").json()
+    response = client.post("/shopping/add", data={"text": "   "})
+    check(response.status_code == 303, "empty shopping additions must redirect to a notice")
+    notice = client.get(response.headers["location"])
+    check(notice.status_code == 200 and 'class="error"' in notice.text,
+          "the empty-add redirect must render a visible notice")
+    check(client.get("/api/shopping").json() == before,
+          "an empty addition must not change the shopping state")
+    unknown = client.get("/shopping", params={"error": "<script>alert(1)</script>"})
+    check('class="error"' not in unknown.text and "<script>alert(1)</script>" not in unknown.text,
+          "foreign or unknown notice parameters must render no notice or executable HTML")
 
 
 def test_return_destination_stays_local():
+    client = TestClient(web.app, follow_redirects=False)
+    need = web.core.favorite_add_need("Redirect-Prüfung")
     for value in ("//example.org", "/\\example.org", "/\t/example.org",
                   "/\r/example.org", "https://example.org"):
-        check(web._safe_return_to(value, "/shopping") == "/shopping",
+        response = client.post("/favorites/assign", data={
+            "need_id": need.id, "alias": "Redirect-Alias", "return_to": value,
+        })
+        check(response.status_code == 303 and response.headers["location"] == "/shopping",
               "browser URL normalization must not turn a return path into an external redirect")
     local = "/favorites/einkauf?text=Milch%20%26%20Brot"
-    check(web._safe_return_to(local, "/shopping") == local,
+    response = client.post("/favorites/assign", data={
+        "need_id": need.id, "alias": "Redirect-Alias", "return_to": local,
+    })
+    check(response.status_code == 303 and response.headers["location"] == local,
           "local return paths and encoded query values must survive")
 
 
 def test_shopping_sync_keeps_server_responsive():
-    async def exercise():
-        started = threading.Event()
-        release = threading.Event()
-        responsive = []
+    started = threading.Event()
+    release = threading.Event()
 
-        def slow_merge(items):
-            started.set()
-            responsive.append(release.wait(timeout=2))
-            return []
+    def slow_merge(items):
+        started.set()
+        if not release.wait(timeout=3):
+            raise AssertionError("another request could not release the simulated lock")
+        return []
 
-        async def receive():
-            return {"type": "http.request", "body": b'{"items": []}',
-                    "more_body": False}
-
-        async def other_request():
-            while not started.is_set():
-                await asyncio.sleep(0.001)
-            release.set()
-
-        request = Request({"type": "http", "headers": []}, receive)
+    # Both requests share the TestClient's application event loop. A blocking
+    # merge on that loop would prevent health from releasing the barrier.
+    with TestClient(web.app) as client, ThreadPoolExecutor(max_workers=1) as worker:
         with patch.object(web.core, "shopping_merge", side_effect=slow_merge):
-            response, _ = await asyncio.gather(
-                web.api_shopping_sync(request), other_request(),
-            )
-        check(json.loads(response.body) == {"items": []}
-              and responsive == [True],
-              "shopping sync waiting on a file lock must not block other requests")
+            pending = worker.submit(client.post, "/api/shopping/sync", json={"items": []})
+            try:
+                check(started.wait(timeout=2), "sync must reach the simulated lock")
+                health = client.get("/api/v1/health")
+            finally:
+                release.set()
+            response = pending.result(timeout=3)
+    check(health.status_code == 200 and response.json() == {"items": []},
+          "shopping sync waiting on a file lock must not block other requests")
 
-    asyncio.run(exercise())
+
+def test_shopping_sync_endpoint_contract():
+    client = TestClient(web.app)
+    web.core.shopping_save([])
+    first = web.core.shopping_add("Bestand", quantity="1 Packung")
+    web.core.shopping_remove(first.id)
+    tombstone = web.core.shopping_load()[0].to_dict()
+    item = {"id": "endpoint-milk", "text": "Milch", "quantity": "2 l",
+            "checked": False, "source": None, "created_at": "2026-06-23T12:00:00Z",
+            "updated_at": "2026-06-23T12:00:00.001Z", "deleted": False}
+    response = client.post("/api/shopping/sync", json={"items": [item]})
+    expected = {first.id: tombstone, item["id"]: item}
+    check(response.status_code == 200 and {i["id"]: i for i in response.json()["items"]} == expected
+          and expected[first.id]["deleted"] is True,
+          "sync must serialize accepted items and the complete server state including tombstones")
+    for payload in ({}, {"items": None}, {"items": []}):
+        response = client.post("/api/shopping/sync", json=payload)
+        check(response.status_code == 200
+              and {i["id"]: i for i in response.json()["items"]} == expected,
+              "missing, null or empty items must return the full server state")
+    before = client.get("/api/shopping").json()
+    version = web.core.change_state()["revision"]
+    good = {**item, "id": "must-not-be-partially-saved"}
+    for payload in ([], {"items": {}}, {"items": [good, {}]},
+                    {"items": [good, {**item, "checked": "yes"}]},
+                    {"items": [good, {**item, "source": "missing-recipe", "updated_at": "2099-01-01T00:00:00Z"}]}):
+        response = client.post("/api/shopping/sync", json=payload)
+        check(response.status_code == 400 and bool(response.json().get("error"))
+              and client.get("/api/shopping").json() == before
+              and web.core.change_state()["revision"] == version,
+              "invalid shapes or entries must reject the entire sync without writes or events")
+    response = client.post("/api/shopping/sync", content="not-json",
+                           headers={"Content-Type": "application/json"})
+    check(response.status_code == 400 and client.get("/api/shopping").json() == before,
+          "malformed JSON must be a definite rejection without changes")
+    # Favorites JSON is the PWA's read-only offline catalog, including the
+    # derived image URL that is absent from the persisted Core record.
+    need = web.core.favorite_add_need("Endpoint-Produkt")
+    web.core.favorite_add_product(need.id, "Ohne Foto", brand="Marke")
+    photo = HOME / "endpoint-photo.png"
+    Image.new("RGB", (4, 4), "blue").save(photo)
+    product = web.core.favorite_add_product(need.id, "Mit Foto", brand="Marke", image=photo)
+    response = client.get("/api/favorites")
+    catalog = next(n for n in response.json()["needs"] if n["id"] == need.id)
+    check(response.status_code == 200 and catalog["products"][0]["image_url"] is None
+          and catalog["products"][1]["image_url"] == "/media/favorite/" + product.image_filename,
+          "the preference endpoint must preserve ranking and serialize optional image URLs")
+    web.core.shopping_save([])
 
 
 def test_browser_writes_require_same_origin():
@@ -346,6 +403,7 @@ def main():
     test_shopping_error_notice_is_fixed_text()
     test_return_destination_stays_local()
     test_shopping_sync_keeps_server_responsive()
+    test_shopping_sync_endpoint_contract()
     test_browser_writes_require_same_origin()
     test_saved_mutations_never_look_rejected()
     test_tag_filters_keep_stale_selections_removable()

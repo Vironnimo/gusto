@@ -60,7 +60,7 @@ Not owned here: the command API, health and SSE endpoints (`service.md`), the of
 
 ## Tests
 
-- `tests/test_web_render.py`: sanitizer, fixed shopping notices, local return paths, sync off the event loop, stale tag chips, photo error split, browser write rejection at the mounted app, persisted-write uncertainty and unchanged pre-write validation.
+- `tests/test_web_render.py`: focused sanitizer matrices; HTTP shopping notices, local redirects, full-state sync serialization and atomic validation failures, sync off the event loop; stale tag chips, photo error split, browser write rejection at the mounted app, persisted-write uncertainty and unchanged pre-write validation.
 - `scripts/browser_check.py`: real Chromium against a throwaway copy of the checkout's sample `recipes/`, `data/` and `images/` under `.tmp/browser-*/` (screenshots in `shots/`); covers live search, facets, no-JS flows, photo normalization, double submit, confirmations, mobile and 320 px layouts and live SSE refresh. Its expectations (three cards, `kokos` -> 1 hit) depend on those sample files.
 - `scripts/pwa_check.py` (shopping) covers manifest, service worker and offline shell; `tests/test_packaging.py` (lifecycle) the packaged assets and the web dependency list.
 

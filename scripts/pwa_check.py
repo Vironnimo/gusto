@@ -1,7 +1,7 @@
 """PWA / offline / sync check of the shopping list with Playwright.
 
 Extends scripts/browser_check.py with the phase-2 flows (PWA + offline + sync):
-- sync API (GET /api/shopping, POST /api/shopping/sync, "last writer wins")
+- live sync, in-flight changes and bounded retry through real browser requests
 - offline: load online -> set_offline(True) -> tick optimistically -> back
   online -> sync verifies the change reaches the server
 - two-device merge (two browser contexts = two localStorage)
@@ -44,27 +44,20 @@ with socket.socket() as port_socket:
     port_socket.bind(("127.0.0.1", 0))
     PORT = str(port_socket.getsockname()[1])
 BASE = f"http://127.0.0.1:{PORT}"
-SHOPPING = TESTDATA / "data" / "shopping_list.json"
-FAVORITES = TESTDATA / "data" / "favorites.json"
-FAVORITE_IMAGE = "offline-spaghetti.png"
 
 # --- fresh throwaway data ---
 shutil.copytree(ROOT / "recipes", TESTDATA / "recipes")
 shutil.copytree(ROOT / "data", TESTDATA / "data")
-(TESTDATA / "images" / "_favorites").mkdir(parents=True)
-shutil.copy2(
-    next((ROOT / "images" / "spaghetti-carbonara").glob("*.png")),
-    TESTDATA / "images" / "_favorites" / FAVORITE_IMAGE,
+os.environ["GUSTO_HOME"] = str(TESTDATA)
+from gusto import core  # noqa: E402 - select the throwaway store before loading Core
+
+core.favorites_save([])
+need = core.favorite_add_need("Spaghetti", aliases=["200 g Spaghetti"])
+core.favorite_add_product(
+    need.id, "De Cecco Spaghetti n. 12", brand="De Cecco", store="REWE",
+    note="Bleibt schön bissfest",
+    image=next((ROOT / "images" / "spaghetti-carbonara").glob("*.png")),
 )
-FAVORITES.write_text(json.dumps({"needs": [{
-    "id": "spaghetti", "name": "Spaghetti", "aliases": ["200 g Spaghetti"],
-    "created_at": "2026-01-01T00:00:00.000Z", "products": [{
-        "id": "de-cecco", "name": "De Cecco Spaghetti n. 12",
-        "brand": "De Cecco", "store": "REWE", "note": "Bleibt schön bissfest",
-        "image_filename": FAVORITE_IMAGE,
-        "created_at": "2026-01-01T00:00:00.000Z",
-    }],
-}]}, ensure_ascii=False), encoding="utf-8")
 
 env = {**os.environ, "GUSTO_HOME": str(TESTDATA)}
 srv = subprocess.Popen(
@@ -112,10 +105,10 @@ def mk(text, ts):
             "source": None, "created_at": ts, "updated_at": ts, "deleted": False}
 
 def reset_shopping():
-    SHOPPING.write_text('{"items": []}\n', encoding="utf-8")
+    core.shopping_save([])
 
 def seed_shopping(items):
-    SHOPPING.write_text(json.dumps({"items": items}, ensure_ascii=False), encoding="utf-8")
+    core.shopping_save([core.ShoppingItem.from_dict(item) for item in items])
 
 def api_get():
     with urllib.request.urlopen(BASE + "/api/shopping") as r:
@@ -128,21 +121,6 @@ def api_sync(items):
         headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req) as r:
         return json.loads(r.read())["items"]
-
-def api_sync_status(payload):
-    req = urllib.request.Request(
-        BASE + "/api/shopping/sync",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req) as response:
-            return response.status
-    except urllib.error.HTTPError as error:
-        return error.code
-
-def api_favorites():
-    with urllib.request.urlopen(BASE + "/api/favorites") as r:
-        return json.loads(r.read())["needs"]
 
 def wait_server(pred, timeout=8.0):
     end = time.time() + timeout
@@ -165,14 +143,7 @@ def wait_count(page, selector, n, timeout=8000):
         return False
 
 def wait_item_once(page, text, timeout=8000):
-    """Wait until exactly one rendered item carries this text.
-
-    Count-based waits are fragile after a direct store reset: a client from
-    an earlier section can still push its last known state (offline-first
-    sync), so unrelated leftovers may show up. The property under test is
-    that the item appears -- exactly once, so accidental duplicate renders
-    still fail.
-    """
+    """Wait for one item and reject accidental duplicate renders."""
     try:
         page.wait_for_function(
             "(t) => Array.from(document.querySelectorAll('#shop-client .shop-item .shop-text'))"
@@ -182,27 +153,61 @@ def wait_item_once(page, text, timeout=8000):
     except PWTimeout:
         return False
 
-def reset_and_wait(settle=0.5, timeout=3.0):
-    """Clear the server store and verify that it stays empty.
+PROBE = """(() => {
+    window.gustoProbe = {open: false, revisions: [], pending: 0, responses: 0};
+    const NativeEvents = window.EventSource;
+    window.EventSource = class extends NativeEvents {
+        constructor(...args) {
+            super(...args);
+            this.addEventListener('open', () => { window.gustoProbe.open = true; });
+            this.addEventListener('message', event => {
+                window.gustoProbe.revisions.push(JSON.parse(event.data).revision);
+            });
+        }
+    };
+    const nativeFetch = window.fetch;
+    window.fetch = function (...args) {
+        if (!String(args[0]).includes('/api/shopping/sync')) return nativeFetch(...args);
+        window.gustoProbe.pending++;
+        const done = () => {
+            window.gustoProbe.responses++;
+            setTimeout(() => { window.gustoProbe.pending--; }, 0);
+        };
+        return nativeFetch(...args).then(response => {
+            response.clone().text().then(done, done);
+            return response;
+        }, error => { done(); throw error; });
+    };
+})();"""
 
-    reset_shopping() rewrites the store file directly, but a client from an
-    earlier section can push its last known state right after that (offline-
-    first sync). Re-check after a short settle window and re-clear once if
-    needed, so the seeds of the following sections stay deterministic.
-    """
-    reset_shopping()
-    end = time.time() + timeout
-    while time.time() < end:
-        try:
-            if not api_get():
-                time.sleep(settle)
-                if not api_get():
-                    return True
-        except Exception:
-            pass
-        time.sleep(0.1)
-    reset_shopping()
-    return False
+
+def new_context(browser, **kwargs):
+    context = browser.new_context(**kwargs)
+    context.add_init_script(PROBE)
+    return context
+
+
+def drain_and_close(context):
+    # Stop new sends, then consume existing replies before replacing fixtures.
+    # Closing a page alone can abort a request while its server write continues.
+    context.route("**/api/shopping/sync", lambda route: route.abort())
+    for page in context.pages:
+        page.wait_for_function("() => window.gustoProbe.pending === 0")
+    context.close()
+
+
+def live_ready(page):
+    page.wait_for_function("() => window.gustoProbe.open")
+
+
+def wait_clock_condition(page, expression, timeout=3):
+    """Poll observable state while application timers deliberately stay paused."""
+    deadline = time.monotonic() + timeout
+    while not page.evaluate(expression):
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"browser condition did not settle: {expression}")
+        page.clock.run_for(0)
+        page.wait_for_timeout(10)
 
 def sw_ready(page, timeout_ms=6000):
     return page.evaluate(
@@ -218,17 +223,6 @@ try:
         print("!! server not reachable (uvicorn start failed)")
         raise SystemExit(2)
 
-    # --- 1) sync API directly ------------------------------------------------
-    # Strictly increasing timestamps so "last writer wins" is deterministic.
-    reset_shopping()
-    check(api_get() == [], "GET /api/shopping: empty list at start")
-    check(api_favorites()[0]["products"][0]["image_url"].startswith("/media/favorite/"),
-          "GET /api/favorites: ranked catalog includes its product image URL")
-    check(api_sync_status([]) == 400,
-          "POST sync: non-object JSON is rejected as a client error")
-    check(api_sync_status({"items": [{}]}) == 400,
-          "POST sync: malformed items are rejected as a client error")
-
     def itm(ts, **kw):
         base = {"id": "milch", "text": "Milch", "quantity": "", "checked": False,
                 "source": None, "created_at": ts, "updated_at": ts,
@@ -236,48 +230,31 @@ try:
         base.update(kw)
         return base
 
-    merged = api_sync([itm("2026-06-23T12:00:01Z")])
-    check(len(merged) == 1 and merged[0]["text"] == "Milch", "POST sync: new item taken over")
-    merged = api_sync([itm("2026-06-23T12:00:02Z", checked=True)])
-    check(any(i["id"] == "milch" and i["checked"] for i in merged), "POST sync: newer version wins")
-    merged = api_sync([itm("2026-06-23T12:00:00Z", checked=False)])
-    check(any(i["id"] == "milch" and i["checked"] for i in merged), "POST sync: older version loses")
-    merged = api_sync([itm("2026-06-23T12:00:03Z", deleted=True)])
-    check(any(i["id"] == "milch" and i["deleted"] for i in merged), "POST sync: tombstone propagates")
-
-    # New millisecond timestamps must compare correctly against old stored
-    # second-precision values during the backwards-compatible transition.
-    reset_shopping()
-    api_sync([itm("2026-06-23T12:00:00Z", checked=False)])
-    merged = api_sync([itm("2026-06-23T12:00:00.001Z", checked=True)])
-    check(any(i["id"] == "milch" and i["checked"] for i in merged),
-          "POST sync: millisecond update beats old same-second value")
-
     with sync_playwright() as p:
         browser = p.chromium.launch()
 
         # --- 2) live server change -> existing client merges -----------------
         reset_shopping()
         seed_shopping([mk("Milch", past_iso())])
-        live_context = browser.new_context()
+        live_context = new_context(browser)
         live_page = live_context.new_page()
         live_page.goto(BASE + "/shopping", wait_until="load")
         check(wait_count(live_page, "#shop-client .shop-item", 1),
               "live: initial server item loaded")
         # app.js intentionally waits until the initial navigation has settled
         # before opening its long-lived EventSource.
-        live_page.wait_for_timeout(1400)
+        live_ready(live_page)
         api_sync([*api_get(), mk("Brot", now_iso())])
         check(wait_count(live_page, "#shop-client .shop-item", 2),
               "live: server mutation reaches the open PWA without reload")
         check("Brot" in live_page.content(),
               "live: merged server item is rendered")
-        live_context.close()
+        drain_and_close(live_context)
 
         # --- 3) offline: tick optimistically, online -> sync -----------------
         reset_shopping()
         seed_shopping([mk("Milch", past_iso()), mk("Brot", past_iso())])
-        ctx = browser.new_context()
+        ctx = new_context(browser)
         page = ctx.new_page()
         page.goto(BASE + "/shopping", wait_until="load")
         check(wait_count(page, "#shop-client .shop-item", 2), "online: 2 items loaded from server")
@@ -312,13 +289,13 @@ try:
         ctx.set_offline(False)
         check(wait_server(lambda its: all(i["deleted"] for i in its)),
               "back online: complete-list tombstones reach the server")
-        ctx.close()
+        drain_and_close(ctx)
 
         # --- 4) two-device merge (two contexts = two localStorage) -----------
         reset_shopping()
-        ca = browser.new_context()
+        ca = new_context(browser)
         a = ca.new_page()
-        cb = browser.new_context()
+        cb = new_context(browser)
         b = cb.new_page()
         a.goto(BASE + "/shopping", wait_until="load")
         b.goto(BASE + "/shopping", wait_until="load")
@@ -347,11 +324,13 @@ try:
         check(wait_count(b, "#shop-client .shop-item", 2), "device B sees both items")
         check("Banane" in a.content(), "device A sees 'Banane' (from B)")
         check("Apfel" in b.content(), "device B sees 'Apfel' (from A)")
-        ca.close()
-        cb.close()
+        drain_and_close(ca)
+        drain_and_close(cb)
 
         # --- 5) manifest + service worker ------------------------------------
-        cp = browser.new_context()
+        reset_shopping()
+        seed_shopping([mk("200 g Spaghetti", past_iso())])
+        cp = new_context(browser)
         pg = cp.new_page()
         pg.goto(BASE + "/shopping", wait_until="load")
         check(pg.locator("link[rel=manifest]").count() == 1, "manifest is linked")
@@ -359,18 +338,38 @@ try:
             man = json.loads(r.read())
         check(man.get("start_url") == "/shopping" and len(man.get("icons", [])) >= 2,
               "manifest valid (start_url + icons)")
-        with urllib.request.urlopen(BASE + "/static/sw.js") as r:
-            sw = r.read().decode("utf-8")
-        check("addEventListener" in sw and "caches" in sw, "service worker is served")
-        check('"/static/photo-input.js"' in sw,
-              "service worker precaches the shared photo-picker enhancement")
-        check('"/media/archive/"' in sw,
-              "service worker never serves moved archive images from stale cache")
         check(sw_ready(pg, 8000) is True, "service worker registered + active")
+        pg.wait_for_function("() => !!navigator.serviceWorker.controller")
+        with urllib.request.urlopen(BASE + "/static/photo-input.js") as response:
+            photo_script = response.read().decode("utf-8")
+        cache_result = pg.evaluate("""async () => {
+            const keys = await caches.keys();
+            const active = await caches.open(keys[0]);
+            const precached = await active.match('/static/photo-input.js');
+            const old = await caches.open('gusto-test-obsolete');
+            await old.put('/static/photo-input.js', new Response('obsolete asset',
+                {headers: {'Content-Type': 'application/javascript'}}));
+            await active.delete('/static/photo-input.js');
+            const current = await fetch('/static/photo-input.js').then(r => r.text());
+            for (const path of ['/media/recipe/missing/image', '/media/archive/missing/image']) {
+                await active.put(path, new Response('stale moved image'));
+            }
+            const media = await Promise.all(
+                ['/media/recipe/missing/image', '/media/archive/missing/image'].map(
+                    async path => { const r = await fetch(path); return [r.status, await r.text()]; }));
+            await caches.delete('gusto-test-obsolete');
+            return {precached: precached && await precached.text(), current, media};
+        }""")
+        check(cache_result["precached"] == photo_script,
+              "service worker precaches the actual shared photo-picker asset")
+        check(cache_result["current"] == photo_script,
+              "static fetch ignores an obsolete cache when the active cache misses")
+        check(all(status == 404 and body != "stale moved image"
+                  for status, body in cache_result["media"]),
+              "active and archived recipe images use the network despite seeded stale cache entries")
 
         # Catalog and its image are cached locally while online, then remain
         # available inside the shopping sheet after a fully offline reload.
-        seed_shopping([mk("200 g Spaghetti", past_iso())])
         pg.evaluate("localStorage.removeItem('gusto.shopping')")
         pg.reload(wait_until="load")
         check(wait_count(pg, "#shop-client .shop-item", 1),
@@ -388,6 +387,12 @@ try:
 
         # Offline reload: page comes from the SW cache
         cp.set_offline(True)
+        check(pg.evaluate("""async () => {
+            const paths = ['/media/recipe/missing/image', '/media/archive/missing/image'];
+            const results = await Promise.all(paths.map(path => fetch(path).then(
+                () => false, () => true)));
+            return results.every(Boolean);
+        }"""), "offline recipe and archive media cannot fall back to stale cached images")
         served = False
         try:
             resp = pg.reload(wait_until="domcontentloaded")
@@ -403,21 +408,19 @@ try:
         check(pg.locator("#favorite-sheet .favorite-product-card img").evaluate(
             "img => img.complete && img.naturalWidth > 0"),
             "offline: cached product image remains recognizable")
-        cp.close()
+        drain_and_close(cp)
 
         # --- 6) client robustness: uuid fallback, re-render survival, merge ---
         # E1: "Hinzufügen" must work in non-secure contexts (plain HTTP LAN)
-        # where crypto.randomUUID does not exist. The wait is text-based (not
-        # count==1) so a leftover push from an earlier section cannot fail the
-        # check, while duplicate renders still do.
-        reset_and_wait()
-        ctx = browser.new_context()
+        # where crypto.randomUUID does not exist. Match the added item's text
+        # exactly so duplicate renders fail too.
+        reset_shopping()
+        ctx = new_context(browser)
         ctx.add_init_script("delete Crypto.prototype.randomUUID;")
         page = ctx.new_page()
         page.goto(BASE + "/shopping", wait_until="load")
-        # Let the initial sync and the SSE connection settle before typing,
-        # exactly like the other live-event sections do.
-        page.wait_for_timeout(1400)
+        # Observe the actual subscription before testing live refresh.
+        live_ready(page)
         page.locator("#shop-client .shop-add-panel summary").click()
         page.fill("#shop-client input[name=text]", "Toast")
         page.locator("#shop-client form.shop-add button").click()
@@ -425,20 +428,20 @@ try:
               "no randomUUID: added item appears locally")
         check(wait_server(lambda its: any(i["text"] == "Toast" for i in its)),
               "no randomUUID: added item reaches the server")
-        ctx.close()
+        drain_and_close(ctx)
 
         # E2a: re-renders (sync/SSE) must not destroy a half-typed add input.
-        reset_and_wait()
+        reset_shopping()
         sourced_milk = mk("Milch", past_iso())
         sourced_milk["source"] = "rotes-linsen-dal"
         seed_shopping([sourced_milk])
-        ctx = browser.new_context()
+        ctx = new_context(browser)
         page = ctx.new_page()
         page.goto(BASE + "/shopping", wait_until="load")
         check(wait_item_once(page, "Milch"),
               "render survivor: initial item loaded")
         # app.js opens its EventSource only after the initial navigation settled.
-        page.wait_for_timeout(1400)
+        live_ready(page)
         page.locator("#shop-client .shop-add-panel summary").click()
         page.fill("#shop-client input[name=text]", "halb getippt")
         # A foreign server change (API + SSE) triggers a full re-render.
@@ -484,11 +487,11 @@ try:
             "() => document.activeElement.matches('.shop-favorite-trigger')"
             " && document.activeElement.closest('.shop-item').dataset.itemId === 'milch'"),
               "dialog: closing restores focus even after the opener was re-rendered")
-        ctx.close()
+        drain_and_close(ctx)
 
         # E2b: after adding, focus must land on the same, still-connected input.
-        reset_and_wait()
-        ctx = browser.new_context()
+        reset_shopping()
+        ctx = new_context(browser)
         page = ctx.new_page()
         page.goto(BASE + "/shopping", wait_until="load")
         page.locator("#shop-client .shop-add-panel summary").click()
@@ -503,16 +506,16 @@ try:
               "focus return: add panel is never duplicated")
         check(wait_server(lambda its: any(i["text"] == "Apfel" for i in its)),
               "focus return: added item reaches the server")
-        ctx.close()
+        drain_and_close(ctx)
 
         # E3: the client merge must rank a VALID timestamp over a malformed one
         # exactly like the server (_version_key) -- even if the malformed raw
         # string sorts above every ISO value lexicographically.
-        reset_and_wait()
-        ctx = browser.new_context()
+        reset_shopping()
+        ctx = new_context(browser)
         page = ctx.new_page()
         page.goto(BASE + "/shopping", wait_until="load")
-        page.wait_for_timeout(1400)
+        live_ready(page)
         page.evaluate("""() => {
             const item = {id: "merge-x", text: "lokal", quantity: "",
                           checked: false, source: null,
@@ -537,15 +540,15 @@ try:
             merged_ok = False
         check(merged_ok,
               "malformed local timestamp loses to valid server timestamp")
-        ctx.close()
+        drain_and_close(ctx)
 
         # E4: failed browser persistence must not erase the current page's
         # server snapshot or offline edits. Quota failures still allow reads
         # of a stale disk copy; blocked storage fails both reads and writes.
         for storage_failure in ("quota", "blocked"):
-            reset_and_wait()
+            reset_shopping()
             seed_shopping([mk("Bestand", past_iso())])
-            ctx = browser.new_context()
+            ctx = new_context(browser)
             ctx.add_init_script("""(() => {
                 if (sessionStorage.getItem('gusto.test.storage-restored')) return;
                 const read = Storage.prototype.getItem;
@@ -603,13 +606,13 @@ try:
             check(wait_item_once(page, "Offlinezugang"),
                   f"storage {storage_failure}: recovered storage survives reload")
             page.screenshot(path=str(TESTDATA / f"storage-{storage_failure}.png"))
-            ctx.close()
+            drain_and_close(ctx)
 
         # E5: sync accepts opaque string IDs, including JavaScript property
         # names. Such an item must render and propagate its removal normally.
-        reset_and_wait()
+        reset_shopping()
         api_sync([itm(past_iso(), id="__proto__", text="Sonderkennung")])
-        ctx = browser.new_context()
+        ctx = new_context(browser)
         page = ctx.new_page()
         page.goto(BASE + "/shopping", wait_until="load")
         check(wait_item_once(page, "Sonderkennung"),
@@ -620,7 +623,7 @@ try:
         )), "opaque IDs: __proto__ tombstone syncs back to the server")
         check(wait_count(page, "#shop-client .shop-item", 0),
               "opaque IDs: deleted item stays absent after sync")
-        ctx.close()
+        drain_and_close(ctx)
 
         # E6: a stale visible source can outlive its recipe on an offline
         # device. Reject atomically, explain recovery, and keep other edits.
@@ -629,7 +632,7 @@ try:
                     source="purged-sync-source")
         api_sync([dict(stale, deleted=True, updated_at=past_iso())])
         valid = itm(past_iso(), id="unsynced-bread", text="Brot")
-        ctx = browser.new_context(viewport={"width": 320, "height": 740},
+        ctx = new_context(browser, viewport={"width": 320, "height": 740},
                                   service_workers="block")
         ctx.add_init_script(
             "localStorage.setItem('gusto.shopping', "
@@ -666,7 +669,102 @@ try:
         notice.wait_for(state="detached")
         check(wait_item_once(page, "Brot"),
               "rejected sync: successful recovery clears the notice and keeps the valid item")
-        ctx.close()
+        drain_and_close(ctx)
+
+        # E7: a reply belongs to the submitted snapshot. Local changes made
+        # while it is held must survive, then travel in a follow-up request.
+        reset_shopping()
+        initial = mk("Bestand", past_iso())
+        seed_shopping([initial])
+        ctx = new_context(browser, service_workers="block")
+        ctx.add_init_script("localStorage.setItem('gusto.shopping', "
+                            + json.dumps(json.dumps({"items": [initial]})) + ");")
+        ctx.route("**/api/v1/events?*", lambda route: route.abort())
+        held = {}
+        requests = []
+
+        def hold_first_sync(route):
+            requests.append(route.request.post_data_json)
+            if len(requests) == 1:
+                held["response"] = route.fetch()
+                held["route"] = route
+            else:
+                route.continue_()
+
+        ctx.route("**/api/shopping/sync", hold_first_sync)
+        page = ctx.new_page()
+        page.goto(BASE + "/shopping", wait_until="load")
+        check(wait_item_once(page, "Bestand") and "response" in held,
+              "in-flight edit: the initial sync reply is held after server completion")
+        page.locator("#shop-client .shop-box").click()
+        page.locator("#shop-client .shop-add-panel summary").click()
+        page.fill("#shop-client input[name=text]", "Während der Anfrage")
+        page.locator("#shop-client form.shop-add button").click()
+        check(len(requests) == 1, "in-flight edit: local changes coalesce behind the pending request")
+        held["route"].fulfill(response=held["response"])
+        page.wait_for_function("() => window.gustoProbe.pending === 0")
+        check(wait_server(lambda items: len(items) == 2
+                          and any(i["id"] == initial["id"] and i["checked"] for i in items)),
+              "in-flight edit: old response preserves the newer toggle and addition on the server")
+        check(len(requests) == 2 and wait_item_once(page, "Während der Anfrage")
+              and page.locator("#shop-client .shop-group-done .shop-item").count() == 1,
+              "in-flight edit: exactly one follow-up synchronizes the current local state")
+        drain_and_close(ctx)
+
+        # E8: run browser timers explicitly. Deterministic jitter makes the
+        # backoff boundaries observable without waiting seconds in real time.
+        reset_shopping()
+        ctx = new_context(browser, service_workers="block")
+        ctx.route("**/api/v1/events?*", lambda route: route.abort())
+        ctx.add_init_script("Math.random = () => 0;")
+        state = {"calls": 0, "success": False}
+
+        def retry_reply(route):
+            state["calls"] += 1
+            if state["calls"] == 1:
+                state["initial"] = route
+                return
+            if state["success"]:
+                route.continue_()
+            else:
+                route.fulfill(status=503, content_type="application/json", body='{"error":"busy"}')
+
+        ctx.route("**/api/shopping/sync", retry_reply)
+        page = ctx.new_page()
+        page.clock.install(time=1_700_000_000_000)
+        page.clock.pause_at(1_700_000_000_100)
+        page.goto(BASE + "/shopping", wait_until="load")
+        page.evaluate("""() => {
+            window.retryDelays = [];
+            const nativeTimeout = window.setTimeout;
+            window.setTimeout = (callback, delay, ...args) => {
+                if (delay >= 2000 && delay <= 60000) window.retryDelays.push(delay);
+                return nativeTimeout(callback, delay, ...args);
+            };
+        }""")
+        state["initial"].fulfill(status=503, content_type="application/json", body='{"error":"busy"}')
+        wait_clock_condition(page, "window.retryDelays.length === 1")
+        for index, delay in enumerate((2000, 4000, 8000, 16000, 32000), start=1):
+            page.clock.run_for(delay - 1)
+            check(state["calls"] == index,
+                  f"backoff: retry {index} does not run before its {delay} ms deadline")
+            page.clock.run_for(1)
+            wait_clock_condition(page, f"window.gustoProbe.responses >= {index + 1}")
+            if index < 5:
+                wait_clock_condition(page, f"window.retryDelays.length === {index + 1}")
+        page.clock.run_for(120000)
+        check(state["calls"] == 6 and page.evaluate("window.retryDelays") == [2000, 4000, 8000, 16000, 32000],
+              "backoff: initial failure allows five retries then stops")
+        state["success"] = True
+        with page.expect_response("**/api/shopping/sync") as restored:
+            page.evaluate("window.dispatchEvent(new Event('online'))")
+        restored.value.body()
+        page.clock.run_for(0)
+        wait_clock_condition(page, "window.gustoProbe.responses === 7")
+        check(state["calls"] == 7, "backoff: online resets the exhausted budget and synchronizes again")
+        page.clock.run_for(0)
+        page.clock.resume()
+        drain_and_close(ctx)
 
         browser.close()
 finally:
