@@ -13,7 +13,6 @@ import os
 import tempfile
 import time
 from contextlib import contextmanager
-from datetime import date
 from pathlib import Path
 from typing import Callable
 
@@ -21,7 +20,19 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from . import __version__, core
+from . import __version__
+import gusto.core.records as core_records
+import gusto.core.catalog.archive as core_archive
+import gusto.core.catalog.categories as core_categories
+import gusto.core.catalog.images as core_images
+import gusto.core.catalog.recipes as core_recipes
+import gusto.core.catalog.search as core_search
+import gusto.core.catalog.snapshots as core_snapshots
+import gusto.core.checks as core_checks
+import gusto.core.errors as core_errors
+import gusto.core.favorites as core_favorites
+import gusto.core.shopping as core_shopping
+import gusto.core.storage as core_storage
 
 
 router = APIRouter(prefix="/api/v1", tags=["api-v1"])
@@ -81,20 +92,6 @@ def _json_object(pairs: list[tuple[str, object]]) -> dict:
             )
         result[key] = value
     return result
-
-
-def _not_found_error(error: ValueError) -> int:
-    message = str(error)
-    prefixes = (
-        "Kein Rezept ",
-        "Kein archiviertes Rezept ",
-        "Kein Einkaufsbedarf ",
-        "Kein Einkauf-Item ",
-        "Kein Bild ",
-        "Kein Lieblingsprodukt ",
-        "Keine Tag-Kategorie ",
-    )
-    return 404 if message.startswith(prefixes) else 400
 
 
 def _arguments(arguments, *, allowed: set[str],
@@ -158,7 +155,7 @@ def _strings(arguments: dict, name: str, *, default=None,
     return list(value)
 
 
-def _recipe_dict(recipe: core.Recipe, *, include_content: bool = False) -> dict:
+def _recipe_dict(recipe: core_records.Recipe, *, include_content: bool = False) -> dict:
     result = recipe.to_dict()
     if include_content:
         result["content"] = recipe.content()
@@ -166,7 +163,7 @@ def _recipe_dict(recipe: core.Recipe, *, include_content: bool = False) -> dict:
 
 
 def _tag_warnings(tags: list[str]) -> list[dict]:
-    uncategorized = core.uncategorized_tags(tags)
+    uncategorized = core_categories.uncategorized_tags(tags)
     if not uncategorized:
         return []
     return [{
@@ -179,7 +176,7 @@ def _tag_warnings(tags: list[str]) -> list[dict]:
     }]
 
 
-def _image_dict(image: core.RecipeImage, cover_id: str | None) -> dict:
+def _image_dict(image: core_records.RecipeImage, cover_id: str | None) -> dict:
     result = image.to_dict()
     result["is_cover"] = image.id == cover_id
     return result
@@ -271,7 +268,7 @@ def _catalog_list(arguments: dict, _attachments: dict) -> list[dict]:
     tags = _strings(values, "tags", default=[])
     max_time = _integer(values, "max_time")
     recipes = sorted(
-        core.search(tags=tags, max_time=max_time),
+        core_search.search(tags=tags, max_time=max_time),
         key=lambda recipe: recipe.title.lower(),
     )
     return [recipe.to_dict() for recipe in recipes]
@@ -281,7 +278,7 @@ def _catalog_search(arguments: dict, _attachments: dict) -> list[dict]:
     values = _arguments(
         arguments, allowed={"query", "match", "tags", "max_time"},
     )
-    recipes = sorted(core.search(
+    recipes = sorted(core_search.search(
         query=_string(values, "query", default=""),
         match=_string(values, "match", default="any"),
         tags=_strings(values, "tags", default=[]),
@@ -292,12 +289,12 @@ def _catalog_search(arguments: dict, _attachments: dict) -> list[dict]:
 
 def _tags_list(arguments: dict, _attachments: dict) -> list[dict]:
     values = _arguments(arguments, allowed={"all"})
-    return core.tag_groups(only_used=not _boolean(values, "all"))
+    return core_categories.tag_groups(only_used=not _boolean(values, "all"))
 
 
 def _categories_list(arguments: dict, _attachments: dict) -> list[dict]:
     _arguments(arguments, allowed=set())
-    return core.tag_groups(only_used=False)
+    return core_categories.tag_groups(only_used=False)
 
 
 def _categories_add(arguments: dict, _attachments: dict) -> dict:
@@ -306,7 +303,7 @@ def _categories_add(arguments: dict, _attachments: dict) -> dict:
         allowed={"key", "label", "position"},
         required={"key", "label"},
     )
-    return core.add_category(
+    return core_categories.add_category(
         _string(values, "key"),
         _string(values, "label"),
         _integer(values, "position"),
@@ -319,7 +316,7 @@ def _categories_set(arguments: dict, _attachments: dict) -> dict:
         allowed={"key", "label", "position"},
         required={"key"},
     )
-    return core.update_category(
+    return core_categories.update_category(
         _string(values, "key"),
         label=_string(values, "label", optional=True),
         position=_integer(values, "position"),
@@ -328,21 +325,21 @@ def _categories_set(arguments: dict, _attachments: dict) -> dict:
 
 def _categories_remove(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(arguments, allowed={"key"}, required={"key"})
-    return core.remove_category(_string(values, "key"))
+    return core_categories.remove_category(_string(values, "key"))
 
 
 def _categories_assign(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(
         arguments, allowed={"key", "tags"}, required={"key", "tags"},
     )
-    return core.assign_category_tags(
+    return core_categories.assign_category_tags(
         _string(values, "key"), _strings(values, "tags"),
     )
 
 
 def _categories_unassign(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(arguments, allowed={"tags"}, required={"tags"})
-    return core.unassign_category_tags(_strings(values, "tags"))
+    return core_categories.unassign_category_tags(_strings(values, "tags"))
 
 
 def _categories_tag_move(arguments: dict, _attachments: dict) -> dict:
@@ -351,7 +348,7 @@ def _categories_tag_move(arguments: dict, _attachments: dict) -> dict:
         allowed={"key", "tag", "position"},
         required={"key", "tag", "position"},
     )
-    return core.move_category_tag(
+    return core_categories.move_category_tag(
         _string(values, "key"),
         _string(values, "tag"),
         _integer(values, "position", optional=False),
@@ -361,7 +358,7 @@ def _categories_tag_move(arguments: dict, _attachments: dict) -> dict:
 def _recipe_show(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(arguments, allowed={"slug"}, required={"slug"})
     slug = _string(values, "slug")
-    recipe = core.get(slug)
+    recipe = core_recipes.get(slug)
     if recipe is None:
         raise CommandError(f"Kein Rezept mit Slug '{slug}'.", 404)
     return _recipe_dict(recipe, include_content=True)
@@ -374,7 +371,7 @@ def _recipe_create(arguments: dict, _attachments: dict) -> dict:
         required={"title"},
     )
     tags = _strings(values, "tags", default=[])
-    recipe = core.add_recipe(
+    recipe = core_recipes.add_recipe(
         _string(values, "title"),
         tags=tags,
         duration_min=_integer(values, "duration_min"),
@@ -393,7 +390,7 @@ def _recipe_content_set(arguments: dict, _attachments: dict) -> dict:
         arguments, allowed={"slug", "content"},
         required={"slug", "content"},
     )
-    recipe = core.update_recipe(
+    recipe = core_recipes.update_recipe(
         _string(values, "slug"),
         content=_string(values, "content"),
     )
@@ -418,7 +415,7 @@ def _recipe_update(arguments: dict, _attachments: dict) -> dict:
             and servings is None and not clear_duration
             and not clear_servings):
         raise CommandError("Gib mindestens eine Änderung an.")
-    recipe = core.update_recipe(
+    recipe = core_recipes.update_recipe(
         slug,
         title=title,
         tags=tags,
@@ -442,13 +439,13 @@ def _recipe_cooked(arguments: dict, _attachments: dict) -> dict:
     )
     slug = _string(values, "slug")
     when = _string(values, "date", optional=True)
-    core.log_cooked(slug, when=when)
-    return {"slug": slug, "date": when or date.today().isoformat(), "ok": True}
+    recorded_date = core_recipes.log_cooked(slug, when=when)
+    return {"slug": slug, "date": recorded_date, "ok": True}
 
 
 def _log_list(arguments: dict, _attachments: dict) -> list[dict]:
     values = _arguments(arguments, allowed={"days"})
-    return core.load_log(days=_integer(values, "days"))
+    return core_recipes.load_log(days=_integer(values, "days"))
 
 
 def _suggest_list(arguments: dict, _attachments: dict) -> list[dict]:
@@ -456,7 +453,7 @@ def _suggest_list(arguments: dict, _attachments: dict) -> list[dict]:
     days = _integer(values, "days", default=7, optional=False)
     return [
         recipe.to_dict()
-        for recipe in core.suggest(
+        for recipe in core_recipes.suggest(
             days=days, limit=_integer(values, "limit"),
         )
     ]
@@ -464,12 +461,12 @@ def _suggest_list(arguments: dict, _attachments: dict) -> list[dict]:
 
 def _check_run(arguments: dict, _attachments: dict) -> dict:
     _arguments(arguments, allowed=set())
-    return core.check()
+    return core_checks.check()
 
 
 def _recipe_archive(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(arguments, allowed={"slug"}, required={"slug"})
-    entry = core.archive_recipe(_string(values, "slug"))
+    entry = core_archive.archive_recipe(_string(values, "slug"))
     return {
         "slug": entry.slug,
         "archived": True,
@@ -479,13 +476,13 @@ def _recipe_archive(arguments: dict, _attachments: dict) -> dict:
 
 def _archive_list(arguments: dict, _attachments: dict) -> list[dict]:
     _arguments(arguments, allowed=set())
-    return [entry.to_dict() for entry in core.load_archive()]
+    return [entry.to_dict() for entry in core_snapshots.load_archive()]
 
 
 def _archive_show(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(arguments, allowed={"slug"}, required={"slug"})
     slug = _string(values, "slug")
-    entry = core.get_archived(slug)
+    entry = core_snapshots.get_archived(slug)
     if entry is None:
         raise CommandError(
             f"Kein archiviertes Rezept mit Slug '{slug}'.", 404,
@@ -495,7 +492,7 @@ def _archive_show(arguments: dict, _attachments: dict) -> dict:
 
 def _archive_restore(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(arguments, allowed={"slug"}, required={"slug"})
-    recipe = core.restore_archived_recipe(_string(values, "slug"))
+    recipe = core_archive.restore_archived_recipe(_string(values, "slug"))
     return {"restored": True, "recipe": recipe.to_dict()}
 
 
@@ -508,13 +505,13 @@ def _archive_purge(arguments: dict, _attachments: dict) -> dict:
             "Endgültiges Löschen braucht 'yes: true'. Der Archiveintrag "
             "kann danach nicht wiederhergestellt werden."
         )
-    entry = core.purge_archived_recipe(_string(values, "slug"))
+    entry = core_archive.purge_archived_recipe(_string(values, "slug"))
     return {"slug": entry.slug, "purged": True}
 
 
 def _image_list(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(arguments, allowed={"slug"}, required={"slug"})
-    images, cover_id = core.list_recipe_images(_string(values, "slug"))
+    images, cover_id = core_images.list_recipe_images(_string(values, "slug"))
     return {
         "cover_image_id": cover_id,
         "images": [_image_dict(image, cover_id) for image in images],
@@ -527,7 +524,7 @@ def _image_add(arguments: dict, attachments: dict) -> dict:
         required={"slug"},
     )
     slug = _string(values, "slug")
-    image = core.add_recipe_image(
+    image = core_images.add_recipe_image(
         slug,
         attachments["image"],
         role=_string(values, "role", default="gallery"),
@@ -535,7 +532,7 @@ def _image_add(arguments: dict, attachments: dict) -> dict:
         cover=_boolean(values, "cover"),
     )
     with _mutation_result():
-        _, cover_id = core.list_recipe_images(slug)
+        _, cover_id = core_images.list_recipe_images(slug)
         return _image_dict(image, cover_id)
 
 
@@ -551,14 +548,14 @@ def _image_set(arguments: dict, _attachments: dict) -> dict:
     caption = _string(values, "caption", optional=True)
     if role is None and caption is None:
         raise CommandError("Gib 'role' und/oder 'caption' an.")
-    image = core.update_recipe_image(
+    image = core_images.update_recipe_image(
         slug,
         _string(values, "id"),
         role=role,
         caption=caption,
     )
     with _mutation_result():
-        _, cover_id = core.list_recipe_images(slug)
+        _, cover_id = core_images.list_recipe_images(slug)
         return _image_dict(image, cover_id)
 
 
@@ -567,7 +564,7 @@ def _image_cover(arguments: dict, _attachments: dict) -> dict:
         arguments, allowed={"slug", "id"}, required={"slug", "id"},
     )
     slug = _string(values, "slug")
-    image = core.set_recipe_cover(slug, _string(values, "id"))
+    image = core_images.set_recipe_cover(slug, _string(values, "id"))
     return {"slug": slug, "cover_image_id": image.id}
 
 
@@ -576,19 +573,19 @@ def _image_remove(arguments: dict, _attachments: dict) -> dict:
         arguments, allowed={"slug", "id"}, required={"slug", "id"},
     )
     image_id = _string(values, "id")
-    cover_id = core.remove_recipe_image(_string(values, "slug"), image_id)
+    cover_id = core_images.remove_recipe_image(_string(values, "slug"), image_id)
     return {"id": image_id, "removed": True, "cover_image_id": cover_id}
 
 
 def _favorites_list(arguments: dict, _attachments: dict) -> list[dict]:
     _arguments(arguments, allowed=set())
-    return [need.to_dict() for need in core.favorites_load()]
+    return [need.to_dict() for need in core_favorites.favorites_load()]
 
 
 def _favorites_show(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(arguments, allowed={"need", "store"}, required={"need"})
     identifier = _string(values, "need")
-    need = core.favorite_get_need(identifier)
+    need = core_favorites.favorite_get_need(identifier)
     if need is None:
         raise CommandError(
             f"Kein Einkaufsbedarf mit id oder Name '{identifier}'.", 404,
@@ -598,7 +595,7 @@ def _favorites_show(arguments: dict, _attachments: dict) -> dict:
 
 def _favorites_match(arguments: dict, _attachments: dict):
     values = _arguments(arguments, allowed={"text", "store"}, required={"text"})
-    need = core.favorite_match(_string(values, "text"))
+    need = core_favorites.favorite_match(_string(values, "text"))
     if need is None:
         return None
     return _favorite_result(need, _string(values, "store", optional=True))
@@ -606,14 +603,14 @@ def _favorites_match(arguments: dict, _attachments: dict):
 
 def _favorite_result(need, store: str | None) -> dict:
     """Full need, or its ranking narrowed to one store when one is given."""
-    return need.to_dict() if store is None else core.favorite_for_store(need, store)
+    return need.to_dict() if store is None else core_favorites.favorite_for_store(need, store)
 
 
 def _favorites_add(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(
         arguments, allowed={"name", "aliases"}, required={"name"},
     )
-    return core.favorite_add_need(
+    return core_favorites.favorite_add_need(
         _string(values, "name"),
         aliases=_strings(values, "aliases", default=[]),
     ).to_dict()
@@ -623,14 +620,14 @@ def _favorites_set(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(
         arguments, allowed={"need", "name"}, required={"need", "name"},
     )
-    return core.favorite_update_need(
+    return core_favorites.favorite_update_need(
         _string(values, "need"), _string(values, "name"),
     ).to_dict()
 
 
 def _favorites_remove(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(arguments, allowed={"need"}, required={"need"})
-    need = core.favorite_remove_need(_string(values, "need"))
+    need = core_favorites.favorite_remove_need(_string(values, "need"))
     return {"id": need.id, "removed": True}
 
 
@@ -638,7 +635,7 @@ def _favorites_alias_add(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(
         arguments, allowed={"need", "alias"}, required={"need", "alias"},
     )
-    return core.favorite_add_alias(
+    return core_favorites.favorite_add_alias(
         _string(values, "need"), _string(values, "alias"),
     ).to_dict()
 
@@ -647,7 +644,7 @@ def _favorites_alias_remove(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(
         arguments, allowed={"need", "alias"}, required={"need", "alias"},
     )
-    return core.favorite_remove_alias(
+    return core_favorites.favorite_remove_alias(
         _string(values, "need"), _string(values, "alias"),
     ).to_dict()
 
@@ -658,7 +655,7 @@ def _favorites_product_add(arguments: dict, attachments: dict) -> dict:
         allowed={"need", "name", "brand", "store", "note"},
         required={"need", "name"},
     )
-    return core.favorite_add_product(
+    return core_favorites.favorite_add_product(
         _string(values, "need"),
         _string(values, "name"),
         brand=_string(values, "brand", default=""),
@@ -686,7 +683,7 @@ def _favorites_product_set(arguments: dict, attachments: dict) -> dict:
     if (name is None and brand is None and store is None and note is None
             and not remove_image and "image" not in attachments):
         raise CommandError("Gib mindestens eine Änderung an.")
-    return core.favorite_update_product(
+    return core_favorites.favorite_update_product(
         need_id,
         product_id,
         name=name,
@@ -703,7 +700,7 @@ def _favorites_product_move(arguments: dict, _attachments: dict) -> dict:
         arguments, allowed={"need", "id", "position"},
         required={"need", "id", "position"},
     )
-    return core.favorite_move_product(
+    return core_favorites.favorite_move_product(
         _string(values, "need"),
         _string(values, "id"),
         _integer(values, "position", optional=False),
@@ -714,14 +711,14 @@ def _favorites_product_remove(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(
         arguments, allowed={"need", "id"}, required={"need", "id"},
     )
-    return core.favorite_remove_product(
+    return core_favorites.favorite_remove_product(
         _string(values, "need"), _string(values, "id"),
     ).to_dict()
 
 
 def _shopping_list(arguments: dict, _attachments: dict) -> list[dict]:
     values = _arguments(arguments, allowed={"pending"})
-    items = core.shopping_list(
+    items = core_shopping.shopping_list(
         include_done=not _boolean(values, "pending"),
     )
     return [item.to_dict() for item in items]
@@ -731,7 +728,7 @@ def _shopping_add(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(
         arguments, allowed={"text", "quantity", "source"}, required={"text"},
     )
-    return core.shopping_add(
+    return core_shopping.shopping_add(
         _string(values, "text"),
         quantity=_string(values, "quantity", default=""),
         source=_string(values, "source", optional=True),
@@ -742,7 +739,7 @@ def _shopping_add_many(arguments: dict, _attachments: dict) -> list[dict]:
     values = _arguments(arguments, allowed={"texts"}, required={"texts"})
     return [
         item.to_dict()
-        for item in core.shopping_add_many(_strings(values, "texts"))
+        for item in core_shopping.shopping_add_many(_strings(values, "texts"))
     ]
 
 
@@ -750,20 +747,20 @@ def _shopping_add_recipe(arguments: dict, _attachments: dict) -> list[dict]:
     values = _arguments(arguments, allowed={"slug"}, required={"slug"})
     return [
         item.to_dict()
-        for item in core.shopping_add_recipe(_string(values, "slug"))
+        for item in core_shopping.shopping_add_recipe(_string(values, "slug"))
     ]
 
 
 def _shopping_check(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(arguments, allowed={"id"}, required={"id"})
-    return core.shopping_toggle(
+    return core_shopping.shopping_toggle(
         _string(values, "id"), checked=True,
     ).to_dict()
 
 
 def _shopping_uncheck(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(arguments, allowed={"id"}, required={"id"})
-    return core.shopping_toggle(
+    return core_shopping.shopping_toggle(
         _string(values, "id"), checked=False,
     ).to_dict()
 
@@ -771,18 +768,18 @@ def _shopping_uncheck(arguments: dict, _attachments: dict) -> dict:
 def _shopping_remove(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(arguments, allowed={"id"}, required={"id"})
     item_id = _string(values, "id")
-    core.shopping_remove(item_id)
+    core_shopping.shopping_remove(item_id)
     return {"id": item_id, "deleted": True}
 
 
 def _shopping_remove_done(arguments: dict, _attachments: dict) -> dict:
     _arguments(arguments, allowed=set())
-    return {"removed": core.shopping_remove_done()}
+    return {"removed": core_shopping.shopping_remove_done()}
 
 
 def _shopping_clear(arguments: dict, _attachments: dict) -> dict:
     _arguments(arguments, allowed=set())
-    return {"removed": core.shopping_clear()}
+    return {"removed": core_shopping.shopping_clear()}
 
 
 _OPERATIONS: dict[str, Callable[[dict, dict], object]] = {
@@ -854,22 +851,24 @@ def execute_command(operation: str, arguments: dict,
             return function(arguments, paths)
         except CommandError:
             raise
-        except core.PostMutationError as error:
+        except core_errors.PostMutationError as error:
             raise CommandError(
                 str(error), 500, outcome_unknown=True,
             ) from error
+        except core_errors.NotFoundError as error:
+            raise CommandError(str(error), 404) from error
         except ValueError as error:
-            raise CommandError(str(error), _not_found_error(error)) from error
+            raise CommandError(str(error)) from error
 
 
 @router.get("/health")
 def health():
-    state = core.change_state()
+    state = core_storage.change_state()
     return {
         "ok": True,
         "status": "ready",
         "version": __version__,
-        "data_path": os.fspath(core.project_root()),
+        "data_path": os.fspath(core_storage.project_root()),
         **state,
     }
 
@@ -949,7 +948,7 @@ async def event_stream(request: Request, *, after_revision: int | None = None,
                        poll_seconds: float = 0.2,
                        heartbeat_seconds: float = 15.0):
     """Yield an initial state/replay, then new retained events and heartbeats."""
-    current = await run_in_threadpool(core.change_state)
+    current = await run_in_threadpool(core_storage.change_state)
     if after_revision is None:
         initial_events = [current]
         revision = current["revision"]
@@ -959,7 +958,7 @@ async def event_stream(request: Request, *, after_revision: int | None = None,
         initial_events = [current]
         revision = current["revision"]
     else:
-        initial_events = await run_in_threadpool(core.change_events, after_revision)
+        initial_events = await run_in_threadpool(core_storage.change_events, after_revision)
         revision = after_revision
     for event in initial_events:
         yield _sse_data(event)
@@ -968,7 +967,7 @@ async def event_stream(request: Request, *, after_revision: int | None = None,
     while True:
         if await request.is_disconnected():
             return
-        events = await run_in_threadpool(core.change_events, revision)
+        events = await run_in_threadpool(core_storage.change_events, revision)
         if events:
             for event in events:
                 yield _sse_data(event)

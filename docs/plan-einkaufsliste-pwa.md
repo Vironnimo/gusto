@@ -71,7 +71,7 @@ Gegen den Phase-0-Kontrakt, gleichzeitig, getrennte Dateien:
 
 | Subagent | Auftrag | Besitzt (exklusiv) |
 |---|---|---|
-| **1A · Core** | `parse_zutaten` + alle `shopping_*`-Funktionen (außer `merge`) implementieren; Tests | `gusto/core.py` (Einkauf-Abschnitt), `tests/test_shopping.py` |
+| **1A · Core** | `parse_zutaten` + alle `shopping_*`-Funktionen (außer `merge`) implementieren; Tests | `gusto/core/shopping.py`, `tests/test_shopping.py` |
 | **1B · CLI** | `gusto shopping …`-Subcommands gegen den Kontrakt, alle mit `--json` | `gusto/cli.py` (Einkauf-Abschnitt) |
 | **1C · Web** | Routen + Listen-Seite + „Zutaten auf die Liste"-Knopf am Rezept + Styles | `gusto/web.py` (Einkauf-Routen), `gusto/templates/shopping.html`, `gusto/templates/recipe.html` (nur der Knopf), `gusto/static/style.css` (Einkauf-Styles) |
 
@@ -101,7 +101,7 @@ Einkaufs-Flows erweitern (Rezept→Liste, Häkchen, Clear). Grün? → weiter.
 ### Phase 2.1 ⚡ MUSS an 3 Subagents
 | Subagent | Auftrag | Besitzt (exklusiv) |
 |---|---|---|
-| **2A · Sync-Server** | `shopping_merge` + `GET /api/shopping` + `POST /api/shopping/sync` | `gusto/core.py` (merge), `gusto/web.py` (API-Abschnitt) |
+| **2A · Sync-Server** | `shopping_merge` + `GET /api/shopping` + `POST /api/shopping/sync` | `gusto/core/shopping.py`, `gusto/web.py` (API-Abschnitt) |
 | **2B · PWA-Schale** | `manifest.webmanifest`, Icons, Service-Worker (App-Shell cachen, Offline-Fallback), Registrierung | `gusto/static/manifest.webmanifest`, `gusto/static/sw.js`, `gusto/static/icons/*`, `gusto/templates/base.html` (manifest-Link + SW-Registrierung + theme-color) |
 | **2C · Offline-Client** | Lokaler Store, optimistische Häkchen offline, Sync-Logik gegen die API | `gusto/static/shopping-client.js`, `gusto/templates/shopping.html` (Client-Anbindung) |
 

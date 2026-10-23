@@ -12,7 +12,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.fspath(ROOT))
 
 import install  # noqa: E402
-from gusto import core, service  # noqa: E402
+from gusto import service  # noqa: E402
+import gusto.core.storage as core_storage  # noqa: E402
 
 checks = 0
 
@@ -83,33 +84,33 @@ with tempfile.TemporaryDirectory(prefix="gusto-paths-") as temporary:
     settings.parent.mkdir()
     settings.write_text(json.dumps({"data_dir": os.fspath(configured)}),
                         encoding="utf-8")
-    with patch.object(core, "default_settings_path", return_value=settings), \
-            patch.object(core, "default_data_root", return_value=root / "default"), \
+    with patch.object(core_storage, "default_settings_path", return_value=settings), \
+            patch.object(core_storage, "default_data_root", return_value=root / "default"), \
             patch.dict(os.environ, {"GUSTO_HOME": ""}):
-        info = core.storage_info()
+        info = core_storage.storage_info()
         check(Path(info["path"]) == configured.resolve() and info["source"] == "settings",
               "each selected runtime's settings must preserve the shared store")
         # The explicit settings override has no public entry point; retain its
         # focused resolver contract as well as normal public discovery above.
-        resolved, source, _ = core._resolve_data_root(
+        resolved, source, _ = core_storage._resolve_data_root(
             {}, root / "default", root / "legacy", settings_path=settings,
         )
         check(resolved == configured.resolve() and source == "settings",
               "an explicit resolver settings path must select that runtime's store")
         settings.write_text('{"data_dir": "relative-store"}', encoding="utf-8")
-        check(core.project_root() == (root / "relative-store").resolve(),
+        check(core_storage.project_root() == (root / "relative-store").resolve(),
               "relative data settings must resolve beside the platform default")
         for invalid_settings in ("{", "[]", '{"data_dir": ""}'):
             settings.write_text(invalid_settings, encoding="utf-8")
             try:
-                core.storage_info()
+                core_storage.storage_info()
             except ValueError as error:
                 check(str(settings) in str(error),
                       "invalid settings must fail with file context instead of falling back")
             else:
                 raise AssertionError("invalid settings unexpectedly selected a store")
             with patch.dict(os.environ, {"GUSTO_HOME": os.fspath(configured)}):
-                info = core.storage_info()
+                info = core_storage.storage_info()
                 check(Path(info["path"]) == configured.resolve()
                       and info["source"] == "environment",
                       "an explicit data root must bypass even invalid instance settings")

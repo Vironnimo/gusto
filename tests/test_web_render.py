@@ -32,7 +32,15 @@ import gusto  # noqa: E402, F401 - configure checkout temp before allocating dat
 HOME = Path(tempfile.mkdtemp(prefix="gusto-web-render-test-"))
 os.environ["GUSTO_HOME"] = os.fspath(HOME)
 
-from gusto import web  # noqa: E402
+from gusto import web # noqa: E402
+import gusto.core.catalog.categories as core_categories  # noqa: E402
+import gusto.core.catalog.images as core_images  # noqa: E402
+import gusto.core.catalog.recipes as core_recipes  # noqa: E402
+import gusto.core.catalog.snapshots as core_snapshots  # noqa: E402
+import gusto.core.errors as core_errors  # noqa: E402
+import gusto.core.favorites as core_favorites  # noqa: E402
+import gusto.core.shopping as core_shopping  # noqa: E402
+import gusto.core.storage as core_storage  # noqa: E402
 
 checks = 0
 
@@ -161,7 +169,7 @@ def test_shopping_error_notice_is_fixed_text():
 
 def test_return_destination_stays_local():
     client = TestClient(web.app, follow_redirects=False)
-    need = web.core.favorite_add_need("Redirect-Prüfung")
+    need = core_favorites.favorite_add_need("Redirect-Prüfung")
     for value in ("//example.org", "/\\example.org", "/\t/example.org",
                   "/\r/example.org", "https://example.org"):
         response = client.post("/favorites/assign", data={
@@ -190,7 +198,7 @@ def test_shopping_sync_keeps_server_responsive():
     # Both requests share the TestClient's application event loop. A blocking
     # merge on that loop would prevent health from releasing the barrier.
     with TestClient(web.app) as client, ThreadPoolExecutor(max_workers=1) as worker:
-        with patch.object(web.core, "shopping_merge", side_effect=slow_merge):
+        with patch.object(core_shopping, "shopping_merge", side_effect=slow_merge):
             pending = worker.submit(client.post, "/api/shopping/sync", json={"items": []})
             try:
                 check(started.wait(timeout=2), "sync must reach the simulated lock")
@@ -204,10 +212,10 @@ def test_shopping_sync_keeps_server_responsive():
 
 def test_shopping_sync_endpoint_contract():
     client = TestClient(web.app)
-    web.core.shopping_save([])
-    first = web.core.shopping_add("Bestand", quantity="1 Packung")
-    web.core.shopping_remove(first.id)
-    tombstone = web.core.shopping_load()[0].to_dict()
+    core_shopping.shopping_save([])
+    first = core_shopping.shopping_add("Bestand", quantity="1 Packung")
+    core_shopping.shopping_remove(first.id)
+    tombstone = core_shopping.shopping_load()[0].to_dict()
     item = {"id": "endpoint-milk", "text": "Milch", "quantity": "2 l",
             "checked": False, "source": None, "created_at": "2026-06-23T12:00:00Z",
             "updated_at": "2026-06-23T12:00:00.001Z", "deleted": False}
@@ -222,7 +230,7 @@ def test_shopping_sync_endpoint_contract():
               and {i["id"]: i for i in response.json()["items"]} == expected,
               "missing, null or empty items must return the full server state")
     before = client.get("/api/shopping").json()
-    version = web.core.change_state()["revision"]
+    version = core_storage.change_state()["revision"]
     good = {**item, "id": "must-not-be-partially-saved"}
     for payload in ([], {"items": {}}, {"items": [good, {}]},
                     {"items": [good, {**item, "checked": "yes"}]},
@@ -230,7 +238,7 @@ def test_shopping_sync_endpoint_contract():
         response = client.post("/api/shopping/sync", json=payload)
         check(response.status_code == 400 and bool(response.json().get("error"))
               and client.get("/api/shopping").json() == before
-              and web.core.change_state()["revision"] == version,
+              and core_storage.change_state()["revision"] == version,
               "invalid shapes or entries must reject the entire sync without writes or events")
     response = client.post("/api/shopping/sync", content="not-json",
                            headers={"Content-Type": "application/json"})
@@ -238,17 +246,17 @@ def test_shopping_sync_endpoint_contract():
           "malformed JSON must be a definite rejection without changes")
     # Favorites JSON is the PWA's read-only offline catalog, including the
     # derived image URL that is absent from the persisted Core record.
-    need = web.core.favorite_add_need("Endpoint-Produkt")
-    web.core.favorite_add_product(need.id, "Ohne Foto", brand="Marke")
+    need = core_favorites.favorite_add_need("Endpoint-Produkt")
+    core_favorites.favorite_add_product(need.id, "Ohne Foto", brand="Marke")
     photo = HOME / "endpoint-photo.png"
     Image.new("RGB", (4, 4), "blue").save(photo)
-    product = web.core.favorite_add_product(need.id, "Mit Foto", brand="Marke", image=photo)
+    product = core_favorites.favorite_add_product(need.id, "Mit Foto", brand="Marke", image=photo)
     response = client.get("/api/favorites")
     catalog = next(n for n in response.json()["needs"] if n["id"] == need.id)
     check(response.status_code == 200 and catalog["products"][0]["image_url"] is None
           and catalog["products"][1]["image_url"] == "/media/favorite/" + product.image_filename,
           "the preference endpoint must preserve ranking and serialize optional image URLs")
-    web.core.shopping_save([])
+    core_shopping.shopping_save([])
 
 
 def test_browser_writes_require_same_origin():
@@ -263,7 +271,7 @@ def test_browser_writes_require_same_origin():
         {"Referer": "https://foreign.example/form"},
     ]
     payload = json.dumps({"operation": "shopping.add", "arguments": {"text": "Fremd"}})
-    before = web.core.shopping_load()
+    before = core_shopping.shopping_load()
     for headers in rejected:
         # text/plain avoids a browser CORS preflight, so the guard must run
         # before the mounted command API parses even a perfectly valid body.
@@ -274,7 +282,7 @@ def test_browser_writes_require_same_origin():
         response = client.post("/shopping/add", data={"text": "Fremd"}, headers=headers)
         check(response.status_code == 403,
               f"foreign browser forms must be rejected: {headers}")
-    check(web.core.shopping_load() == before, "rejected writes must not change the store")
+    check(core_shopping.shopping_load() == before, "rejected writes must not change the store")
     for headers in ({}, {"Origin": "http://TESTSERVER:80", "Sec-Fetch-Site": "same-origin"},
                     {"Referer": "http://testserver/shopping"}, {"Sec-Fetch-Site": "none"}):
         response = client.post("/shopping/add", data={"text": "Erlaubt"}, headers=headers)
@@ -289,48 +297,70 @@ def test_browser_writes_require_same_origin():
 
 def test_saved_mutations_never_look_rejected():
     client = TestClient(web.app, follow_redirects=False)
-    recipe = web.core.add_recipe("Ungewisser Speicherstand")
-    with patch.object(web.core, "_record_change", side_effect=OSError("journal unavailable")):
+    recipe = core_recipes.add_recipe("Ungewisser Speicherstand")
+    with patch.object(core_storage, "_record_change", side_effect=OSError("journal unavailable")):
         response = client.post(f"/recipe/{recipe.slug}/cooked")
     check(response.status_code == 500 and "data-outcome-unknown" in response.text,
           "a committed cooking entry must show uncertainty instead of 404")
-    check(len(web.core.load_log()) == 1,
+    check(len(core_recipes.load_log()) == 1,
           "a post-save failure must keep exactly the one cooking entry it committed")
     check('href="/log"' in response.text and "<form" not in response.text
           and "data-gusto-live" not in response.text,
           "uncertainty must offer a read link without a resubmit form or live reload")
 
-    with patch.object(web.core, "_record_change", side_effect=OSError("journal unavailable")):
+    with patch.object(core_storage, "_record_change", side_effect=OSError("journal unavailable")):
         response = client.post("/new", data={"title": "Bereits gespeichert"})
-    check(response.status_code == 500 and web.core.get("bereits-gespeichert") is not None,
+    check(response.status_code == 500 and core_recipes.get("bereits-gespeichert") is not None,
           "a saved recipe must not return a validation form with HTTP 400")
-    with patch.object(web.core, "_record_change", side_effect=OSError("journal unavailable")):
+    with patch.object(core_storage, "_record_change", side_effect=OSError("journal unavailable")):
         response = client.post(f"/recipe/{recipe.slug}/delete")
-    check(response.status_code == 500 and web.core.get_archived(recipe.slug) is not None,
+    check(response.status_code == 500 and core_snapshots.get_archived(recipe.slug) is not None,
           "moving the recipe must not turn a post-save failure into not-found")
 
-    with patch.object(web.core, "shopping_toggle", side_effect=web.core.PostMutationError("saved")), \
+    with patch.object(core_shopping, "shopping_toggle", side_effect=core_errors.PostMutationError("saved")), \
             patch.dict(web.templates.env.globals,
                        {"gusto_change_state": lambda: (_ for _ in ()).throw(ValueError("bad journal"))}):
         response = client.post("/shopping/item/toggle")
     check(response.status_code == 500 and 'href="/shopping"' in response.text,
           "the recovery page must render without reading the failed journal")
 
-    with patch.object(web.core, "shopping_merge", side_effect=web.core.PostMutationError("saved")):
+    with patch.object(core_shopping, "shopping_merge", side_effect=core_errors.PostMutationError("saved")):
         response = client.post("/api/shopping/sync", json={"items": []})
     check(response.status_code == 500 and response.json().get("outcome_unknown") is True,
           "a saved sync must report uncertainty, never invalid input")
-    with patch.object(web.core, "shopping_merge", side_effect=ValueError("invalid recipe source")):
+    with patch.object(core_shopping, "shopping_merge", side_effect=ValueError("invalid recipe source")):
         response = client.post("/api/shopping/sync", json={"items": []})
     check(response.status_code == 400 and response.json().get("detail") == "invalid recipe source",
           "a rejected sync must include its validation detail for recovery")
-    with patch.object(web.core, "update_recipe_image"), \
-            patch.object(web.core, "set_recipe_cover", side_effect=ValueError("missing image")):
+    with patch.object(core_images, "update_recipe_image"), \
+            patch.object(core_images, "set_recipe_cover", side_effect=ValueError("missing image")):
         response = client.post("/recipe/any/images/image/set", data={"cover": "1"})
     check(response.status_code == 500 and "data-outcome-unknown" in response.text,
           "a failed cover change after saved metadata must not imply total rejection")
-    check(client.post("/recipe/missing/cooked").status_code == 404,
-          "missing recipes before a write remain definite not-found errors")
+    for data_path, url in (
+        (core_storage.index_path(), "/recipe/missing/cooked"),
+        (core_storage.favorites_path(), "/favorites/missing/delete"),
+        (core_storage.shopping_path(), "/shopping/missing/toggle"),
+        (core_storage.shopping_path(), "/shopping/missing/remove"),
+    ):
+        check(client.post(url).status_code == 404,
+              f"an absent entity before a write remains not-found: {url}")
+        previous = data_path.read_bytes() if data_path.exists() else None
+        revision = core_storage.change_state()
+        invalid_data = b"{broken"
+        try:
+            data_path.parent.mkdir(parents=True, exist_ok=True)
+            data_path.write_bytes(invalid_data)
+            response = client.post(url)
+            check(response.status_code == 400 and bool(response.text)
+                  and data_path.read_bytes() == invalid_data
+                  and core_storage.change_state() == revision,
+                  f"invalid persisted state must be a rejection without writes: {url}")
+        finally:
+            if previous is None:
+                data_path.unlink()
+            else:
+                data_path.write_bytes(previous)
     check(client.post("/new", data={"title": "Invalid", "duration": "not a number"}).status_code == 400,
           "validation before a write must still return the submitted form")
 
@@ -340,7 +370,7 @@ def test_tag_filters_keep_stale_selections_removable():
     # tag must retain a removal link, including case-duplicate query values.
     groups = [{"key": "cuisine", "label": "Küche", "tags": ["italienisch"]}]
     selected = ["Italienisch", "nicht mehr da", "NICHT MEHR DA"]
-    with patch.object(web.core, "tag_groups", return_value=groups):
+    with patch.object(core_categories, "tag_groups", return_value=groups):
         bar = web._tag_bar("Salz & Pfeffer", selected)
     check(len(bar) == 2, "stale selected tags must have a visible filter group")
     active = [chip for group in bar for chip in group["chips"] if chip["on"]]

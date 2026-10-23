@@ -315,9 +315,9 @@ def cmd_install_skill(args):
 
 
 def cmd_home(args):
-    from . import core
+    import gusto.core.storage as core_storage
 
-    info = core.storage_info()
+    info = core_storage.storage_info()
     server_url = client.resolve_server_url(getattr(args, "server", None))
     info["server_url"] = server_url
     try:
@@ -515,8 +515,8 @@ def cmd_suggest(args):
 
 def cmd_check(args):
     if args.offline:
-        from . import core
-        res = core.check()
+        import gusto.core.checks as core_checks
+        res = core_checks.check()
     else:
         res = _remote(args, "check.run")
     if args.json:
@@ -1273,12 +1273,12 @@ def _autostart_log_path() -> Path:
     windowless in that case and give it a platform-default place to record the
     later startup error.
     """
-    from . import core
+    import gusto.core.storage as core_storage
 
     try:
-        root = core.project_root()
+        root = core_storage.project_root()
     except (OSError, ValueError):
-        root = core.default_data_root()
+        root = core_storage.default_data_root()
     return root / "gusto-autostart.log"
 
 

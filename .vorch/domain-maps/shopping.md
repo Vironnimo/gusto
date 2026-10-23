@@ -5,7 +5,7 @@ The shopping domain owns the household shopping list, recipe ingredient import, 
 ## Overview
 
 Owned code and contracts:
-- `gusto/core.py`: the `ShoppingItem`, `ShoppingNeed` and `FavoriteProduct` dataclasses and everything below the `Shopping list` banner (preferred products, ingredient parsing, shopping load/save, modify, sync).
+- `gusto/core/shopping.py` owns ingredient parsing, shopping load/save, mutation and sync; `gusto/core/favorites.py` owns household needs, aliases, ranked preferred products and their image transactions. Their validated record types live in public `gusto/core/records.py`; shared UTC formatting and sync version advancement live in `_timestamps.py`, and image-header validation/failed-copy cleanup in `_images.py`.
 - `gusto/static/shopping-client.js` (offline browser client) and `gusto/static/sw.js` (service worker, served at `/sw.js` with root scope).
 - `docs/sync-kontrakt.md` (PWA wire and merge contract, German) and `docs/telegram-shopping-handoff.md` (Telegram checklist boundary).
 

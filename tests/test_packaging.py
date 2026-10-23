@@ -200,6 +200,22 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
     )
     check(installed_skill_runtime.returncode == 0,
           installed_skill_runtime.stdout + installed_skill_runtime.stderr)
+    core_smoke = subprocess.run(
+        [os.fspath(skill_python), "-I", "-c",
+         "from gusto.core.catalog import recipes, archive, images, search; "
+         "from gusto.core import checks; "
+         "r = recipes.add_recipe('Wheel-Rezept'); "
+         "assert search.search('Wheel')[0].slug == r.slug; "
+         "archive.archive_recipe(r.slug); "
+         "archive.restore_archived_recipe(r.slug); "
+         "assert images.list_recipe_images(r.slug) == ([], None); "
+         "assert checks.check()['ok']"],
+        capture_output=True, text=True, encoding="utf-8",
+        env={**os.environ, "GUSTO_HOME": os.fspath(output / "wheel-store")},
+    )
+    check(core_smoke.returncode == 0,
+          "the installed wheel must contain every Core package dependency: "
+          + core_smoke.stdout + core_smoke.stderr)
     fake_home = output / "skill user"
     (fake_home / ".vbot").mkdir(parents=True)
     skill_environment = {

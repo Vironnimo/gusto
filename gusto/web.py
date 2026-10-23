@@ -25,14 +25,25 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.concurrency import run_in_threadpool
 
-from . import api, core
+from . import api
+import gusto.core.records as core_records
+import gusto.core.catalog.archive as core_archive
+import gusto.core.catalog.categories as core_categories
+import gusto.core.catalog.images as core_images
+import gusto.core.catalog.recipes as core_recipes
+import gusto.core.catalog.search as core_search
+import gusto.core.catalog.snapshots as core_snapshots
+import gusto.core.errors as core_errors
+import gusto.core.favorites as core_favorites
+import gusto.core.shopping as core_shopping
+import gusto.core.storage as core_storage
 
 BASE = Path(__file__).resolve().parent
 app = FastAPI(title="Gusto")
 app.include_router(api.router)
 app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE / "templates"))
-templates.env.globals["gusto_change_state"] = core.change_state
+templates.env.globals["gusto_change_state"] = core_storage.change_state
 
 MAX_WEB_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_WEB_IMAGE_EDGE = 1920
@@ -248,7 +259,7 @@ def _tag_bar(q: str, selected: list[str]) -> list[dict]:
     sel = {t.lower() for t in selected}
     bar = []
     displayed = set()
-    for g in core.tag_groups(only_used=True):
+    for g in core_categories.tag_groups(only_used=True):
         chips = []
         for name in g["tags"]:
             displayed.add(name.lower())
@@ -273,7 +284,7 @@ def _tag_bar(q: str, selected: list[str]) -> list[dict]:
     return bar
 
 
-def _favorite_dict(need: core.ShoppingNeed) -> dict:
+def _favorite_dict(need: core_records.ShoppingNeed) -> dict:
     data = need.to_dict()
     for product in data["products"]:
         filename = product.get("image_filename")
@@ -291,7 +302,7 @@ def _safe_return_to(value: str, fallback: str) -> str:
 
 
 def _recipe_reference_map() -> dict[str, dict]:
-    references = core.recipe_references()
+    references = core_snapshots.recipe_references()
     for reference in references.values():
         prefix = "/archive/" if reference["archived"] else "/recipe/"
         reference["url"] = prefix + reference["slug"]
@@ -371,7 +382,7 @@ def _prepared_photo(camera: UploadFile | None,
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, q: str = "", tag: list[str] = Query(default=[])):
-    recipes = sorted(core.search(query=q, tags=tag), key=lambda r: r.title.lower())
+    recipes = sorted(core_search.search(query=q, tags=tag), key=lambda r: r.title.lower())
     selected_count = len({item.lower() for item in tag})
     return templates.TemplateResponse(request, "list.html", {
         "nav": "recipes", "title": "Rezepte",
@@ -387,7 +398,7 @@ def index(request: Request, q: str = "", tag: list[str] = Query(default=[])):
 @app.get("/archive", response_class=HTMLResponse)
 def archive_page(request: Request, error: str = ""):
     try:
-        entries = core.load_archive()
+        entries = core_snapshots.load_archive()
     except ValueError as archive_error:
         entries = []
         error = str(archive_error)
@@ -400,7 +411,7 @@ def archive_page(request: Request, error: str = ""):
 @app.get("/archive/{slug}", response_class=HTMLResponse)
 def archive_detail(request: Request, slug: str, error: str = ""):
     try:
-        entry = core.get_archived(slug)
+        entry = core_snapshots.get_archived(slug)
     except ValueError as archive_error:
         return _error_redirect("/archive", str(archive_error))
     if entry is None:
@@ -415,8 +426,8 @@ def archive_detail(request: Request, slug: str, error: str = ""):
 @app.post("/archive/{slug}/restore")
 def archive_restore_route(slug: str):
     try:
-        recipe = core.restore_archived_recipe(slug)
-    except core.PostMutationError:
+        recipe = core_archive.restore_archived_recipe(slug)
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
         return _error_redirect(f"/archive/{slug}", str(error))
@@ -431,11 +442,11 @@ def archive_purge_route(slug: str, confirm: str = Form("")):
             "Das endgültige Löschen muss ausdrücklich bestätigt werden.",
         )
     try:
-        core.purge_archived_recipe(slug)
-    except core.PostMutationError:
+        core_archive.purge_archived_recipe(slug)
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
-        if core.get_archived(slug) is None:
+        if core_snapshots.get_archived(slug) is None:
             raise StarletteHTTPException(status_code=404)
         return _error_redirect(f"/archive/{slug}", str(error))
     return RedirectResponse("/archive", status_code=303)
@@ -443,7 +454,7 @@ def archive_purge_route(slug: str, confirm: str = Form("")):
 
 @app.get("/recipe/{slug}", response_class=HTMLResponse)
 def recipe_detail(request: Request, slug: str, error: str = ""):
-    r = core.get(slug)
+    r = core_recipes.get(slug)
     if r is None:
         raise StarletteHTTPException(status_code=404)
     return templates.TemplateResponse(request, "recipe.html", {
@@ -454,10 +465,10 @@ def recipe_detail(request: Request, slug: str, error: str = ""):
 
 @app.get("/media/recipe/{slug}/{image_id}", include_in_schema=False)
 def recipe_image(slug: str, image_id: str):
-    image = core.get_recipe_image(slug, image_id)
+    image = core_images.get_recipe_image(slug, image_id)
     if image is None:
         raise StarletteHTTPException(status_code=404)
-    path = core.recipe_image_path(slug, image)
+    path = core_images.recipe_image_path(slug, image)
     if not path.is_file():
         raise StarletteHTTPException(status_code=404)
     return FileResponse(str(path))
@@ -466,12 +477,12 @@ def recipe_image(slug: str, image_id: str):
 @app.get("/media/archive/{slug}/{image_id}", include_in_schema=False)
 def archived_recipe_image(slug: str, image_id: str):
     try:
-        image = core.get_archived_recipe_image(slug, image_id)
+        image = core_images.get_archived_recipe_image(slug, image_id)
     except ValueError:
         raise StarletteHTTPException(status_code=404)
     if image is None:
         raise StarletteHTTPException(status_code=404)
-    path = core.archived_recipe_image_path(slug, image)
+    path = core_images.archived_recipe_image_path(slug, image)
     if not path.is_file():
         raise StarletteHTTPException(status_code=404)
     return FileResponse(str(path))
@@ -479,9 +490,9 @@ def archived_recipe_image(slug: str, image_id: str):
 
 @app.get("/media/favorite/{filename}", include_in_schema=False)
 def favorite_image(filename: str):
-    if not core.favorite_image_is_referenced(filename):
+    if not core_favorites.favorite_image_is_referenced(filename):
         raise StarletteHTTPException(status_code=404)
-    path = core.favorite_image_path(filename)
+    path = core_favorites.favorite_image_path(filename)
     if not path.is_file():
         raise StarletteHTTPException(status_code=404)
     return FileResponse(str(path))
@@ -503,10 +514,10 @@ def create(request: Request, title: str = Form(...), tags: str = Form(""),
            content: str = Form("")):
     body = f"# {title.strip()}\n\n{content.strip()}\n"
     try:
-        r = core.add_recipe(title.strip(), tags=_tags(tags),
+        r = core_recipes.add_recipe(title.strip(), tags=_tags(tags),
                             duration_min=_int_or_none(duration),
                             servings=_int_or_none(servings), content=body)
-    except core.PostMutationError:
+    except core_errors.PostMutationError:
         raise
     except ValueError as e:
         form = {"title": title, "tags": tags, "duration": duration,
@@ -520,7 +531,7 @@ def create(request: Request, title: str = Form(...), tags: str = Form(""),
 
 @app.get("/recipe/{slug}/edit", response_class=HTMLResponse)
 def edit_form(request: Request, slug: str):
-    r = core.get(slug)
+    r = core_recipes.get(slug)
     if r is None:
         raise StarletteHTTPException(status_code=404)
     form = {"title": r.title, "tags": ", ".join(r.tags),
@@ -536,17 +547,17 @@ def edit_form(request: Request, slug: str):
 def update(request: Request, slug: str, title: str = Form(...), tags: str = Form(""),
            duration: str = Form(""), servings: str = Form(""),
            content: str = Form("")):
-    recipe = core.get(slug)
+    recipe = core_recipes.get(slug)
     if recipe is None:
         raise StarletteHTTPException(status_code=404)
     body = f"# {title.strip()}\n\n{content.strip()}\n"
     try:
-        core.update_recipe(slug, title=title.strip(), tags=_tags(tags),
+        core_recipes.update_recipe(slug, title=title.strip(), tags=_tags(tags),
                            duration_min=_int_or_none(duration),
                            servings=_int_or_none(servings), content=body,
                            clear_duration=not duration.strip(),
                            clear_servings=not servings.strip())
-    except core.PostMutationError:
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
         form = {"title": title, "tags": tags, "duration": duration,
@@ -561,7 +572,7 @@ def update(request: Request, slug: str, title: str = Form(...), tags: str = Form
 
 @app.get("/recipe/{slug}/images", response_class=HTMLResponse)
 def recipe_images_page(request: Request, slug: str, error: str = ""):
-    recipe = core.get(slug)
+    recipe = core_recipes.get(slug)
     if recipe is None:
         raise StarletteHTTPException(status_code=404)
     return templates.TemplateResponse(request, "recipe_images.html", {
@@ -580,10 +591,10 @@ def recipe_image_add_route(
         with _prepared_photo(image_camera, image_file) as image_path:
             if image_path is None:
                 raise ValueError("Bitte ein Foto aufnehmen oder ein Bild auswählen.")
-            core.add_recipe_image(
+            core_images.add_recipe_image(
                 slug, image_path, role=role, caption=caption, cover=cover == "1",
             )
-    except core.PostMutationError:
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
         return _error_redirect(f"/recipe/{slug}/images", str(error))
@@ -595,14 +606,14 @@ def recipe_image_set_route(
         slug: str, image_id: str, role: str = Form("gallery"),
         caption: str = Form(""), cover: str = Form("")):
     try:
-        core.update_recipe_image(slug, image_id, role=role, caption=caption)
+        core_images.update_recipe_image(slug, image_id, role=role, caption=caption)
         if cover == "1":
             try:
-                core.set_recipe_cover(slug, image_id)
+                core_images.set_recipe_cover(slug, image_id)
             except (OSError, ValueError) as error:
                 # The metadata write above already returned successfully.
-                raise core.PostMutationError(str(error)) from error
-    except core.PostMutationError:
+                raise core_errors.PostMutationError(str(error)) from error
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
         return _error_redirect(f"/recipe/{slug}/images", str(error))
@@ -612,8 +623,8 @@ def recipe_image_set_route(
 @app.post("/recipe/{slug}/images/{image_id}/remove")
 def recipe_image_remove_route(slug: str, image_id: str):
     try:
-        core.remove_recipe_image(slug, image_id)
-    except core.PostMutationError:
+        core_images.remove_recipe_image(slug, image_id)
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
         return _error_redirect(f"/recipe/{slug}/images", str(error))
@@ -623,22 +634,24 @@ def recipe_image_remove_route(slug: str, image_id: str):
 @app.post("/recipe/{slug}/cooked")
 def mark_cooked(slug: str):
     try:
-        core.log_cooked(slug)
-    except core.PostMutationError:
+        core_recipes.log_cooked(slug)
+    except core_errors.PostMutationError:
         raise
-    except ValueError:
+    except core_errors.NotFoundError:
         raise StarletteHTTPException(status_code=404)
+    except ValueError as error:
+        raise StarletteHTTPException(status_code=400, detail=str(error)) from error
     return RedirectResponse(f"/recipe/{slug}", status_code=303)
 
 
 @app.post("/recipe/{slug}/delete")
 def delete_recipe_route(slug: str):
     try:
-        archived = core.archive_recipe(slug)
-    except core.PostMutationError:
+        archived = core_archive.archive_recipe(slug)
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
-        if core.get(slug) is None:
+        if core_recipes.get(slug) is None:
             raise StarletteHTTPException(status_code=404)
         return _error_redirect(f"/recipe/{slug}", str(error))
     return RedirectResponse(f"/archive/{archived.slug}", status_code=303)
@@ -648,13 +661,13 @@ def delete_recipe_route(slug: str):
 def suggestions(request: Request, days: int = Query(7, ge=1)):
     return templates.TemplateResponse(request, "suggest.html", {
         "nav": "suggestions", "title": "Was koche ich?",
-        "candidates": core.suggest(days=days), "days": days,
+        "candidates": core_recipes.suggest(days=days), "days": days,
     })
 
 
 @app.get("/log", response_class=HTMLResponse)
 def log_page(request: Request):
-    entries = list(reversed(core.load_log()))
+    entries = list(reversed(core_recipes.load_log()))
     references = _recipe_reference_map()
     return templates.TemplateResponse(request, "log.html", {
         "nav": "log", "title": "Logbuch",
@@ -666,7 +679,7 @@ def log_page(request: Request):
 
 @app.get("/favorites", response_class=HTMLResponse)
 def favorites_page(request: Request, error: str = ""):
-    needs = sorted(core.favorites_load(), key=lambda item: item.name.casefold())
+    needs = sorted(core_favorites.favorites_load(), key=lambda item: item.name.casefold())
     return templates.TemplateResponse(request, "favorites.html", {
         "nav": "shopping", "title": "Lieblingsprodukte",
         "needs": needs, "error": error,
@@ -675,8 +688,8 @@ def favorites_page(request: Request, error: str = ""):
 
 @app.get("/favorites/match", response_class=HTMLResponse)
 def favorite_match_page(request: Request, text: str = "", error: str = ""):
-    needs = sorted(core.favorites_load(), key=lambda item: item.name.casefold())
-    need = core.favorite_match(text, needs)
+    needs = sorted(core_favorites.favorites_load(), key=lambda item: item.name.casefold())
+    need = core_favorites.favorite_match(text, needs)
     return templates.TemplateResponse(request, "favorite_match.html", {
         "nav": "shopping", "title": need.name if need else "Lieblingsprodukt",
         "text": text, "need": need, "needs": needs, "error": error,
@@ -687,8 +700,8 @@ def favorite_match_page(request: Request, text: str = "", error: str = ""):
 def favorite_add_route(name: str = Form(...), alias: str = Form(""),
                        return_to: str = Form("")):
     try:
-        need = core.favorite_add_need(name.strip(), aliases=[alias] if alias else [])
-    except core.PostMutationError:
+        need = core_favorites.favorite_add_need(name.strip(), aliases=[alias] if alias else [])
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
         return _error_redirect("/favorites", str(error))
@@ -700,8 +713,8 @@ def favorite_add_route(name: str = Form(...), alias: str = Form(""),
 def favorite_assign_route(need_id: str = Form(...), alias: str = Form(...),
                           return_to: str = Form("/shopping")):
     try:
-        core.favorite_add_alias(need_id, alias)
-    except core.PostMutationError:
+        core_favorites.favorite_add_alias(need_id, alias)
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
         match_path = "/favorites/match?" + urlencode({"text": alias})
@@ -711,7 +724,7 @@ def favorite_assign_route(need_id: str = Form(...), alias: str = Form(...),
 
 @app.get("/favorites/{need_id}", response_class=HTMLResponse)
 def favorite_detail_page(request: Request, need_id: str, error: str = ""):
-    need = core.favorite_get_need(need_id)
+    need = core_favorites.favorite_get_need(need_id)
     if need is None:
         raise StarletteHTTPException(status_code=404)
     return templates.TemplateResponse(request, "favorite_detail.html", {
@@ -723,8 +736,8 @@ def favorite_detail_page(request: Request, need_id: str, error: str = ""):
 @app.post("/favorites/{need_id}/set")
 def favorite_set_route(need_id: str, name: str = Form(...)):
     try:
-        core.favorite_update_need(need_id, name)
-    except core.PostMutationError:
+        core_favorites.favorite_update_need(need_id, name)
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
         return _error_redirect(f"/favorites/{need_id}", str(error))
@@ -734,19 +747,21 @@ def favorite_set_route(need_id: str, name: str = Form(...)):
 @app.post("/favorites/{need_id}/delete")
 def favorite_delete_route(need_id: str):
     try:
-        core.favorite_remove_need(need_id)
-    except core.PostMutationError:
+        core_favorites.favorite_remove_need(need_id)
+    except core_errors.PostMutationError:
         raise
-    except ValueError:
+    except core_errors.NotFoundError:
         raise StarletteHTTPException(status_code=404)
+    except ValueError as error:
+        raise StarletteHTTPException(status_code=400, detail=str(error)) from error
     return RedirectResponse("/favorites", status_code=303)
 
 
 @app.post("/favorites/{need_id}/alias/add")
 def favorite_alias_add_route(need_id: str, alias: str = Form(...)):
     try:
-        core.favorite_add_alias(need_id, alias)
-    except core.PostMutationError:
+        core_favorites.favorite_add_alias(need_id, alias)
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
         return _error_redirect(f"/favorites/{need_id}", str(error))
@@ -756,8 +771,8 @@ def favorite_alias_add_route(need_id: str, alias: str = Form(...)):
 @app.post("/favorites/{need_id}/alias/remove")
 def favorite_alias_remove_route(need_id: str, alias: str = Form(...)):
     try:
-        core.favorite_remove_alias(need_id, alias)
-    except core.PostMutationError:
+        core_favorites.favorite_remove_alias(need_id, alias)
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
         return _error_redirect(f"/favorites/{need_id}", str(error))
@@ -772,11 +787,11 @@ def favorite_product_add_route(
         image_file: UploadFile | None = File(None)):
     try:
         with _prepared_photo(image_camera, image_file) as image_path:
-            core.favorite_add_product(
+            core_favorites.favorite_add_product(
                 need_id, name, brand=brand, store=store, note=note,
                 image=image_path,
             )
-    except core.PostMutationError:
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
         return _error_redirect(f"/favorites/{need_id}", str(error))
@@ -792,11 +807,11 @@ def favorite_product_set_route(
         image_file: UploadFile | None = File(None)):
     try:
         with _prepared_photo(image_camera, image_file) as image_path:
-            core.favorite_update_product(
+            core_favorites.favorite_update_product(
                 need_id, product_id, name=name, brand=brand, store=store,
                 note=note, image=image_path, remove_image=remove_image == "1",
             )
-    except core.PostMutationError:
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
         return _error_redirect(f"/favorites/{need_id}", str(error))
@@ -807,8 +822,8 @@ def favorite_product_set_route(
 def favorite_product_move_route(need_id: str, product_id: str,
                                 position: int = Form(...)):
     try:
-        core.favorite_move_product(need_id, product_id, position)
-    except core.PostMutationError:
+        core_favorites.favorite_move_product(need_id, product_id, position)
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
         return _error_redirect(f"/favorites/{need_id}", str(error))
@@ -818,8 +833,8 @@ def favorite_product_move_route(need_id: str, product_id: str,
 @app.post("/favorites/{need_id}/product/{product_id}/remove")
 def favorite_product_remove_route(need_id: str, product_id: str):
     try:
-        core.favorite_remove_product(need_id, product_id)
-    except core.PostMutationError:
+        core_favorites.favorite_remove_product(need_id, product_id)
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
         return _error_redirect(f"/favorites/{need_id}", str(error))
@@ -830,8 +845,8 @@ def favorite_product_remove_route(need_id: str, product_id: str):
 
 @app.get("/shopping", response_class=HTMLResponse)
 def shopping_page(request: Request, error: str = ""):
-    items = core.shopping_list()
-    needs = core.favorites_load()
+    items = core_shopping.shopping_list()
+    needs = core_favorites.favorites_load()
     open_items = [i for i in items if not i.checked]
     done_items = [i for i in items if i.checked]
     source_references = _recipe_reference_map()
@@ -839,7 +854,7 @@ def shopping_page(request: Request, error: str = ""):
         "nav": "shopping", "title": "Einkaufsliste",
         "open_items": open_items, "done_items": done_items,
         "source_references": source_references,
-        "favorite_matches": {item.id: core.favorite_match(item.text, needs)
+        "favorite_matches": {item.id: core_favorites.favorite_match(item.text, needs)
                              for item in items},
         "error": SHOPPING_NOTICES.get(error, ""),
     })
@@ -854,52 +869,56 @@ def shopping_add_route(text: str = Form(...), quantity: str = Form("")):
         return RedirectResponse(
             f"/shopping?error={SHOPPING_EMPTY_MARKER}", status_code=303,
         )
-    core.shopping_add(text.strip(), quantity=quantity.strip())
+    core_shopping.shopping_add(text.strip(), quantity=quantity.strip())
     return RedirectResponse("/shopping", status_code=303)
 
 
 @app.post("/shopping/{item_id}/toggle")
 def shopping_toggle_route(item_id: str):
     try:
-        core.shopping_toggle(item_id)
-    except core.PostMutationError:
+        core_shopping.shopping_toggle(item_id)
+    except core_errors.PostMutationError:
         raise
-    except ValueError:
+    except core_errors.NotFoundError:
         raise StarletteHTTPException(status_code=404)
+    except ValueError as error:
+        raise StarletteHTTPException(status_code=400, detail=str(error)) from error
     return RedirectResponse("/shopping", status_code=303)
 
 
 @app.post("/shopping/{item_id}/remove")
 def shopping_remove_route(item_id: str):
     try:
-        core.shopping_remove(item_id)
-    except core.PostMutationError:
+        core_shopping.shopping_remove(item_id)
+    except core_errors.PostMutationError:
         raise
-    except ValueError:
+    except core_errors.NotFoundError:
         raise StarletteHTTPException(status_code=404)
+    except ValueError as error:
+        raise StarletteHTTPException(status_code=400, detail=str(error)) from error
     return RedirectResponse("/shopping", status_code=303)
 
 
 @app.post("/shopping/remove-done")
 def shopping_remove_done_route():
-    core.shopping_remove_done()
+    core_shopping.shopping_remove_done()
     return RedirectResponse("/shopping", status_code=303)
 
 
 @app.post("/shopping/clear")
 def shopping_clear_route():
-    core.shopping_clear()
+    core_shopping.shopping_clear()
     return RedirectResponse("/shopping", status_code=303)
 
 
 @app.post("/recipe/{slug}/shopping")
 def recipe_to_shopping(slug: str):
     try:
-        core.shopping_add_recipe(slug)
-    except core.PostMutationError:
+        core_shopping.shopping_add_recipe(slug)
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
-        if core.get(slug) is None:
+        if core_recipes.get(slug) is None:
             raise StarletteHTTPException(status_code=404)
         return _error_redirect(f"/recipe/{slug}", str(error))
     return RedirectResponse("/shopping", status_code=303)
@@ -913,14 +932,14 @@ def api_shopping_get():
     """All items incl. tombstones as {"items": [<item-dict>, ...]}.
 
     Read-only starting point for the PWA and for agents/scripts."""
-    return JSONResponse({"items": [i.to_dict() for i in core.shopping_load()]})
+    return JSONResponse({"items": [i.to_dict() for i in core_shopping.shopping_load()]})
 
 
 @app.get("/api/favorites")
 def api_favorites_get():
     """Shared preference catalog for the offline-readable shopping client."""
     return JSONResponse({
-        "needs": [_favorite_dict(need) for need in core.favorites_load()],
+        "needs": [_favorite_dict(need) for need in core_favorites.favorites_load()],
     })
 
 
@@ -928,7 +947,7 @@ def api_favorites_get():
 async def api_shopping_sync(request: Request):
     """Full-state sync. Body: {"items": [<item-dict>, ...]} (the client's local
     state). Response: {"items": [...]} = server-side merged total state
-    (core.shopping_merge, "last writer wins" + tombstones)."""
+    (core_shopping.shopping_merge, "last writer wins" + tombstones)."""
     try:
         body = await request.json()
     except Exception:
@@ -947,8 +966,8 @@ async def api_shopping_sync(request: Request):
 
 def _shopping_sync_response(items: list) -> JSONResponse:
     try:
-        merged = core.shopping_merge(items)
-    except core.PostMutationError:
+        merged = core_shopping.shopping_merge(items)
+    except core_errors.PostMutationError:
         raise
     except ValueError as error:
         return JSONResponse({"error": "invalid shopping state", "detail": str(error)},
@@ -979,8 +998,8 @@ async def http_exception(request: Request, exc: StarletteHTTPException):
     return PlainTextResponse(str(exc.detail or exc.status_code), status_code=exc.status_code)
 
 
-@app.exception_handler(core.PostMutationError)
-async def post_mutation_exception(request: Request, exc: core.PostMutationError):
+@app.exception_handler(core_errors.PostMutationError)
+async def post_mutation_exception(request: Request, exc: core_errors.PostMutationError):
     if request.url.path.startswith("/api/"):
         return JSONResponse({
             "ok": False, "error": MUTATION_UNCERTAIN_NOTICE, "outcome_unknown": True,

@@ -1,4 +1,4 @@
-"""Hermetic tests for the shopping-list logic in gusto/core.py.
+"""Hermetic tests for the shopping-list logic in gusto/core/shopping.py.
 
 Runnable WITHOUT pytest:  python tests/test_shopping.py
 
@@ -21,7 +21,11 @@ import gusto  # noqa: E402, F401 - does not load Core or household data
 os.environ["GUSTO_HOME"] = tempfile.mkdtemp(prefix="gusto-test-")
 
 
-from gusto import core  # noqa: E402
+import gusto.core.catalog.archive as core_archive  # noqa: E402
+import gusto.core.catalog.recipes as core_recipes  # noqa: E402
+import gusto.core.checks as core_checks  # noqa: E402
+import gusto.core.shopping as core_shopping  # noqa: E402
+import gusto.core.storage as core_storage  # noqa: E402
 
 RECIPE_MD = (
     "# T\n"
@@ -55,13 +59,13 @@ def expect_valueerror(fn, *args, **kwargs):
 
 def main():
     # Safety net: we really work inside the temp directory.
-    check(core.project_root().is_relative_to(Path(tempfile.gettempdir()).resolve()),
+    check(core_storage.project_root().is_relative_to(Path(tempfile.gettempdir()).resolve()),
           "GUSTO_HOME does not point into the temp directory -- abort.")
 
     # --- parse_ingredients --------------------------------------------------
-    check(core.parse_ingredients(RECIPE_MD) == ["200 g Spaghetti", "100 g Speck"],
+    check(core_shopping.parse_ingredients(RECIPE_MD) == ["200 g Spaghetti", "100 g Speck"],
           "parse_ingredients does not read the two ingredients correctly.")
-    check(core.parse_ingredients("# Only title\n\nNo section here.") == [],
+    check(core_shopping.parse_ingredients("# Only title\n\nNo section here.") == [],
           "parse_ingredients without an ingredient section must return [].")
     # Stops at the next heading, skips empty bullets, '*' counts.
     mixed = ("## Zutaten\n"
@@ -71,28 +75,28 @@ def main():
              "\n"
              "## Zubereitung\n"
              "- do not count\n")
-    check(core.parse_ingredients(mixed) == ["Mehl", "Zucker"],
+    check(core_shopping.parse_ingredients(mixed) == ["Mehl", "Zucker"],
           "parse_ingredients: empty bullets/second section/'*' handled wrong.")
     formatted = (
         "## Zutaten\n**Für die Sauce**\n- Tomaten\n---\n* * *\n- - -\n"
         "* **Basilikum**\n***optional***\n## Zubereitung\n- Nicht importieren\n"
     )
-    check(core.parse_ingredients(formatted) == ["Tomaten", "**Basilikum**"],
+    check(core_shopping.parse_ingredients(formatted) == ["Tomaten", "**Basilikum**"],
           "bold notes and Markdown separators must not become shopping items.")
 
     # Create a recipe (via the public core path, in the temp home).
-    core.add_recipe("T", content=RECIPE_MD, slug="t")
+    core_recipes.add_recipe("T", content=RECIPE_MD, slug="t")
 
     # --- load/save round-trip on an empty list ------------------------------
-    check(core.shopping_load() == [], "Fresh shopping list must be empty.")
-    check(core.shopping_list() == [], "Empty list -> shopping_list() == [].")
+    check(core_shopping.shopping_load() == [], "Fresh shopping list must be empty.")
+    check(core_shopping.shopping_list() == [], "Empty list -> shopping_list() == [].")
 
     # --- corrupted file shapes ----------------------------------------------
     # A wrong JSON root must fail with a German ValueError instead of a raw
     # AttributeError, and check() must report it as an integrity error.
-    core.shopping_path().write_text("[]", encoding="utf-8")
-    expect_valueerror(core.shopping_load)
-    corrupted = core.check()
+    core_storage.shopping_path().write_text("[]", encoding="utf-8")
+    expect_valueerror(core_shopping.shopping_load)
+    corrupted = core_checks.check()
     check(any("shopping_list.json" in message
               for message in corrupted["invalid_data_files"]),
           "corrupted shopping data must be reported as an integrity error.")
@@ -104,164 +108,164 @@ def main():
         {"id": "x", "text": "Milch", "checked": "false"},
         {"id": "x", "text": "Milch", "created_at": None},
     ):
-        core.shopping_path().write_text(
+        core_storage.shopping_path().write_text(
             json.dumps({"items": [broken_item]}), encoding="utf-8")
-        expect_valueerror(core.shopping_load)
-        corrupted = core.check()
+        expect_valueerror(core_shopping.shopping_load)
+        corrupted = core_checks.check()
         check(corrupted["ok"] is False
               and any("shopping_list.json" in message
                       for message in corrupted["invalid_data_files"]),
               "broken shopping entries must produce a named diagnostic instead of crashing")
-    core.shopping_path().write_text(
+    core_storage.shopping_path().write_text(
         '{"items": [{"id": "legacy", "text": "Milch"}]}', encoding="utf-8")
-    legacy = core.shopping_load()[0]
+    legacy = core_shopping.shopping_load()[0]
     check(legacy.checked is False and legacy.deleted is False
           and legacy.created_at == "" and legacy.source is None,
           "omitted optional fields in older stored items must keep their defaults")
-    os.remove(core.shopping_path())
-    check(core.shopping_load() == [],
+    os.remove(core_storage.shopping_path())
+    check(core_shopping.shopping_load() == [],
           "a removed shopping file must load as an empty list.")
 
     # --- shopping_add -------------------------------------------------------
-    a = core.shopping_add("Milch", quantity="1 L")
+    a = core_shopping.shopping_add("Milch", quantity="1 L")
     check(a.id and a.created_at and a.updated_at,
           "shopping_add must set id/created_at/updated_at.")
     check(a.checked is False and a.deleted is False,
           "New item: checked and deleted must be False.")
     check(a.text == "Milch" and a.quantity == "1 L" and a.source is None,
           "shopping_add does not take over text/quantity/source correctly.")
-    check(len(core.shopping_load()) == 1, "After add there must be exactly 1 item.")
+    check(len(core_shopping.shopping_load()) == 1, "After add there must be exactly 1 item.")
 
     # load/save round-trip: stored values == read-back values.
-    loaded = core.shopping_load()[0]
+    loaded = core_shopping.shopping_load()[0]
     check(loaded.to_dict() == a.to_dict(),
           "load/save round-trip changes the item.")
 
     # --- shopping_add_recipe ------------------------------------------------
-    new = core.shopping_add_recipe("t")
+    new = core_shopping.shopping_add_recipe("t")
     check([i.text for i in new] == ["200 g Spaghetti", "100 g Speck"],
           "shopping_add_recipe returns the wrong ingredients.")
     check(all(i.source == "t" for i in new),
           "shopping_add_recipe must set source=slug.")
-    check(len(core.shopping_load()) == 3, "Expected 3 items total (1 + 2).")
-    expect_valueerror(core.shopping_add_recipe, "t")
-    check(len(core.shopping_load()) == 3,
+    check(len(core_shopping.shopping_load()) == 3, "Expected 3 items total (1 + 2).")
+    expect_valueerror(core_shopping.shopping_add_recipe, "t")
+    check(len(core_shopping.shopping_load()) == 3,
           "re-importing a recipe with visible items must not add duplicates")
-    expect_valueerror(core.shopping_add_recipe, "does-not-exist")
-    core.add_recipe("Leer", content="# Leer\n\n## Zubereitung\n\n1. Test\n", slug="leer")
-    expect_valueerror(core.shopping_add_recipe, "leer")
+    expect_valueerror(core_shopping.shopping_add_recipe, "does-not-exist")
+    core_recipes.add_recipe("Leer", content="# Leer\n\n## Zubereitung\n\n1. Test\n", slug="leer")
+    expect_valueerror(core_shopping.shopping_add_recipe, "leer")
 
     # --- shopping_list: order by created_at ---------------------------------
-    texts = [i.text for i in core.shopping_list()]
+    texts = [i.text for i in core_shopping.shopping_list()]
     check(texts == ["Milch", "200 g Spaghetti", "100 g Speck"],
           "shopping_list must sort by insertion order (created_at).")
 
     # --- shopping_toggle ----------------------------------------------------
-    t1 = core.shopping_toggle(a.id)                # toggle -> True
+    t1 = core_shopping.shopping_toggle(a.id)                # toggle -> True
     check(t1.checked is True, "toggle(None) must flip from False to True.")
-    t2 = core.shopping_toggle(a.id)                # toggle -> False
+    t2 = core_shopping.shopping_toggle(a.id)                # toggle -> False
     check(t2.checked is False, "toggle(None) again must go back to False.")
-    t3 = core.shopping_toggle(a.id, checked=True)  # set explicitly
+    t3 = core_shopping.shopping_toggle(a.id, checked=True)  # set explicitly
     check(t3.checked is True, "toggle(checked=True) must set True.")
     unchanged_timestamp = t3.updated_at
-    t4 = core.shopping_toggle(a.id, checked=True)
+    t4 = core_shopping.shopping_toggle(a.id, checked=True)
     check(t4.updated_at == unchanged_timestamp,
           "idempotent check must not advance updated_at")
-    expect_valueerror(core.shopping_toggle, "unknown-id")
+    expect_valueerror(core_shopping.shopping_toggle, "unknown-id")
 
     # --- shopping_list filter: done -----------------------------------------
-    check([i.text for i in core.shopping_list(include_done=False)]
+    check([i.text for i in core_shopping.shopping_list(include_done=False)]
           == ["200 g Spaghetti", "100 g Speck"],
           "include_done=False must hide done items.")
-    check(len(core.shopping_list(include_done=True)) == 3,
+    check(len(core_shopping.shopping_list(include_done=True)) == 3,
           "include_done=True must show all (non-deleted) items.")
 
     # --- shopping_remove: tombstone -----------------------------------------
-    spaghetti = next(i for i in core.shopping_load() if i.text == "200 g Spaghetti")
-    core.shopping_remove(spaghetti.id)
-    removed = next(i for i in core.shopping_load() if i.id == spaghetti.id)
+    spaghetti = next(i for i in core_shopping.shopping_load() if i.text == "200 g Spaghetti")
+    core_shopping.shopping_remove(spaghetti.id)
+    removed = next(i for i in core_shopping.shopping_load() if i.id == spaghetti.id)
     check(removed.deleted is True,
           "shopping_remove must mark the item as a tombstone.")
     # The tombstone is present in load() but not in list() (default).
-    check(any(i.id == spaghetti.id for i in core.shopping_load()),
+    check(any(i.id == spaghetti.id for i in core_shopping.shopping_load()),
           "Tombstone must still appear in shopping_load().")
-    check(not any(i.id == spaghetti.id for i in core.shopping_list()),
+    check(not any(i.id == spaghetti.id for i in core_shopping.shopping_list()),
           "Tombstone must NOT appear in shopping_list() (default).")
     check(any(i.id == spaghetti.id
-              for i in core.shopping_list(include_deleted=True)),
+              for i in core_shopping.shopping_list(include_deleted=True)),
           "include_deleted=True must show tombstones.")
     removed_timestamp = removed.updated_at
-    core.shopping_remove(spaghetti.id)
-    removed_again = next(i for i in core.shopping_load() if i.id == spaghetti.id)
+    core_shopping.shopping_remove(spaghetti.id)
+    removed_again = next(i for i in core_shopping.shopping_load() if i.id == spaghetti.id)
     check(removed_again.updated_at == removed_timestamp,
           "idempotent remove must not advance a tombstone timestamp")
     # Tombstones can no longer be toggled.
-    expect_valueerror(core.shopping_toggle, spaghetti.id)
-    expect_valueerror(core.shopping_remove, "unknown-id")
+    expect_valueerror(core_shopping.shopping_toggle, spaghetti.id)
+    expect_valueerror(core_shopping.shopping_remove, "unknown-id")
 
     # --- shopping_remove_done -----------------------------------------------
     # Currently done + non-tombstone: only "Milch" (a). Speck is open,
     # Spaghetti is already a tombstone.
-    count = core.shopping_remove_done()
+    count = core_shopping.shopping_remove_done()
     check(count == 1, f"remove_done should remove exactly 1 item, was {count}.")
-    milch = next(i for i in core.shopping_load() if i.id == a.id)
+    milch = next(i for i in core_shopping.shopping_load() if i.id == a.id)
     check(milch.deleted is True,
           "remove_done must turn done items into tombstones.")
     # Calling again removes nothing more.
-    check(core.shopping_remove_done() == 0,
+    check(core_shopping.shopping_remove_done() == 0,
           "remove_done with no done items must return 0.")
     # Exactly the open Speck item stays visible.
-    visible = core.shopping_list()
+    visible = core_shopping.shopping_list()
     check([i.text for i in visible] == ["100 g Speck"],
           "After remove_done only the open Speck item may be visible.")
 
     # --- shopping_add_many --------------------------------------------------
-    batch = core.shopping_add_many(["Brot", "6 Eier", "200 g Spaghetti"])
+    batch = core_shopping.shopping_add_many(["Brot", "6 Eier", "200 g Spaghetti"])
     check([item.text for item in batch] == ["Brot", "6 Eier", "200 g Spaghetti"],
           "shopping_add_many must preserve all requested entries and their order.")
-    check([item.text for item in core.shopping_list()][-3:]
+    check([item.text for item in core_shopping.shopping_list()][-3:]
           == ["Brot", "6 Eier", "200 g Spaghetti"],
           "shopping_add_many must persist the complete group.")
-    expect_valueerror(core.shopping_add_many, [])
-    expect_valueerror(core.shopping_add_many, ["Brot", "  "])
+    expect_valueerror(core_shopping.shopping_add_many, [])
+    expect_valueerror(core_shopping.shopping_add_many, ["Brot", "  "])
 
     # --- shopping_clear -----------------------------------------------------
     # The visible list contains open Speck plus all three batch items.
-    check(core.shopping_clear() == 4,
+    check(core_shopping.shopping_clear() == 4,
           "shopping_clear must remove every visible item in one operation.")
-    check(core.shopping_list() == [],
+    check(core_shopping.shopping_list() == [],
           "shopping_clear must leave no visible shopping items.")
-    check(core.shopping_clear() == 0,
+    check(core_shopping.shopping_clear() == 0,
           "shopping_clear on an empty visible list must return 0.")
 
     # --- sourced single add -------------------------------------------------
-    sourced_recipe = core.add_recipe(
+    sourced_recipe = core_recipes.add_recipe(
         "Einzelzutat", content="# Einzelzutat\n\n## Zutaten\n\n- Pfeffer\n",
         slug="einzelzutat",
     )
-    sourced = core.shopping_add("Pfeffer", source=sourced_recipe.slug)
+    sourced = core_shopping.shopping_add("Pfeffer", source=sourced_recipe.slug)
     check(sourced.source == sourced_recipe.slug,
           "a sourced single item must retain its recipe slug")
-    count_before_invalid_source = len(core.shopping_load())
-    expect_valueerror(core.shopping_add, "Salz", source="does-not-exist")
-    check(len(core.shopping_load()) == count_before_invalid_source,
+    count_before_invalid_source = len(core_shopping.shopping_load())
+    expect_valueerror(core_shopping.shopping_add, "Salz", source="does-not-exist")
+    check(len(core_shopping.shopping_load()) == count_before_invalid_source,
           "an unknown source recipe must not mutate the shopping list")
-    expect_valueerror(core.shopping_add_recipe, sourced_recipe.slug)
-    core.shopping_remove(sourced.id)
-    imported_after_remove = core.shopping_add_recipe(sourced_recipe.slug)
+    expect_valueerror(core_shopping.shopping_add_recipe, sourced_recipe.slug)
+    core_shopping.shopping_remove(sourced.id)
+    imported_after_remove = core_shopping.shopping_add_recipe(sourced_recipe.slug)
     check([item.text for item in imported_after_remove] == ["Pfeffer"],
           "removing the sourced item must allow a fresh recipe import")
-    core.archive_recipe(sourced_recipe.slug)
-    before_bytes = core.shopping_path().read_bytes()
-    before_revision = core.change_state()["revision"]
-    expect_valueerror(core.shopping_add, "Salz", source=sourced_recipe.slug)
-    expect_valueerror(core.shopping_add_recipe, sourced_recipe.slug)
-    check(core.shopping_path().read_bytes() == before_bytes
-          and core.change_state()["revision"] == before_revision,
+    core_archive.archive_recipe(sourced_recipe.slug)
+    before_bytes = core_storage.shopping_path().read_bytes()
+    before_revision = core_storage.change_state()["revision"]
+    expect_valueerror(core_shopping.shopping_add, "Salz", source=sourced_recipe.slug)
+    expect_valueerror(core_shopping.shopping_add_recipe, sourced_recipe.slug)
+    check(core_storage.shopping_path().read_bytes() == before_bytes
+          and core_storage.change_state()["revision"] == before_revision,
           "an archived source must reject new attribution and ingredient import atomically")
     remote = imported_after_remove[0].to_dict()
     remote.update(quantity="1 Bund", updated_at="2099-01-01T00:00:00Z")
-    synced = core.shopping_merge([remote])
+    synced = core_shopping.shopping_merge([remote])
     check(any(item.id == remote["id"] and item.source == sourced_recipe.slug
               and item.quantity == "1 Bund" for item in synced),
           "sync must preserve and update an existing item's archived source")
@@ -269,12 +273,12 @@ def main():
     # --- single-line hygiene -------------------------------------------------
     # Newlines in free text would persist as store dirt (matching normalizes
     # whitespace anyway), so the write paths must reject them.
-    count_before_newline_probe = len(core.shopping_load())
+    count_before_newline_probe = len(core_shopping.shopping_load())
     for multiline in ("a\nb", "a\rb"):
-        expect_valueerror(core.shopping_add, multiline)
-    expect_valueerror(core.shopping_add, "Reis", quantity="1\nkg")
-    expect_valueerror(core.shopping_add_many, ["ok", "a\nb"])
-    check(len(core.shopping_load()) == count_before_newline_probe,
+        expect_valueerror(core_shopping.shopping_add, multiline)
+    expect_valueerror(core_shopping.shopping_add, "Reis", quantity="1\nkg")
+    expect_valueerror(core_shopping.shopping_add_many, ["ok", "a\nb"])
+    check(len(core_shopping.shopping_load()) == count_before_newline_probe,
           "rejected multiline texts must not mutate the shopping list.")
 
     # --- shopping_merge: status fields are required, not defaulted ----------
@@ -284,12 +288,12 @@ def main():
         "created_at": "2026-09-18T10:00:00Z",
         "updated_at": "2026-09-18T10:00:00Z",
     }
-    merged = core.shopping_merge([dict(full_item)])
+    merged = core_shopping.shopping_merge([dict(full_item)])
     check(next(item for item in merged if item.id == full_item["id"]).text
           == "Probe-Item",
           "a complete valid item must merge unchanged.")
-    before_bytes = core.shopping_path().read_bytes()
-    before_revision = core.change_state()["revision"]
+    before_bytes = core_storage.shopping_path().read_bytes()
+    before_revision = core_storage.change_state()["revision"]
     for broken in (
         # Verified live: a minimal item was persisted with empty timestamps
         # and an implicit deleted=False, contradicting the HTTP-400 contract.
@@ -300,16 +304,16 @@ def main():
          "created_at": "2026-09-18T10:00:00Z"},
     ):
         try:
-            core.shopping_merge([dict(broken)])
+            core_shopping.shopping_merge([dict(broken)])
             raise AssertionError(
                 f"missing status fields must be rejected: {broken!r}")
         except ValueError as error:
             check(bool(str(error)), "an invalid item must explain the rejection")
-    check(core.shopping_path().read_bytes() == before_bytes
-          and core.change_state()["revision"] == before_revision,
+    check(core_storage.shopping_path().read_bytes() == before_bytes
+          and core_storage.change_state()["revision"] == before_revision,
           "a rejected minimal item must preserve all stored items and revisions")
 
-    print(f"OK - {checks} checks passed (GUSTO_HOME={core.project_root()})")
+    print(f"OK - {checks} checks passed (GUSTO_HOME={core_storage.project_root()})")
 
 
 if __name__ == "__main__":

@@ -1,12 +1,12 @@
 # Storage
 
-The storage domain is the persistence kernel inside `gusto/core.py`: it selects the data root, defines the store layout and persisted-format rules, serializes mutations with cross-process locks, writes files atomically, and persists change revisions; `gusto/_temp.py` keeps checkout scratch files in `.tmp/`.
+The storage domain is the persistence kernel in `gusto/core/storage.py`: it selects the data root, defines the store layout and persisted-format rules, serializes mutations with cross-process locks, writes files atomically, and persists change revisions; `gusto/_temp.py` keeps checkout scratch files in `.tmp/`.
 
 ## Overview
 
-Storage owns the "Paths", "Cross-process mutation locks", "Data model" and "Load / save" sections of `gusto/core.py` (as mechanisms), `gusto/_temp.py`, and the checkout's `gusto.settings.json`. Entity meaning and file shapes belong to their owners: recipes, archive, images, categories and log to `catalog.md`; shopping list and favorites to `shopping.md`. HTTP exposure of health and the event stream is `service.md`; writing an installed runtime's settings and managed app paths is `lifecycle.md`; `server_url` selection from the same settings file is `cli.md`.
+Storage owns `gusto/core/storage.py`, `gusto/_temp.py`, and the checkout's `gusto.settings.json`. Shared domain record decoding lives in public `gusto/core/records.py`; domain owners own their loaders and unlocked savers. Entity meaning and file shapes belong to their owners: recipes, archive, images, categories and log to `catalog.md`; shopping list and favorites to `shopping.md`. HTTP exposure of health and the event stream is `service.md`; writing an installed runtime's settings and managed app paths is `lifecycle.md`; `server_url` selection from the same settings file is `cli.md`.
 
-Only Core touches the store, normally inside the one running service (PROJECT.md). Local exceptions in the CLI process: `home` (read-only `storage_info()`), `check --offline` (read-only `core.check()` against the CLI machine's own data root) and the autostart log path.
+Only Core touches the store, normally inside the one running service (PROJECT.md). Local exceptions in the CLI process: `home` (read-only `storage_info()`), `check --offline` (read-only `checks.check()` against the CLI machine's own data root) and the autostart log path.
 
 ## Terms
 
@@ -50,15 +50,16 @@ A persisted sequence number identifying a group of durable changes to resources 
 
 ## Interfaces
 
-**Transactions.** The domain resources are `catalog`, `log`, `favorites` and `shopping`; `events` is an internal lock for the change journal only. Every Core mutation is one function wrapped in `@_locked_mutation(<resources>, event_resources=...)`, or `_execute_locked_mutation(resources, fn, event_resources=...)` when the resources depend on arguments (sourced `shopping_add`, `shopping_merge`). The locks span the complete read-modify-write, not only the final save. `event_resources` defaults to the locked resources.
+**Transactions.** The domain resources are `catalog`, `log`, `favorites` and `shopping`; `events` is an internal lock for the change journal only. Every Core mutation is one function wrapped in `@locked_mutation(<resources>, event_resources=...)`, or `execute_locked_mutation(resources, fn, event_resources=...)` when the resources depend on arguments (sourced `shopping_add`, `shopping_merge`). The locks span the complete read-modify-write, not only the final save. `event_resources` defaults to the locked resources.
+- Domain implementations import the storage module and call its functions through that module, including `write_json`, `write_text`, checkpoints and the journal. Fault injection patches this actual owner; copied function aliases must not create a second mutation context or bypass a storage patch.
 - Inside a transaction use the `_..._unlocked` savers and plain loaders. Never call another public locked Core function: the per-path `threading.Lock` is not reentrant, so the same resource deadlocks the thread, and nesting a different resource breaks the sorted acquisition order.
 - Acquire every resource in the one call; `_mutation_locks` sorts lock paths, which keeps multi-resource transactions deadlock-free.
 - Reads take no lock. Atomic replacement shows readers the old or new complete file, but a multi-file transaction can be observed mid-way.
 
 **Write tracking and failure semantics.**
-- `_write_json`/`_write_text` compare the new content with the file and return `False` without writing when it is identical. A real replacement increments the thread-local write count. Any other durable filesystem change inside a transaction (moves, `mkdtemp`, a failed cleanup that leaves a copy) must call `_mark_mutation()` itself.
+- `write_json`/`write_text` compare the new content with the file and return `False` without writing when it is identical. A real replacement increments the thread-local write count. Any other durable filesystem change inside a transaction (moves, `mkdtemp`, a failed cleanup that leaves a copy) must call `mark_mutation()` itself.
 - After the function: no counted write -> its result or original exception, no event. Writes and success -> one change event. Writes and an exception -> the event is still recorded, then `PostMutationError` (a `ValueError` subclass) wraps the original; the API turns it into an uncertain outcome (`service.md`). A journal failure after committed writes also raises `PostMutationError`; nothing is undone.
-- Rollback protocol for multi-file mutations: take `_mutation_checkpoint()` before the first write; after a complete rollback call `_rollback_completed(checkpoint)` so the original failure stays a clean rejection without an event. Rollback writes that must not count use `track_mutation=False`.
+- Rollback protocol for multi-file mutations: take `mutation_checkpoint()` before the first write; after a complete rollback call `rollback_completed(checkpoint)` so the original failure stays a clean rejection without an event. Rollback writes that must not count use `track_mutation=False`.
 - Consequence: an operation that rewrites identical content emits no revision. Idempotent Core operations stay silent only as long as they do not rewrite.
 
 **Change journal.** Every changed transaction persists a new monotonic revision; health reports the latest, and the SSE stream replays newer ones. `change_state()` returns `{revision, resources}`; `change_events(after)` returns ordered `{revision, resources}` events newer than `after`, beginning with one synthetic compacted event when `after` predates retained history. `_record_change` runs after the business locks are released, under the `events` lock. Format, compaction and recovery: `storage/change-journal.md`.
@@ -67,7 +68,7 @@ A persisted sequence number identifying a group of durable changes to resources 
 
 ## Conventions
 
-- A new persisted file gets a path helper, a loader that returns empty state for a missing file and a German `ValueError` for invalid content, an `_unlocked` saver through `_write_json`, a resource (new names must also be added to the `_record_change` allowlist and the journal's legacy-migration list), and a `check` diagnostic.
+- A new persisted file gets a path helper, a loader that returns empty state for a missing file and a German `ValueError` for invalid content, an `_unlocked` saver through `write_json`, a resource (new names must also be added to the `_record_change` allowlist and the journal's legacy-migration list), and a `check` diagnostic.
 - Checkout temp policy (`gusto/_temp.py`): `import gusto` runs `configure_checkout_temp()` before Core loads. It activates only when the package's parent contains both `pyproject.toml` and `scripts/run_quality.py`; it creates `<repo>/.tmp`, replaces Python's cached `tempfile.tempdir`, and exports `TMPDIR`, `TEMP`, `TMP` to child processes. It loads no Core and resolves no data. Failure to create `.tmp` makes the import fail; an existing directory's writability is checked only when a temp allocation uses it. Python allocations in the importing process use the cached path without fallback. Installed packages keep the caller's temp policy. Explicit `dir=` staging (atomic writes, archive transaction folders) stays beside its destination for same-filesystem renames. In a checkout, API attachment and web upload scratch files therefore also land in `.tmp/`.
 - Standalone tests and scripts import `gusto` before allocating temp files and point `GUSTO_HOME` into `.tmp`; several tests assert that `project_root()` lies under `tempfile.gettempdir()` before writing.
 

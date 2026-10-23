@@ -8,11 +8,13 @@ One per-user Gusto service owns the data store and serves the browser UI, the sh
 
 ## Architecture
 
-**Stack:** Python 3.10+ (CI runs 3.10 and 3.14). Core (`gusto/core.py`) and the CLI HTTP client use only the standard library. The service adds FastAPI, Uvicorn, Jinja2, Markdown, python-multipart and Pillow (`pyproject.toml` extra `web`; unpinned). Browser code is plain JavaScript and CSS without a build step, framework or TypeScript. Windows releases carry a pinned, hash-verified app-private CPython; Linux uses the system Python.
+**Stack:** Python 3.10+ (CI runs 3.10 and 3.14). Core (`gusto/core/`) and the CLI HTTP client use only the standard library. The service adds FastAPI, Uvicorn, Jinja2, Markdown, python-multipart and Pillow (`pyproject.toml` extra `web`; unpinned). Browser code is plain JavaScript and CSS without a build step, framework or TypeScript. Windows releases carry a pinned, hash-verified app-private CPython; Linux uses the system Python.
 
 **Layers:**
 ```
-gusto/core.py        Core: all domain behavior and persistence; imports no other gusto module
+gusto/core/catalog/  active recipes/cooking, facets/search, snapshots/archive and recipe images
+gusto/core/shopping.py, favorites.py  shopping state/sync and household preferred products
+gusto/core/storage.py, checks.py     persistence/transactions/revisions and read-only diagnostics
 gusto/api.py         versioned anonymous command API and change events over Core
 gusto/web.py         FastAPI host: mounts the API, serves templates/, static/ and the PWA
 gusto/client.py      stdlib HTTP client the CLI uses to reach the service
@@ -23,7 +25,7 @@ skill/gusto/         the agent skill shipped in every runtime
 scripts/, tests/     developer harness: quality gates, browser checks, release build, Vorch tooling
 ```
 
-Each `gusto/*.py` module's top-level functions are its interface; names with a leading underscore are internal. Soft limit: about 1,000 lines per source file. `core.py` and `cli.py` are above it today; do not grow them further without splitting along the domain boundaries below.
+Each owning module's top-level functions are its interface; names with a leading underscore are internal. Core package markers export no compatibility facade: API, web, local recovery commands and tests import the actual owner. Shared domain records have a public owner; image-file validation and timestamp rules are private Core units; storage owns the one mutable transaction context and fault-injection seams. The dependency graph has no cycles. Soft limit: about 1,000 lines per source file; `cli.py` is above it today.
 
 Split an oversized source file into focused internal units behind the owning module and its public contract: a large file costs context on every inspection and edit, and cohesion alone does not justify a multi-thousand-line file. Avoid arbitrary chunks, method-binding tables or compressed formatting; a split follows the units a typical edit would read on their own.
 
@@ -41,9 +43,9 @@ How to read the maps: `AGENTS.md` -> Load context for the task.
 
 | Map | Domain | Covers |
 |---|---|---|
-| catalog.md | `gusto/core.py` (recipe sections) | Recipes, archive, images, tag facets, cooking log, suggestions, `check` diagnostics |
-| shopping.md | `gusto/core.py` (shopping section), `gusto/static/shopping-client.js`, `gusto/static/sw.js` | Shopping list, preferred products, tombstones, full-state sync, offline PWA |
-| storage.md | `gusto/core.py` (paths, locks, load/save), `gusto/_temp.py`, `gusto.settings.json` | Data-directory selection, mutation locks, atomic writes, change revisions, temp-file policy |
+| catalog.md | `gusto/core/catalog/`, `gusto/core/checks.py` | Recipes, archive, images, tag facets, cooking log, suggestions, `check` diagnostics |
+| shopping.md | `gusto/core/shopping.py`, `gusto/core/favorites.py`, `gusto/static/shopping-client.js`, `gusto/static/sw.js` | Shopping list, preferred products, tombstones, full-state sync, offline PWA |
+| storage.md | `gusto/core/storage.py`, `gusto/_temp.py`, `gusto.settings.json` | Data-directory selection, mutation locks, atomic writes, change revisions, temp-file policy |
 | service.md | `gusto/api.py`, `gusto/client.py` | Versioned command API, change-event stream, HTTP client, uncertain outcomes |
 | cli.md | `gusto/cli.py`, `gusto/__main__.py`, `skill/gusto/` | Command surface, `--json` contract, exit codes, server selection, the shipped agent skill |
 | web.md | `gusto/web.py`, `gusto/templates/`, `gusto/static/` | FastAPI host, server-rendered UI, no-JS fallback, photo uploads, design |
