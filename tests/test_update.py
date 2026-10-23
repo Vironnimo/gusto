@@ -445,28 +445,44 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
     race_app = root / "fresh-lock-app"
     race_app.mkdir()
     barrier = root / "start-update-lock"
+    release = root / "release-update-lock"
+    attempts = [root / f"update-lock-attempt-{index}" for index in range(4)]
     race_code = (
         "import sys,time; from pathlib import Path; "
         "from gusto import service,update; "
         "paths=service.managed_paths(Path(sys.argv[1])); "
         "barrier=Path(sys.argv[2]); "
+        "attempt=Path(sys.argv[3]); release=Path(sys.argv[4]); "
         "\nwhile not barrier.exists(): time.sleep(0.005)\n"
         "try:\n"
         "  with update.update_lock(paths):\n"
-        "    print('acquired', flush=True); time.sleep(0.2)\n"
+        "    print('acquired', flush=True); attempt.write_text('acquired')\n"
+        "    while not release.exists(): time.sleep(0.005)\n"
         "except update.UpdateError as error:\n"
         "  print(error.result['status'], flush=True)\n"
+        "  attempt.write_text(error.result['status'])\n"
     )
     contenders = [
         subprocess.Popen(
             [sys.executable, "-c", race_code,
-             os.fspath(race_app), os.fspath(barrier)],
+             os.fspath(race_app), os.fspath(barrier),
+             os.fspath(attempt), os.fspath(release)],
             cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8",
         )
-        for _ in range(4)
+        for attempt in attempts
     ]
     barrier.write_text("go", encoding="utf-8")
+    # Keep the winner locked until every contender has actually tried, even
+    # when process startup/imports exceed a fixed sleep under concurrent CI load.
+    deadline = time.monotonic() + 10
+    try:
+        while not all(attempt.exists() for attempt in attempts):
+            if time.monotonic() >= deadline:
+                raise AssertionError("update-lock contenders did not finish their attempts")
+            time.sleep(0.005)
+    finally:
+        release.write_text("go", encoding="utf-8")
     race_results = []
     for contender in contenders:
         stdout, stderr = contender.communicate(timeout=10)
