@@ -26,7 +26,7 @@ from urllib import request
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.fspath(ROOT))
-import gusto  # noqa: E402 - configure temp before HOME and the child environment
+import gusto  # noqa: E402, F401 - configure temp before HOME and the child environment
 
 HOME = Path(tempfile.mkdtemp(prefix="gusto-cli-test-"))
 ENV = {**os.environ, "GUSTO_HOME": os.fspath(HOME)}

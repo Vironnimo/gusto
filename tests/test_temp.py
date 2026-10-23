@@ -11,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-import gusto  # noqa: E402 - configure before creating the test's own sandbox
+import gusto  # noqa: E402, F401 - configure before creating the test's own sandbox
 
 
 checks = 0

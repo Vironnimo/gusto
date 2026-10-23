@@ -372,9 +372,8 @@ def install_runtime(
             return runtime
         shutil.rmtree(runtime)
     if environment_builder is None:
-        environment_builder = lambda target: service.create_virtual_environment(
-            base_python, target,
-        )
+        def environment_builder(target):
+            return service.create_virtual_environment(base_python, target)
     # Virtual environments are not relocatable: pip's console/GUI launchers
     # embed the absolute interpreter path. Build at the final version path,
     # which remains inactive until the verified current pointer is switched.

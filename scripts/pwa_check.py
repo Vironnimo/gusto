@@ -36,7 +36,7 @@ except Exception:
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-import gusto  # noqa: E402 - configure temp for this process and its children
+import gusto  # noqa: E402, F401 - configure temp for this process and its children
 
 TESTDATA = Path(tempfile.mkdtemp(prefix="pwa-"))
 print(f"PWA test data: {TESTDATA}", flush=True)
@@ -316,8 +316,10 @@ try:
 
         # --- 4) two-device merge (two contexts = two localStorage) -----------
         reset_shopping()
-        ca = browser.new_context(); a = ca.new_page()
-        cb = browser.new_context(); b = cb.new_page()
+        ca = browser.new_context()
+        a = ca.new_page()
+        cb = browser.new_context()
+        b = cb.new_page()
         a.goto(BASE + "/shopping", wait_until="load")
         b.goto(BASE + "/shopping", wait_until="load")
 
@@ -345,10 +347,12 @@ try:
         check(wait_count(b, "#shop-client .shop-item", 2), "device B sees both items")
         check("Banane" in a.content(), "device A sees 'Banane' (from B)")
         check("Apfel" in b.content(), "device B sees 'Apfel' (from A)")
-        ca.close(); cb.close()
+        ca.close()
+        cb.close()
 
         # --- 5) manifest + service worker ------------------------------------
-        cp = browser.new_context(); pg = cp.new_page()
+        cp = browser.new_context()
+        pg = cp.new_page()
         pg.goto(BASE + "/shopping", wait_until="load")
         check(pg.locator("link[rel=manifest]").count() == 1, "manifest is linked")
         with urllib.request.urlopen(BASE + "/static/manifest.webmanifest") as r:

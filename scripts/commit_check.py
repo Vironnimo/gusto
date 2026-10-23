@@ -24,12 +24,13 @@ file block; a file above its size budget that the change makes larger is reporte
 without blocking.
 
 Configure the checks for the stack in ``CHECKS`` and ``PROJECT_CHECKS`` below.
+The tools run from the checkout's ``.venv`` (``project_python``) and must match
+the versions ``pyproject.toml`` pins.
 """
 
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
@@ -71,20 +72,47 @@ class ProjectCheck:
     """Finds the file an output line reports about; lines without one never block."""
 
 
+def project_python() -> str:
+    """Return this checkout's virtual environment, where the pinned tools live."""
+    for candidate in (".venv/Scripts/python.exe", ".venv/bin/python"):
+        if (PROJECT_ROOT / candidate).is_file():
+            return str(PROJECT_ROOT / candidate)
+    return sys.executable
+
+
 def _python(*args: str) -> Callable[[list[str]], list[str]]:
-    return lambda files: [sys.executable, "-m", *args, *files]
+    return lambda files: [project_python(), "-m", *args, *files]
 
 
-def _npx(*args: str) -> Callable[[list[str]], list[str]]:
-    npx = shutil.which("npx") or "npx"
-    return lambda files: [npx, *args, *files]
-
-
-# <<FILL: the checks for this stack; delete the examples that do not apply. Every
-# tool must be pinned in the project's dependencies so the hook and CI agree.>>
-CHECKS: list[FileCheck] = []
+# Ruff lints with the rule set in pyproject.toml; Gusto deliberately has no
+# formatter. Every tool is pinned in the `dev` extra so the hook, the push check
+# and CI agree.
+CHECKS: list[FileCheck] = [
+    FileCheck(
+        "ruff check",
+        frozenset({".py"}),
+        check=_python("ruff", "check"),
+        fix=_python("ruff", "check", "--fix"),
+    ),
+]
 
 PROJECT_CHECKS: list[ProjectCheck] = []
+
+
+def pinned_tool_problems(staged: list[str]) -> list[str]:
+    """Block when the installed tools differ from the versions pyproject.toml pins."""
+    if not any(_matches(path, check.suffixes, check.prefixes)
+               for check in CHECKS for path in staged):
+        return []
+    pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    remedy = f"{project_python()} -m pip install -e .[web,test,dev]"
+    problems = []
+    for tool, version in re.findall(r'"([A-Za-z0-9_-]+)==([^"]+)"', pyproject):
+        code, output = run([project_python(), "-m", tool, "--version"])
+        if code != 0 or version not in output.split():
+            installed = output.splitlines()[-1] if output else "not installed"
+            problems.append(f"{tool} {version} is pinned, found: {installed}. Run: {remedy}")
+    return problems
 
 
 def git(*args: str) -> subprocess.CompletedProcess[str]:
@@ -206,7 +234,7 @@ def main() -> int:
     in_progress = unstaged_paths()
     partial = in_progress & set(staged)
 
-    blocking: list[str] = []
+    blocking: list[str] = pinned_tool_problems(staged)
     reported: list[str] = []
     for check in CHECKS:
         blocking += run_file_check(check, staged, partial)

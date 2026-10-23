@@ -9,6 +9,8 @@ dependencies = []
 # Managed apps install the server extra; the standalone CLI client stays stdlib-only.
 web = ["fastapi", "uvicorn[standard]", "jinja2", "markdown", "python-multipart", "pillow"]
 test = ["httpx2", "playwright", "pyyaml"]
+# Static checks for the commit hook, push check and CI; pinned so they agree.
+dev = ["ruff==0.17.2"]
 
 [project.scripts]
 gusto = "gusto.cli:main"
@@ -40,3 +42,11 @@ gusto = [
     "skill/gusto/references/telegram.md",
     "skill/gusto/references/shopping-trip.md",
 ]
+
+[tool.ruff]
+extend-exclude = [".tmp"]
+
+[tool.ruff.lint]
+# Errors only (syntax, undefined names, unused imports, statement style);
+# style rules beyond these are deliberately not enforced.
+select = ["E4", "E7", "E9", "F"]

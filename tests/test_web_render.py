@@ -27,7 +27,7 @@ from starlette.requests import Request
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import gusto  # noqa: E402 - configure checkout temp before allocating data
+import gusto  # noqa: E402, F401 - configure checkout temp before allocating data
 
 HOME = Path(tempfile.mkdtemp(prefix="gusto-web-render-test-"))
 os.environ["GUSTO_HOME"] = os.fspath(HOME)

@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import gusto  # noqa: E402 - configure checkout temp before allocating data
+import gusto  # noqa: E402, F401 - configure checkout temp before allocating data
 
 HOME = Path(tempfile.mkdtemp(prefix="gusto-recipes-test-"))
 os.environ["GUSTO_HOME"] = os.fspath(HOME)
