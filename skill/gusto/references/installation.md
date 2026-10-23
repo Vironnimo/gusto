@@ -29,6 +29,10 @@ does not silently modify an agent host.
   starts it with `systemd --user`. Neither starts before login.
 - Lifecycle commands act on this machine's installation; `--server` does not
   redirect them to a remote host. For a remote service, run them on its host.
+- Service control and `update` use the managed installation containing the
+  running CLI, including a custom app directory. From a checkout or unmanaged
+  Python they use the platform-default app path; pass `--app-root PATH` to
+  select another managed installation explicitly.
 - Windows install, repair, update, service control, and uninstall refuse to
   take over or remove an unrelated Scheduled Task that is merely named
   `Gusto`; the user must resolve such a collision explicitly.

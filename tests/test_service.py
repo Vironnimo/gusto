@@ -155,6 +155,36 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
           and dry_started["command"],
           "a dry-run start must not claim an unobserved running state")
 
+    fallback = root / "default-app"
+    with patch.object(service.sys, "prefix", os.fspath(runtime)), patch.object(
+        service, "default_app_root", return_value=fallback,
+    ) as default_root:
+        for action in ("status", "start", "stop", "restart"):
+            selected = service.service_action(
+                action, platform_name="linux", runner=runner,
+                health_waiter=healthy,
+            )
+            check(selected["version"] == "1.2.3"
+                  and selected["url"] == "http://127.0.0.1:8123",
+                  f"{action} must select its executing custom installation")
+        check(service.managed_paths(fallback).app_root == fallback,
+              "an explicit app root must override the executing installation")
+        check(not default_root.called,
+              "managed execution must not consult the platform default")
+        paths.state.write_text("{broken", encoding="utf-8")
+        try:
+            service.service_action("status", platform_name="linux", runner=runner)
+        except service.ServiceError as error:
+            check("Installationszustand" in str(error) and not default_root.called,
+                  "corrupt executing-installation state must not redirect control")
+        else:
+            raise AssertionError("corrupt managed installation was ignored")
+        service.write_state(paths, state)
+    with patch.object(service.sys, "prefix", os.fspath(root / "checkout-venv")), \
+            patch.object(service, "default_app_root", return_value=fallback):
+        check(service.managed_paths().app_root == fallback,
+              "an unmanaged interpreter must retain the platform-default root")
+
     windows = service.install_user_service(
         paths, state, platform_name="win32", dry_run=True, runner=runner,
     )

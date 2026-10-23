@@ -1,117 +1,95 @@
 # Lifecycle
 
-The lifecycle domain installs Gusto per user, keeps its service running from login, updates it through verified side-by-side activation with rollback, removes it, delivers the bundled skill to agent hosts, and builds and publishes the release assets all of this consumes.
+Lifecycle owns the per-user installation, service registration and control, verified updates with rollback, uninstall, delivery of the bundled skill, and the release assets these operations consume.
 
 ## Overview
 
-Owned here: the public bootstraps `install.ps1` and `install.sh`, the installer `install.py`, the managed app root and its state files, user-service registration and control (`gusto/service.py`), `gusto update` (`gusto/update.py`), `gusto uninstall` (`gusto/uninstall.py`), `gusto install-skill` (`gusto/skill_install.py`), the compatibility adapters in `deploy/`, the release build `scripts/build_release.py`, and `.github/workflows/release.yml` with its install smoke test `scripts/ci_smoke_install.py` and `scripts/ci_systemctl.py`.
+Owners: `install.ps1`, `install.sh` and `install.py` bootstrap and install; `gusto/service.py` owns managed paths, state, Python runtimes, autostart and service control; `gusto/update.py` owns update locking, runtime preparation and activation; `gusto/uninstall.py` owns removal; `gusto/skill_install.py` delivers the skill; `deploy/` holds compatibility registration adapters; `scripts/build_release.py`, `.github/workflows/release.yml`, `scripts/ci_smoke_install.py` and `scripts/ci_systemctl.py` build and check releases.
 
-Not owned here: parsing, help texts and `--json` error mapping of the lifecycle commands, `gusto serve`, and the windowless `gusto-autostart` entry point (`autostart_main`) that the Windows task runs (all `gusto/cli.py`, `cli.md`); the health endpoint (`service.md`); how a process resolves its data directory from `GUSTO_HOME` and `gusto.settings.json` (`storage.md`); the skill's content (`cli.md`); the reusable gates in `quality.yml` (`development.md`).
+Not owned here: lifecycle command parsing, help, plain output, JSON error mapping, `serve` and the windowless `autostart_main` entry point (`gusto/cli.py`, `cli.md`); health response (`service.md`); process data-directory selection (`storage.md`); skill content (`cli.md`); reusable quality gates (`development.md`).
 
-Lifecycle commands act on the local machine's installation. They never pass through the command API, and `--server` does not redirect them.
+Lifecycle commands act on the local machine. They do not use the command API; `--server` does not redirect them. `service.managed_paths()` selects an explicit `--app-root`, otherwise the managed root containing the executing `sys.prefix` at `versions/<version>` when both state markers exist, otherwise the platform default. Service control and update share this selection. Uninstall has stricter discovery: it requires execution from the active installed runtime and refuses checkouts.
 
 Touchpoints:
-- storage: the installer and updater write each version's `gusto.settings.json` (`data_dir` plus the local `server_url`); that runtime's service and CLI read it. `GUSTO_HOME` still takes precedence.
-- service: every activation reads `GET /api/v1/health` and binds `ok`, `version` and `data_path`.
-- cli: the stable wrapper runs the active runtime's `gusto`; installed CLIs default to the `server_url` the installer wrote.
-- development: `release.yml` reuses `quality.yml`; `tests/test_ci.py` locks both workflows.
+- storage: install and update write the runtime's `gusto.settings.json` with `data_dir` and local `server_url`; `GUSTO_HOME` still overrides the data path.
+- service: activation verifies `GET /api/v1/health` against the expected version and data path.
+- cli: stable wrappers select the active runtime on every invocation; that runtime's CLI reads its server URL from settings.
+- development: release CI reuses `quality.yml`; `tests/test_ci.py` protects the dependency graph.
 
 ## Terms
 
-The service itself is a shared term (`.vorch/GLOSSARY.md`).
+Service and operational installation are shared terms in `.vorch/GLOSSARY.md`.
 
 ### Managed app root
 
-**Definition:** The per-user application directory that Gusto created and owns, recognized only by the pair `install-state.json` plus `current.json`. Not the data store, which always lives in a separate, non-nested directory.
+The per-user application directory Gusto owns, recognized by `install-state.json` plus `current.json`. Not the data store, which the installer requires to be separate and non-nested; persisted details are in `lifecycle/install-repair.md`.
 
 ### Active runtime
 
-**Definition:** The version venv under `versions/<semver>/` that `current.json` names; the wrappers and the registered service run only this one. Not every installed version: an update keeps the previous verified version beside it for rollback.
+The version venv under the managed root selected by `current.json`, used by the wrappers and registered service. Not every retained version: update keeps the previous verified runtime for rollback (`lifecycle/update-rollback.md`).
 
 ### Activation
 
-**Definition:** The short switch that makes a prepared runtime active: stop the service, write `current.json`, re-register the service, and pass the version- and store-bound health check. Rollback is the same switch back.
-
-### Ready installation
-
-**Definition:** A managed app root whose active runtime has a stable `gusto` command, a registered user autostart, a started service and a passed health check. Not a copied runtime and not an installed agent skill.
+The switch from a prepared runtime to the version served by the registered user service, completed by a version- and store-bound health check. Rollback activates the previous version (`lifecycle/update-rollback.md`).
 
 ### Repair
 
-**Definition:** The installer's explicit `--repair`/`-Repair` mode for an existing managed app root: re-register everything and, only when the active runtime is broken, rebuild it from a payload of the same version. Never an update and never a reconfiguration.
+The installer's explicit mode for restoring an existing managed installation using its recorded configuration. Not update or reconfiguration; rebuilding a broken runtime requires a matching payload (`lifecycle/install-repair.md`).
 
 ## Data Model
 
-Managed app root, default `%LOCALAPPDATA%\Programs\Gusto` or `~/.local/opt/gusto`:
-- `install-state.json` (schema 2): data directory, bind host and port, `manifest_url` (the persisted update source), and the Python runtime: `managed` (Windows: version, path and package SHA-256) or `system` (Linux: the resolved interpreter path). Readers reject other schemas, invalid hosts/ports and invalid runtime records.
-- `current.json`: the active version; its runtime path must equal `versions/<version>`. `previous_version` is informational; nothing reads it and no rollback command exists.
-- `versions/<semver>/`: one venv per Gusto version, each with its own `gusto.settings.json` and the marker `.gusto-runtime.json`, written only after an isolated import check passed. Only SemVer-named directories with a valid marker count as versions.
-- `python/<x.y.z>/` (Windows only): the app-private CPython with marker `.gusto-python-runtime.json`.
-- `bin/`: stable wrappers that resolve `current.json` on every call; Linux also links `~/.local/bin/gusto` to its wrapper.
-- `.update.lock`: the per-app lock.
+Managed roots default to `%LOCALAPPDATA%\Programs\Gusto` or `~/.local/opt/gusto`. They contain `install-state.json` (configuration and Python runtime), `current.json` (active version), `versions/` (Gusto venvs), `python/` (app-private Windows Python), `bin/` (stable wrappers), and `.update.lock`.
 
-Per-user integrations outside the root have fixed names: the Scheduled Task `Gusto` with the description `Gusto Rezeptserver beim Anmelden starten`, the HKCU key `Software\Microsoft\Windows\CurrentVersion\Uninstall\Gusto`, the Start Menu `Gusto.url`, the user `PATH` entry for `bin/` (Windows); `$XDG_CONFIG_HOME/systemd/user/gusto.service` (Linux).
+State and active pointer are separate atomic JSON files, not one atomic transaction. State readers reject unsupported schemas, invalid hosts/ports and invalid Python records. The current pointer cannot select a runtime outside `versions/<version>`; reading it requires that directory, but does not itself verify its runtime marker. Install/update own runtime verification. Exact marker and cleanup semantics: `lifecycle/install-repair.md` and `lifecycle/update-rollback.md`.
 
-The data store (default `%LOCALAPPDATA%\Gusto` or `$XDG_DATA_HOME/gusto`; at install time `--data-dir`, else `GUSTO_HOME`) is never read or written by lifecycle code except: the installer creates `recipes/`, `images/`, `archive/` and `data/`, a checkout-based install seeds an empty store with the checkout's own data, and `uninstall --delete-data` deletes it.
-
-Release manifest `gusto-release.json` (schema 2): `version`, `minimum_system_python`, and assets `wheel`, `installer`, `windows_bootstrap`, `linux_bootstrap`, `windows_python_x64` (plus `version` and `layout: "tools"`), each a bare file `name` plus `sha256`. `gusto update` requires `wheel`, `installer` and `windows_python_x64` on every platform.
+The data store is outside the app root. Lifecycle code creates the initial directories, can seed an empty store from checkout data during install, and deletes the store only for explicit uninstall data deletion. Domain reads and writes remain Core's responsibility.
 
 ## Interfaces
 
-Results the CLI prints under `--json` (exit 1 on failure):
-- `install.py --json` prints exactly one object: `ok:true` with `status` `installed`, `repaired` or `dry_run`, paths, URL, Python runtime and `data_migrated`; or `{ok:false, error}`. An invalid `--port` is such a JSON failure, not a parser exit 2.
-- `status|start|stop|restart` return `action`, `status`, `running`, `version`, `url` and, in dry-run, the `command`; a dry-run never claims `running:true`.
-- `gusto update` returns `current`, `update_available`, `dry_run` or `updated`. Failures carry a `status`: `update_locked`, `failed` (nothing switched), `update_failed` with `rollback:true` (previous version restored and healthy), or `rollback_failed` with `rollback:false`.
-- `gusto uninstall` returns `dry_run` or `scheduled` with `log_path`; a partial failure returns `status:uninstall_failed`, `failed_step` and tri-state `*_removed` flags (true removed, null unknown, false not removed). Failure is never rollback.
-- `gusto install-skill vbot` returns `installed` or `dry_run` with `source`, `destination`, `overwritten` and `files`.
+- `service.service_action()` returns JSON-ready service state; `start` and `restart` finish with health verification. A dry-run executes no platform command and reports `running:false`.
+- `update.run_update()` reads the stored update source, prepares a verified side-by-side runtime and activates it under the per-app lock. `--check` and `--dry-run` do not mutate the installation. Update/rollback outcomes: `lifecycle/update-rollback.md`.
+- `uninstall.discover_targets()` verifies ownership; `perform_uninstall()` removes integration and schedules deletion after the CLI exits. Scheduled is not completed; partial failure is not rollback (`lifecycle/uninstall.md`).
+- `skill_install.install_skill()` copies the bundled payload to an explicitly selected supported host. It neither calls the service nor installs an agent host (`lifecycle/skill-delivery.md`).
 
-Each lifecycle module raises its own error type (`ServiceError`, `UpdateError`, `UninstallError`, `ValueError` for skills) and converts errors of the modules it calls into it, because the CLI maps only those types (plus `OSError`) onto the JSON contract; an escaping foreign error prints a traceback.
-
-Skill delivery: the source is `skill/gusto/` in a checkout, else the active runtime's `share/gusto/skill/gusto` (wheel data files). The host registry has one host, `vbot`; `~/.vbot` must already exist. The command copies into a staging folder under `~/.vbot/skills/`, swaps it for the old `gusto` folder (full replace, no merge) and restores the backup if publishing fails. It never contacts the service, and neither install nor update touches an agent host.
+Each lifecycle module converts expected errors from called modules into its own public error type: `ServiceError`, `UpdateError`, `UninstallError`, or `ValueError` for skill delivery. The CLI wrappers catch those plus `OSError`; an unconverted foreign exception can escape the JSON error contract. Error/result text rationale: `lifecycle/agent-facing-text.md`.
 
 ## Conventions
 
-- Per user only: no admin or root, no system service, no machine `PATH`. The Linux installer refuses root; the Windows task runs at the user's logon with `RunLevel Limited`. Neither platform starts Gusto before login, and Linux does not enable lingering.
-- Health is bound: install, repair, update, rollback, `start` and `restart` require `ok:true`, the expected version and the expected data path. Only an unreachable or non-200 endpoint is polled (30 s); a reachable mismatch fails at once. Never relax this to "some Gusto answers".
-- One per-app lock serializes first install, repair and update; each re-reads state and ownership after acquiring it.
-- A Windows task name alone never proves ownership: every path that stops, replaces, starts or removes `Gusto` first compares the fixed description. Keep that check identical in `service.py` (registration, removal, control), `uninstall.py` and `deploy/install-windows-task.ps1`.
-- Paths, host and port reach PowerShell through environment variables, never interpolated into script text.
-- Platform side effects sit behind injectable seams (`runner`, health waiters, `downloader`, runtime/service installers, removers, `launcher`). Tests use them; only `scripts/ci_smoke_install.py` installs for real, and it refuses to run outside GitHub Actions.
-- Behavior changes update `skill/gusto/references/installation.md` and `README.md` in the same change (`cli.md` owns the skill).
+- Installation is per user: no system service or machine PATH. Linux refuses root; Windows uses an interactive logon task with limited privileges. There is no before-login start and Linux does not enable lingering.
+- Install, repair and update share the per-app lock and re-read state/ownership after acquiring it. Runtime venvs are built at their final path because their launchers embed absolute interpreter paths.
+- Install, repair, update, rollback, start and restart bind health to `ok:true`, expected version and expected data path. A parsed, mismatching response fails immediately. Unreachable/non-200 responses and invalid JSON/UTF-8 responses are polled for up to 30 seconds.
+- A Windows task name alone does not establish ownership. Registration, control and removal compare the fixed Gusto description before touching an existing task. Keep the check consistent in `service.py`, `uninstall.py` and the Windows deploy adapter.
+- `service.py` passes paths, bind host and port into PowerShell through environment variables, not script interpolation. Test platform side effects through injected runners, health waiters, installers, removers and launchers.
+- Lifecycle behavior changes also update `skill/gusto/references/installation.md` and `README.md`; `cli.md` owns that content.
 
 ## External Dependencies
 
-- GitHub Releases: `releases/latest/download/` is the default release base and update source. The base a first install used is persisted as `manifest_url` and stays the update source; the hidden `gusto update --manifest-url` overrides one call without persisting.
-- PyPI: every runtime build installs `gusto[web]` from the verified wheel, but pip resolves the unpinned web dependencies from the package index at install, repair and update time. Only Gusto's wheel and the Windows Python package are hash-verified; published build attestations are not checked by any installer or updater.
-- NuGet: the pinned `python` package supplies the Windows runtime (`scripts/build_release.py`).
-- `powershell.exe` with the ScheduledTasks cmdlets and `winreg` on Windows; `systemctl --user` and Python 3.10+ on Linux. Other platforms fail at service registration and uninstall.
+GitHub Releases supplies the default update manifest and assets. PyPI resolves the unpinned `web` dependencies while installing the verified Gusto wheel; only release assets, not transitive packages, are hash-verified. Release provenance attestations are published but not checked by installer/update. Windows uses the pinned NuGet Python package, PowerShell ScheduledTasks and HKCU; Linux uses system Python 3.10+ and `systemctl --user`. See `lifecycle/release-pipeline.md` for release-source contracts.
 
 ## Constraints & Gotchas
 
-- The task name, HKCU key, Start Menu entry, unit name and `~/.local/bin/gusto` are fixed per user. A real install into any other app root, even under `.tmp`, re-registers the household's autostart to that root. Never run the bootstraps, `install.py`, service control, update or uninstall for real on a development machine; use dry-runs and the hermetic tests.
-- `status|start|stop|restart|update` use `--app-root` or the platform-default app root, not the root of the running wrapper; uninstall instead discovers the root from the running runtime. Custom `--install-dir` installs need `--app-root`.
-- Venvs are not relocatable (launchers embed absolute interpreter paths): build each version at its final `versions/<semver>` path and never rename or copy one.
-- The registered service points at the active version (unit `ExecStart`, task action), so every activation and rollback re-registers it. On Linux `enable --now` does not restart an active unit, so update and rollback stop the service first.
-- Windows activation waits up to 15 s for the old health endpoint to stop answering before it starts the task; any other server answering health on that port blocks it.
-- A `GUSTO_HOME` in the service's environment overrides the runtime settings, makes health report another data path, and fails activation.
-- Repair uses the stored state: `--data-dir`, `--host`, `--port` and `--manifest-url` are ignored. It cannot switch the Python kind; on Linux a vanished recorded system interpreter cannot be repaired.
-- Update never downgrades: it activates only a SemVer-newer manifest version. It refuses a release that ships the installed Windows Python version with a different hash.
-- Real `systemd --user` is exercised by no automated check: the release smoke test runs the generated unit through `scripts/ci_systemctl.py`. Real activation, rollback, repair and `--delete-data` are covered only hermetically.
-- The skill payload is listed file by file in `pyproject.toml` data files. A new skill file that is not listed ships in checkouts but not in the wheel; also update `REQUIRED_SKILL_FILES` when it is mandatory, and the wheel list in `tests/test_packaging.py`.
+- Integration names are fixed per user. A real install into a different root, including `.tmp`, can re-register the household service. Never run install, service control, update or uninstall for real on a developer machine; use injected hermetic checks or dry-runs. `ci_smoke_install.py` refuses outside GitHub Actions.
+- Checkout/unmanaged CLI execution still chooses the platform-default installation unless `--app-root` is explicit. A custom root is discovered only from its managed version runtime, not from the working directory or `--server`.
+- Service registration points directly to a version runtime, so activation and rollback re-register it. On Linux `enable --now` does not restart an already running unit; update and rollback explicitly stop first.
+- Inherited `GUSTO_HOME` can override installed settings, produce a different health data path and fail activation.
+- Real `systemd --user` is not exercised automatically: Linux release smoke uses the `ci_systemctl.py` adapter. Activation/rollback/repair/data deletion have hermetic coverage, not a real deployment check.
 
 ## Tests
 
-- `tests/test_service.py`: state and pointer validation, unit and task rendering, service control, health binding.
-- `tests/test_update.py`: update orchestration, rollback order, Python switch, the update lock (also across processes), installer lock and repair hardening, download retries, wrapper quoting, installer `--port` JSON.
-- `tests/test_packaging.py`: release assets and manifest, bootstrap rules, wheel and skill contents, skill install from the built wheel, installer dry-run and rerun refusal, failed-first-install cleanup, repair rebuild, Windows launcher subsystems.
-- `tests/test_uninstall.py`, `tests/test_skill_install.py`, `tests/test_autostart.py` (deploy adapters, Windows registration).
-- Shared: `tests/test_paths.py` with storage (default app and data roots, unit path, install-target validation); `tests/test_ci.py` with development (release job graph, permissions, pinned actions, smoke adapter).
-- `scripts/ci_smoke_install.py` is the only real installation, run by `release.yml`.
+`tests/test_service.py` covers state, root selection, registration, control and health; `tests/test_update.py` covers update, rollback, runtime and lock behavior plus installer repair/concurrency; `tests/test_packaging.py` covers release payloads, bootstraps, wheel/skill content, installer lifecycle and Windows launcher subsystem; `tests/test_uninstall.py`, `tests/test_skill_install.py` and `tests/test_autostart.py` cover their owners. Shared contracts: `tests/test_paths.py` with storage and `tests/test_ci.py` with development. The only real install check is `scripts/ci_smoke_install.py` in release CI.
 
 ## Agent-facing text
 
-This domain owns the result and error messages that `install.py`, the bootstraps, `gusto/service.py`, `gusto/update.py`, `gusto/uninstall.py` and `gusto/skill_install.py` return to an agent; help texts and the uninstall choice prompts belong to `cli.md`. Open: the reason table `lifecycle/agent-facing-text.md` is not written yet. Until it exists, treat messages that tests assert (for example the rerun refusal naming `gusto update`, the repair hint naming `gusto stop`, `zwischenzeitlich`, `laeuft bereits`, `wiederhergestellt`, the foreign-task refusals, the partial-uninstall message that claims no rollback) as contract and change them only together with their tests.
+This domain owns result and error messages in `install.py`, the public bootstraps, `gusto/service.py`, `gusto/update.py`, `gusto/uninstall.py` and `gusto/skill_install.py`. Before changing a sentence, read `lifecycle/agent-facing-text.md` and update its reason row with the text. `cli.md` owns CLI help, ordinary lifecycle output formatting and uninstall choice prompts.
 
 ## References
 
-Open: the planned supplementary files (install and repair, update and rollback, user service and `deploy/` adapters, uninstall, release pipeline, agent-facing text) are not written yet. Until then, read the source modules named in the Overview and their tests.
+Read these only when the task matches.
+
+- Changing install roots, wrappers, runtime/state markers, first-install cleanup or repair -> `lifecycle/install-repair.md`
+- Changing update downloads, locking, activation, rollback or retained-runtime cleanup -> `lifecycle/update-rollback.md`
+- Changing service registration/control, health waits or deploy adapters -> `lifecycle/user-service.md`
+- Changing uninstall ownership, data deletion, integration removal or detached helpers -> `lifecycle/uninstall.md`
+- Changing skill packaging or delivery to an agent host -> `lifecycle/skill-delivery.md`
+- Changing release assets, manifests, public bootstraps or release CI -> `lifecycle/release-pipeline.md`
+- Changing lifecycle result/error wording -> `lifecycle/agent-facing-text.md`

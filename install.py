@@ -454,7 +454,10 @@ def _print_result(result: dict[str, object], *, json_output: bool) -> None:
     if json_output:
         print(json.dumps(result, ensure_ascii=False))
         return
-    print(f"Gusto {result['version']} ist installiert und läuft.")
+    if result["status"] == "dry_run":
+        print(f"Trockenlauf: Gusto {result['version']} würde installiert.")
+    else:
+        print(f"Gusto {result['version']} ist installiert und läuft.")
     print(f"App:   {result['application_path']}")
     print(f"Daten: {result['data_path']}")
     print(f"Öffnen: {result['url']}")

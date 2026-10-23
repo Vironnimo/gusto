@@ -1069,7 +1069,7 @@ def _load_web_runtime():
 
 def cmd_serve(args):
     uvicorn = _load_web_runtime()
-    local_host = "127.0.0.1" if args.host in {"0.0.0.0", "::"} else args.host
+    local_host = {"0.0.0.0": "127.0.0.1", "::": "::1"}.get(args.host, args.host)
     if ":" in local_host and not local_host.startswith("["):
         local_host = f"[{local_host}]"
     url = f"http://{local_host}:{args.port}"
@@ -1716,7 +1716,7 @@ def build_parser() -> argparse.ArgumentParser:
     ep.add_argument("--quantity", help="Freie Mengenangabe, z.B. 1 L. Ohne Angabe: keine separate Menge.")
     ep.add_argument(
         "--source", metavar="SLUG",
-        help="Slug eines vorhandenen Herkunftsrezepts; zählt für dessen Import-Sperre. Ohne Angabe: keine Rezeptquelle.",
+        help="Slug eines aktiven Herkunftsrezepts; zählt für dessen Import-Sperre. Ohne Angabe: keine Rezeptquelle.",
     )
     ep.set_defaults(func=cmd_shopping_add)
 

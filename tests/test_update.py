@@ -125,6 +125,14 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
           and checked["latest_version"] == "1.1.0",
           "--check must report a newer semantic version")
     check(before == after, "--check must not mutate the installation")
+    with patch.object(service.sys, "prefix", os.fspath(old)), patch.object(
+        service, "default_app_root", side_effect=AssertionError("wrong app root"),
+    ):
+        selected = update.run_update(check=True)
+    check(selected["current_version"] == "1.0.0"
+          and selected["latest_version"] == "1.1.0"
+          and selected["manifest_url"] == os.fspath(manifest),
+          "update must discover its executing custom installation and update source")
 
     orchestration = []
 
