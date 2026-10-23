@@ -8,7 +8,17 @@ Entry points: console script `gusto` and `python -m gusto` both run
 `gusto.cli:main`; the windowless GUI script `gusto-autostart` runs
 `gusto.cli:autostart_main` (registered by `lifecycle.md`).
 
-Normal domain commands use `_remote`; each call sends one command operation
+Private CLI units own registrations beside their handlers: `_cli_catalog.py`
+for discovery/recipes/cooking/archive/images, `_cli_shopping.py` for the
+shopping list and preferred products, `_cli_local.py` for local recovery and
+lifecycle, and `_cli_editor.py` for text input, editor execution and recovery.
+`cli.py` assembles the parser in its established order, completes help, dispatches
+commands, classifies errors and owns windowless autostart; it does not re-export
+handlers. `_cli_terminal.py` owns JSON printing, terminal-value escaping and
+one-call remote dispatch. These are internal edit units of the CLI domain, not
+separate public APIs.
+
+Normal domain commands use `_cli_terminal.remote`; each call sends one command operation
 through `gusto/client.py` (`service.md`). Editor round-trips and plain `log`
 make multiple calls as described below. Local commands act on the CLI machine without the service: `home`,
 `check --offline`, `serve`, `status|start|stop|restart`, `update`, `uninstall`
@@ -71,7 +81,7 @@ classification (`service.md`), lifecycle behavior and result shapes
   writes it to stderr).
 - Plain mode prints German text on stdout and errors on stderr with exit 1.
   Plain output prints reusable slugs and ids. Stored single-line values pass
-  through `_text`, which escapes non-printable characters so stored data cannot
+  through `_cli_terminal.text`, which escapes non-printable characters so stored data cannot
   inject lines or terminal controls; `show` and `archive show` print raw
   Markdown. Plain `log` makes two extra reads to resolve titles.
 - Other exceptions (for example `KeyboardInterrupt`, an unwrapped `OSError`)
@@ -96,7 +106,7 @@ classification (`service.md`), lifecycle behavior and result shapes
   with native quoting; on POSIX `shlex.split` is used. No `shell=True`. Under
   `--json` the editor's stdout and stderr are discarded so the output stays one
   JSON document. Editors that detach need their own wait flag.
-- A failure once the temporary file exists keeps it and raises `EditError`
+- A failure once the temporary file exists keeps it and raises `_cli_editor.EditError`
   (`slug`, `recovery_path`, inheriting `outcome_unknown` from a failed upload).
   Success deletes the file; a failed delete adds `retained_path` and still
   reports success, so the upload is never repeated. A failed `new --edit` says
@@ -163,10 +173,13 @@ Every managed runtime carries the skill below `share/gusto/skill/gusto`;
   `favorites product-set` need a change, `archive purge` needs `--yes`); Core
   and the API stay authoritative and the CLI does not otherwise validate domain
   values.
-- Contract tests: `tests/test_cli.py` runs the CLI end to end against an
-  isolated `serve` subprocess with a throwaway `GUSTO_HOME` (JSON and exit
-  contract, real quoted `EDITOR` commands, encodings, lost-response recovery
-  through a dropping proxy, local lifecycle commands);
+- Contract tests: `tests/test_cli.py` assembles the owner gate from
+  `tests/_cli_*.py`. Normal parsing, mapping and presentation use public
+  `main`; the independent forwarding matrix checks all remote leaf mappings,
+  while scenario cases call the in-process command API. Process entry points,
+  UTF-8, quoted editors, lost-response recovery through a dropping proxy and
+  unavailable-server recovery retain real process/socket boundaries. Stores
+  use a throwaway `GUSTO_HOME`; local lifecycle modules are faked;
   `tests/test_agent_contract.py` owns the leaf set, `--json` on every leaf, the
   skill checks above, and the `AGENTS.md`/`CLAUDE.md` routing checks.
 
@@ -179,14 +192,12 @@ Every managed runtime carries the skill below `share/gusto/skill/gusto`;
   default port collides with that service. Development and tests start their
   own server on another port with `GUSTO_HOME` and pass `--server`, then verify
   `server_data_path`.
-- `gusto/cli.py` is about 1,900 lines, above the project's soft limit; split it
-  along command groups behind `main` and `build_parser` before growing it.
 
 ## Agent-facing text
 
 This domain owns the shipped skill (`skill/gusto/SKILL.md` and
 `skill/gusto/references/*.md`), the CLI help texts and the CLI result and error
-messages in `gusto/cli.py`. Before changing a sentence, read
+messages in `gusto/cli.py` and its private `gusto/_cli_*.py` units. Before changing a sentence, read
 `cli/agent-facing-text.md` for its reason and supporting contract. Update its
 row whenever the sentence changes. Historical failures are labeled separately
 from reasons inferred from the current implementation.

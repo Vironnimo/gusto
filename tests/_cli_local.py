@@ -7,6 +7,8 @@ from contextlib import redirect_stdout
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from gusto import _cli_local as local
+
 
 from _cli_support import (
     check,
@@ -25,7 +27,7 @@ def check_serve_json_contract():
         ("2001:db8::1", "[2001:db8::1]"),
     ):
         output = io.StringIO()
-        with patch.object(cli, "_load_web_runtime", return_value=fake_uvicorn):
+        with patch.object(local, "_load_web_runtime", return_value=fake_uvicorn):
             with redirect_stdout(output):
                 cli.main(["serve", "--host", host, "--port", "8765", "--reload", "--json"])
         payload = json.loads(output.getvalue())
@@ -39,8 +41,6 @@ def check_serve_json_contract():
 
 
 def check_serve_dependency_preflight():
-    from gusto import cli
-
     imported = []
 
     def fake_import(module_name):
@@ -54,7 +54,7 @@ def check_serve_dependency_preflight():
     from _cli_support import invoke
 
     # Trigger real preflight imports through the public command; no helper/order pin.
-    with patch.object(cli.importlib, "import_module", side_effect=fake_import):
+    with patch.object(local.importlib, "import_module", side_effect=fake_import):
         result = invoke(["serve", "--json"])
     payload = json.loads(result.stdout)
     check(result.returncode == 1 and not result.stderr,

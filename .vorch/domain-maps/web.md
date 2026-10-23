@@ -47,7 +47,7 @@ Not owned here: the command API, health and SSE endpoints (`service.md`), the of
 - UI copy is German (PROJECT.md). Visual identity, tokens, responsive rules and copy tone: `web/design.md`.
 - A change to any precached or cache-first asset (`style.css`, `app.js`, `photo-input.js`, `manifest.webmanifest`, icons) or to the `/` or `/shopping` shell must bump `CACHE` in `sw.js` (shopping domain): every page registers the worker and static URLs carry no version, so installed browsers otherwise keep the old files.
 - `pyproject.toml` package data ships only `templates/*.html`, `static/*.css`, `static/*.js`, `static/*.webmanifest` and `static/icons/*.png`; a new subfolder or file type is missing from the wheel until those globs and `tests/test_packaging.py` change.
-- Adding a server dependency means updating the `web` extra in `pyproject.toml`, `_WEB_DEPENDENCIES` in `gusto/cli.py` (serve startup and installer probe) and the list in `tests/test_packaging.py`.
+- Adding a server dependency means updating the `web` extra in `pyproject.toml`, `_WEB_DEPENDENCIES` in `gusto/_cli_local.py` (serve startup and installer probe) and the list in `tests/test_packaging.py`.
 
 ## External Dependencies
 
