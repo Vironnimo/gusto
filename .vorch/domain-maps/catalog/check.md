@@ -8,7 +8,7 @@ Contract, coverage, extension and repair paths of `core.check()`.
 
 - Warnings, which never affect `ok`: `uncategorized_tags`, `unresolved_log_references`. Every other diagnostic is a hard error.
 - Read-only: never writes, never repairs, takes no lock. It can observe a concurrent multi-file mutation mid-way; re-run before acting on a finding.
-- Robust: loader failures (index, categories, log, favorites, shopping) and unreadable Markdown or directories become messages in `invalid_data_files`, and the remaining diagnostics still run. Not checked: `data/changes.json`, settings, lock files.
+- Robust: loader failures (index, categories, log, favorites, shopping, change journal) and unreadable Markdown or directories become messages in `invalid_data_files`, and the remaining diagnostics still run. The journal check uses the same read-only loader as health and events (`storage/change-journal.md`); it does not reset or repair `data/changes.json`. Not checked: settings, lock files.
 
 ## Coverage
 

@@ -12,15 +12,15 @@ Only Core touches the store, normally inside the one running service (PROJECT.md
 
 ### Data root
 
-The one directory holding a Gusto store, resolved per call by `project_root()`. `home --json` reports the CLI machine's as `path` and the server's as `server_data_path`; they can differ.
+The one directory holding a Gusto store. The CLI machine's data root can differ from the service's; selection and reporting belong to Data Model.
 
 ### Resource
 
-A named unit of mutable state used for both locking and change events: `catalog`, `log`, `favorites`, `shopping`. `events` is an internal lock for the change journal only.
+A named source of truth whose mutations are serialized together and reported together in change events (see Interfaces).
 
 ### Change revision
 
-The monotonic number persisted in `data/changes.json` for every Core transaction that changed stored files, with the resources it touched. Health reports the latest; the SSE stream replays newer ones. It carries no diff and is unrelated to shopping sync versions (`updated_at`).
+A persisted sequence number identifying a group of durable changes to resources (see Interfaces). It carries no diff and is unrelated to shopping sync versions.
 
 ## Data Model
 
@@ -30,7 +30,7 @@ The monotonic number persisted in `data/changes.json` for every Core transaction
 3. Legacy: the package's parent directory when it contains a recognizable store and the platform default does not (source `legacy`).
 4. Platform default: `%LOCALAPPDATA%\Gusto`, `$XDG_DATA_HOME/gusto` (else `~/.local/share/gusto`), macOS `~/Library/Application Support/Gusto`.
 
-`storage_info()` returns `path`, `source` (`environment`, `settings`, `legacy`, `platform_default`), `platform_default`, and `settings_path` when that file exists. A store is "recognizable" (`contains_gusto_data`) when `data/` holds any of the five data JSON files or `recipes/` holds a `*.md`.
+`storage_info()` returns `path`, `source` (`environment`, `settings`, `legacy`, `platform_default`), `platform_default`, and `settings_path` when that file exists. `home --json` reports the local root as `path` and the service's as `server_data_path`. A store is "recognizable" (`contains_gusto_data`) when `data/` holds any of the five domain data JSON files or `recipes/` holds a `*.md`; a change journal alone does not qualify.
 
 **Store layout:**
 
@@ -45,12 +45,12 @@ The monotonic number persisted in `data/changes.json` for every Core transaction
 
 **Persisted formats:**
 - JSON is UTF-8 with `ensure_ascii=False`, 2-space indent, trailing newline, LF. Markdown/text is written UTF-8 verbatim with LF translation disabled.
-- A missing file means empty state. Loaders never write, repair or migrate on read. Malformed JSON or shapes raise a German `ValueError` naming the file; `check` collects these into `invalid_data_files` (`catalog/check.md`).
+- A missing file means empty state. Loaders never write, repair or persist migrations on read. Malformed JSON or shapes raise a German `ValueError`; `check` collects these with the file context into `invalid_data_files` (`catalog/check.md`).
 - Dataclass-backed records (`Recipe`, `RecipeImage`, `ShoppingItem`, `ShoppingNeed`, `FavoriteProduct`) validate field types, default missing optional fields, and silently drop unknown keys, so the next save of that file removes them. A new persisted field needs a dataclass field with a default; an older runtime (for example after an update rollback) drops it on its next write. `data/categories.json` is strict instead: unknown keys reject the file.
 
 ## Interfaces
 
-**Transactions.** Every Core mutation is one function wrapped in `@_locked_mutation(<resources>, event_resources=...)`, or `_execute_locked_mutation(resources, fn, event_resources=...)` when the resources depend on arguments (sourced `shopping_add`, `shopping_merge`). The locks span the complete read-modify-write, not only the final save. `event_resources` defaults to the locked resources.
+**Transactions.** The domain resources are `catalog`, `log`, `favorites` and `shopping`; `events` is an internal lock for the change journal only. Every Core mutation is one function wrapped in `@_locked_mutation(<resources>, event_resources=...)`, or `_execute_locked_mutation(resources, fn, event_resources=...)` when the resources depend on arguments (sourced `shopping_add`, `shopping_merge`). The locks span the complete read-modify-write, not only the final save. `event_resources` defaults to the locked resources.
 - Inside a transaction use the `_..._unlocked` savers and plain loaders. Never call another public locked Core function: the per-path `threading.Lock` is not reentrant, so the same resource deadlocks the thread, and nesting a different resource breaks the sorted acquisition order.
 - Acquire every resource in the one call; `_mutation_locks` sorts lock paths, which keeps multi-resource transactions deadlock-free.
 - Reads take no lock. Atomic replacement shows readers the old or new complete file, but a multi-file transaction can be observed mid-way.
@@ -61,22 +61,21 @@ The monotonic number persisted in `data/changes.json` for every Core transaction
 - Rollback protocol for multi-file mutations: take `_mutation_checkpoint()` before the first write; after a complete rollback call `_rollback_completed(checkpoint)` so the original failure stays a clean rejection without an event. Rollback writes that must not count use `track_mutation=False`.
 - Consequence: an operation that rewrites identical content emits no revision. Idempotent Core operations stay silent only as long as they do not rewrite.
 
-**Change journal.** `change_state()` returns `{revision, resources}`; `change_events(after)` returns ordered `{revision, resources}` events newer than `after`, beginning with one synthetic compacted event when `after` predates retained history. `_record_change` runs after the business locks are released, under the `events` lock. Format, compaction and recovery: `storage/change-journal.md`.
+**Change journal.** Every changed transaction persists a new monotonic revision; health reports the latest, and the SSE stream replays newer ones. `change_state()` returns `{revision, resources}`; `change_events(after)` returns ordered `{revision, resources}` events newer than `after`, beginning with one synthetic compacted event when `after` predates retained history. `_record_change` runs after the business locks are released, under the `events` lock. Format, compaction and recovery: `storage/change-journal.md`.
 
 **Paths.** Use `project_root()` and the path helpers (`data_dir()`, `recipe_file()`, `changes_path()`, ...); never derive store paths from the working directory or the package directory.
 
 ## Conventions
 
 - A new persisted file gets a path helper, a loader that returns empty state for a missing file and a German `ValueError` for invalid content, an `_unlocked` saver through `_write_json`, a resource (new names must also be added to the `_record_change` allowlist and the journal's legacy-migration list), and a `check` diagnostic.
-- Checkout temp policy (`gusto/_temp.py`): `import gusto` runs `configure_checkout_temp()` before Core loads. It activates only when the package's parent contains both `pyproject.toml` and `scripts/run_quality.py`; it creates `<repo>/.tmp`, replaces Python's cached `tempfile.tempdir`, and exports `TMPDIR`, `TEMP`, `TMP` to child processes. It loads no Core and resolves no data. An unusable `.tmp` makes the import fail; it never falls back to system temp. Installed packages keep the caller's temp policy. Explicit `dir=` staging (atomic writes, archive transaction folders) stays beside its destination for same-filesystem renames. In a checkout, API attachment and web upload scratch files therefore also land in `.tmp/`.
+- Checkout temp policy (`gusto/_temp.py`): `import gusto` runs `configure_checkout_temp()` before Core loads. It activates only when the package's parent contains both `pyproject.toml` and `scripts/run_quality.py`; it creates `<repo>/.tmp`, replaces Python's cached `tempfile.tempdir`, and exports `TMPDIR`, `TEMP`, `TMP` to child processes. It loads no Core and resolves no data. Failure to create `.tmp` makes the import fail; an existing directory's writability is checked only when a temp allocation uses it. Python allocations in the importing process use the cached path without fallback. Installed packages keep the caller's temp policy. Explicit `dir=` staging (atomic writes, archive transaction folders) stays beside its destination for same-filesystem renames. In a checkout, API attachment and web upload scratch files therefore also land in `.tmp/`.
 - Standalone tests and scripts import `gusto` before allocating temp files and point `GUSTO_HOME` into `.tmp`; several tests assert that `project_root()` lies under `tempfile.gettempdir()` before writing.
 
 ## Constraints & Gotchas
 
 - Windows: atomic replacement retries for up to 1 s on `winerror` 5, 32 or 33, caused by concurrent reader handles (for example SSE journal reads); a persistent conflict still raises.
-- Locks: a lock file is created with `O_EXCL` and then receives one byte; other processes wait until the byte exists, then lock it with `msvcrt.locking` (Windows) or `flock` (POSIX). Locks are advisory: direct file edits bypass them. Cross-process waiting times out after 30 s with a German `ValueError` before anything is written; threads in one process wait on the thread lock without timeout.
-- Known bug: if writing that first byte fails (disk full) or the process dies in between, an empty lock file remains and every later mutation of that resource fails after 30 s. Recovery: delete the empty `data/.gusto-<resource>.lock` while no Gusto process runs.
-- A corrupt `data/changes.json` makes `/api/v1/health` and every server-rendered page fail with HTTP 500 (the base template reads the revision), turns every successful mutation into `PostMutationError`, and is not reported by `check`. Recovery: `storage/change-journal.md`.
+- Locks: a persistent lock file is opened with `O_RDWR | O_CREAT`, then locked with `msvcrt.locking` (Windows) or `flock` (POSIX). Empty files are valid: Windows locks one byte beyond EOF without writing a sentinel; existing one-byte files remain usable too. Never replace or delete the lock file while a process can hold its lock. Locks are advisory: direct file edits bypass them. Cross-process waiting times out after 30 s with a German `ValueError` before business data is written; threads in one process wait on the thread lock without timeout.
+- A corrupt `data/changes.json` makes `/api/v1/health` and every server-rendered page fail with HTTP 500 (the base template reads the revision), and turns every mutation that writes into `PostMutationError`. `check` reports it in `invalid_data_files` while continuing other diagnostics; it never repairs or resets the journal. Recovery: `storage/change-journal.md`.
 - A process killed after committing but before `_record_change` leaves a change without an event. Revisions are assigned after locks are released, so their order need not match commit order; clients treat events as "refresh these resources", not as ordered diffs.
 - The checkout's settings select only `gusto-dev` and no `server_url`, so checkout CLI domain commands target `http://127.0.0.1:8000`, the default port of an installed production service. Use `--server`/`GUSTO_URL` for a dev server and verify `server_data_path` before writing.
 - `gusto-dev` is shared by all checkouts and worktrees; tests must always use `GUSTO_HOME`.
@@ -84,7 +83,7 @@ The monotonic number persisted in `data/changes.json` for every Core transaction
 
 ## Tests
 
-`tests/test_concurrency.py` (cross-process contention on catalog, favorites, shopping, log and images, parallel CLI adds against a real server, sync during restore, Windows open-reader replacement), `tests/test_temp.py` (checkout temp policy), `tests/test_recipes.py` (`transaction_failure_checks`, monotonic parallel revisions, silent no-op merge), `tests/test_api.py` (compacted replay, journal failure as uncertain outcome). `tests/test_paths.py` holds only one Core check (settings-selected root); the rest are lifecycle path contracts. Not covered: `GUSTO_HOME` precedence, relative `data_dir`, legacy fallback, invalid settings, lock timeout and empty lock files, journal legacy migration.
+`tests/test_concurrency.py` (empty lock recovery, cross-process contention on catalog, favorites, shopping, log and images, parallel CLI adds against a real server, sync during restore, Windows open-reader replacement), `tests/test_temp.py` (checkout temp policy), `tests/test_recipes.py` (`transaction_failure_checks`, monotonic parallel revisions, silent no-op merge, corrupt journal diagnostics without repair), `tests/test_api.py` (compacted replay, journal failure as uncertain outcome). `tests/test_paths.py` holds only one Core check (settings-selected root); the rest are lifecycle path contracts. Not covered: `GUSTO_HOME` precedence, relative `data_dir`, legacy fallback, invalid settings, lock timeout, journal legacy migration.
 
 ## References
 

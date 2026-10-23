@@ -605,6 +605,28 @@ def main():
 
     # Corrupted data files become German ValueErrors, and check() reports them
     # as integrity errors instead of crashing with a raw loader exception.
+    journal_backup = core.changes_path().read_bytes()
+    try:
+        for broken_journal in (
+            b"{broken", b"\xff",
+            b'{"revision": 1, "resources": [], "events": [null]}',
+            b'{"revision": 1, "resources": [], "events": '
+            b'[{"revision": true, "resources": []}]}',
+            b'{"revision": 2, "resources": [], "events": '
+            b'[{"revision": 2, "resources": []}, {"revision": 1, "resources": []}]}',
+        ):
+            core.changes_path().write_bytes(broken_journal)
+            expect_valueerror(core.change_state)
+            corrupted = core.check()
+            check(corrupted["ok"] is False
+                  and any(str(core.changes_path()) in message
+                          for message in corrupted["invalid_data_files"])
+                  and corrupted["recipe_count"] == len(core.load_recipes()),
+                  "broken journals must retain file context and other diagnostics")
+            check(core.changes_path().read_bytes() == broken_journal,
+                  "diagnosing a journal must never silently repair or reset it")
+    finally:
+        core.changes_path().write_bytes(journal_backup)
     index_backup = core.index_path().read_text(encoding="utf-8")
     core.index_path().write_text('{"kaputt": true}', encoding="utf-8")
     try:
