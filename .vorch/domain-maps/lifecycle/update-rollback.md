@@ -1,6 +1,6 @@
 # Update and rollback
 
-Owner: `gusto/update.py`; state/Python/service integration stays in `gusto/service.py`. The CLI maps `UpdateError.result` unchanged under `--json` with exit 1.
+Owner: `gusto/update.py` orchestrates release verification, activation, rollback and retention. `gusto/runtime.py` owns state, Python and package preparation; `gusto/service.py` owns user-service integration and health checks. The CLI maps `UpdateError.result` unchanged under `--json` with exit 1.
 
 ## Preparation and lock
 
@@ -12,7 +12,7 @@ The per-app `.update.lock` covers preparation, activation and cleanup and is sha
 
 After acquiring the lock, update re-reads current and state together. Another updater may have finished during manifest download; an already-current release succeeds without repeating activation. Rollback uses this refreshed original state, including its Python runtime.
 
-Preparation builds the inactive venv at its permanent version path. An interrupted/unverified build is rebuilt; a verified runtime can be reused. Managed Windows Python is prepared side by side when version/hash changes. Reusing the same Python version with a different hash is refused. A broken currently installed Python with no version change needs installer repair, not an update over it.
+`runtime.prepare_release_runtime()` builds the inactive venv at its permanent version path. An interrupted/unverified build is rebuilt; an exact verified marker with an existing interpreter permits reuse. Fresh builds use an isolated import/version probe; installer repair separately requires a live web-dependency probe. Managed Windows Python is prepared side by side when version/hash changes. Reusing the same Python version with a different hash is refused. A broken currently installed Python with no version change needs installer repair, not an update over it.
 
 ## Activation and failure meaning
 
@@ -28,7 +28,7 @@ Activation stops the old service, writes the new current pointer, writes changed
 | `update_failed`, `rollback:true` | Activation failed, previous runtime/state was restored and passed health. |
 | `rollback_failed`, `rollback:false` | Recovery also failed; no claim that the previous service is healthy. |
 
-On successful rollback the failed new Gusto runtime is removed best-effort. On success, `cleanup_versions()` removes older SemVer directories only if they have a matching verified marker and Python reference; arbitrary sibling folders are left alone. Current and previous stay. `cleanup_python_runtimes()` keeps Python versions referenced by retained runtime markers. Cleanup occurs after health success, outside the activation rollback handler; a cleanup error is not evidence that activation failed.
+On successful rollback the failed new Gusto runtime is removed best-effort. On success, `runtime.cleanup_versions()` removes older SemVer directories only if they have a matching verified marker and Python reference; arbitrary sibling folders are left alone. Update supplies the keep set: current and previous stay. `runtime.cleanup_python_runtimes()` keeps Python versions referenced by retained runtime markers. Cleanup occurs after health success, outside the activation rollback handler; a cleanup error is not evidence that activation failed.
 
 ## Verification
 

@@ -4,11 +4,11 @@ Lifecycle owns the per-user installation, service registration and control, veri
 
 ## Overview
 
-Owners: `install.ps1`, `install.sh` and `install.py` bootstrap and install; `gusto/service.py` owns managed paths, state, Python runtimes, autostart and service control; `gusto/update.py` owns update locking, runtime preparation and activation; `gusto/uninstall.py` owns removal; `gusto/skill_install.py` delivers the skill; `deploy/` holds compatibility registration adapters; `scripts/build_release.py`, `.github/workflows/release.yml`, `scripts/ci_smoke_install.py` and `scripts/ci_systemctl.py` build and check releases.
+Owners: `install.ps1`, `install.sh` and `install.py` bootstrap and orchestrate install/repair; `gusto/runtime.py` owns managed paths/state, Python and Gusto runtime preparation/retention, verified markers, settings and dependency probes; `gusto/service.py` owns autostart, service control and health verification; `gusto/update.py` owns release verification, update locking, activation, rollback and the retention keep set; `gusto/uninstall.py` owns removal; `gusto/skill_install.py` delivers the skill; `deploy/` holds compatibility registration adapters; `scripts/build_release.py`, `.github/workflows/release.yml`, `scripts/ci_smoke_install.py` and `scripts/ci_systemctl.py` build and check releases.
 
 Not owned here: lifecycle command parsing, help, plain output, JSON error mapping, `serve` and the windowless `autostart_main` entry point (`gusto/_cli_local.py` and `gusto/cli.py`, `cli.md`); health response (`service.md`); process data-directory selection (`storage.md`); skill content (`cli.md`); reusable quality gates (`development.md`).
 
-Lifecycle commands act on the local machine. They do not use the command API; `--server` does not redirect them. `service.managed_paths()` selects an explicit `--app-root`, otherwise the managed root containing the executing `sys.prefix` at `versions/<version>` when both state markers exist, otherwise the platform default. Service control and update share this selection. Uninstall has stricter discovery: it requires execution from the active installed runtime and refuses checkouts.
+Lifecycle commands act on the local machine. They do not use the command API; `--server` does not redirect them. `runtime.managed_paths()` selects an explicit `--app-root`, otherwise the managed root containing the executing `sys.prefix` at `versions/<version>` when both state markers exist, otherwise the platform default. Service control and update share this selection. Uninstall has stricter discovery: it requires execution from the active installed runtime and refuses checkouts.
 
 Touchpoints:
 - storage: install and update write the runtime's `gusto.settings.json` with `data_dir` and local `server_url`; `GUSTO_HOME` still overrides the data path.
@@ -47,11 +47,12 @@ The data store is outside the app root. Lifecycle code creates the initial direc
 ## Interfaces
 
 - `service.service_action()` returns JSON-ready service state; `start` and `restart` finish with health verification. A dry-run executes no platform command and reports `running:false`.
+- `runtime.prepare_source_runtime()` applies install/repair's live dependency probe; `prepare_release_runtime()` applies update's marker reuse and isolated import/version probe. Both prepare at the final version path before activation. `runtime.load_web_runtime()` performs complete foreground-server preflight lazily.
 - `update.run_update()` reads the stored update source, prepares a verified side-by-side runtime and activates it under the per-app lock. `--check` and `--dry-run` do not mutate the installation. Update/rollback outcomes: `lifecycle/update-rollback.md`.
 - `uninstall.discover_targets()` verifies ownership; `perform_uninstall()` removes integration and schedules deletion after the CLI exits. Scheduled is not completed; partial failure is not rollback (`lifecycle/uninstall.md`).
 - `skill_install.install_skill()` copies the bundled payload to an explicitly selected supported host. It neither calls the service nor installs an agent host (`lifecycle/skill-delivery.md`).
 
-Each lifecycle module converts expected errors from called modules into its own public error type: `ServiceError`, `UpdateError`, `UninstallError`, or `ValueError` for skill delivery. The CLI wrappers catch those plus `OSError`; an unconverted foreign exception can escape the JSON error contract. Error/result text rationale: `lifecycle/agent-facing-text.md`.
+`runtime.py` raises `RuntimePreparationError` for invalid state and preparation failure. Service, update and uninstall translate it at their public boundaries into `ServiceError`, `UpdateError` and `UninstallError`; skill delivery uses `ValueError`. The CLI wrappers catch those plus `OSError`; an unconverted foreign exception can escape the JSON error contract. Error/result text rationale: `lifecycle/agent-facing-text.md`.
 
 ## Conventions
 
@@ -80,7 +81,7 @@ GitHub Releases supplies the default update manifest and assets. PyPI resolves t
 
 ## Agent-facing text
 
-This domain owns result and error messages in `install.py`, the public bootstraps, `gusto/service.py`, `gusto/update.py`, `gusto/uninstall.py` and `gusto/skill_install.py`. Before changing a sentence, read `lifecycle/agent-facing-text.md` and update its reason row with the text. `cli.md` owns CLI help, ordinary lifecycle output formatting and uninstall choice prompts.
+This domain owns result and error messages in `install.py`, the public bootstraps, `gusto/runtime.py` (including server dependency preflight), `gusto/service.py`, `gusto/update.py`, `gusto/uninstall.py` and `gusto/skill_install.py`. Before changing a sentence, read `lifecycle/agent-facing-text.md` and update its reason row with the text. `cli.md` owns CLI help, ordinary lifecycle output formatting and uninstall choice prompts.
 
 ## References
 

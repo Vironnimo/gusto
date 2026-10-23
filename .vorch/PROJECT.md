@@ -20,8 +20,10 @@ gusto/web.py         FastAPI host: mounts the API, serves templates/, static/ an
 gusto/client.py      stdlib HTTP client the CLI uses to reach the service
 gusto/cli.py         CLI assembly, dispatch and autostart; private _cli_*.py units own command groups
                      domain commands only through client; lifecycle and recovery commands local
-gusto/service.py     per-user autostart and service control; update.py, uninstall.py and
-                     skill_install.py build on it; install.py is the bootstrap installer
+gusto/runtime.py     installed paths/state, Python and package preparation/retention, readiness probes
+gusto/service.py     per-user autostart, service control and health verification
+gusto/update.py      verified-release orchestration and rollback; install.py bootstraps install/repair
+gusto/uninstall.py, skill_install.py  removal and delivery of the bundled agent skill
 skill/gusto/         the agent skill shipped in every runtime
 scripts/, tests/     developer harness: quality gates, browser checks, release build, Vorch tooling
 ```
@@ -50,7 +52,7 @@ How to read the maps: `AGENTS.md` -> Load context for the task.
 | service.md | `gusto/api.py`, `gusto/client.py` | Versioned command API, change-event stream, HTTP client, uncertain outcomes |
 | cli.md | `gusto/cli.py`, `gusto/_cli_*.py`, `gusto/__main__.py`, `skill/gusto/` | Command surface, `--json` contract, exit codes, server selection, the shipped agent skill |
 | web.md | `gusto/web.py`, `gusto/templates/`, `gusto/static/` | FastAPI host, server-rendered UI, no-JS fallback, photo uploads, design |
-| lifecycle.md | `install.py`, `install.ps1`, `install.sh`, `gusto/service.py`, `gusto/update.py`, `gusto/uninstall.py`, `gusto/skill_install.py`, `deploy/`, `scripts/build_release.py` | Per-user install, autostart, update and rollback, uninstall, skill install, release assets |
+| lifecycle.md | `install.py`, `install.ps1`, `install.sh`, `gusto/runtime.py`, `gusto/service.py`, `gusto/update.py`, `gusto/uninstall.py`, `gusto/skill_install.py`, `deploy/`, `scripts/build_release.py` | Per-user install, autostart, update and rollback, uninstall, skill install, release assets |
 | development.md | `scripts/`, `tests/`, `.githooks/`, `.github/workflows/quality.yml`, `pyproject.toml` | Quality gates, test isolation, commit hook, push check, CI, worktrees |
 
 ## Conventions

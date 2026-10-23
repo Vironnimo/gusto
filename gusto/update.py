@@ -6,7 +6,6 @@ import json
 import os
 import random
 import shutil
-import subprocess
 import tempfile
 import time
 import urllib.error
@@ -19,6 +18,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from . import service
+from . import runtime as managed_runtime
 
 
 DEFAULT_MANIFEST_URL = (
@@ -124,8 +124,8 @@ def load_manifest(
     if not isinstance(version, str):
         raise UpdateError("Release-Manifest enthält keine Version.")
     try:
-        service.validate_version(version)
-    except service.ServiceError as error:
+        managed_runtime.validate_version(version)
+    except (service.ServiceError, managed_runtime.RuntimePreparationError) as error:
         raise UpdateError(str(error)) from error
     assets = value.get("assets")
     if not isinstance(assets, dict):
@@ -155,8 +155,8 @@ def load_manifest(
     ):
         raise UpdateError("Windows-Python-Asset ist unvollständig.")
     try:
-        service.validate_python_version(python_version)
-    except service.ServiceError as error:
+        managed_runtime.validate_python_version(python_version)
+    except (service.ServiceError, managed_runtime.RuntimePreparationError) as error:
         raise UpdateError(str(error)) from error
     return {
         **value,
@@ -213,60 +213,9 @@ def extract_python_runtime(package: Path, destination: Path) -> None:
     extracted = destination / "package"
     safe_extract(package, extracted)
     tools = extracted / "tools"
-    if not service.base_python(tools, "win32").is_file():
+    if not managed_runtime.base_python(tools, "win32").is_file():
         raise UpdateError("Python-Runtime-Paket enthält tools/python.exe nicht.")
     shutil.move(os.fspath(tools), os.fspath(destination / "runtime"))
-
-
-def write_runtime_settings(
-    runtime: Path,
-    data_dir: Path,
-    *,
-    server_url_value: str | None = None,
-) -> Path:
-    settings = runtime / "gusto.settings.json"
-    temporary = settings.with_suffix(".json.tmp")
-    value = {"data_dir": os.fspath(data_dir.resolve())}
-    if server_url_value is not None:
-        value["server_url"] = server_url_value
-    temporary.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(temporary, settings)
-    return settings
-
-
-def verified_runtime(runtime: Path, version: str, python_version: str) -> bool:
-    try:
-        marker = json.loads(
-            (runtime / ".gusto-runtime.json").read_text(encoding="utf-8")
-        )
-    except (OSError, json.JSONDecodeError):
-        return False
-    return (
-        marker == {
-            "version": version,
-            "verified": True,
-            "python_runtime": python_version,
-        }
-        and service.runtime_python(runtime).is_file()
-    )
-
-
-def recover_staging(paths: service.ManagedPaths, version: str) -> list[Path]:
-    """Remove abandoned staging directories left by interrupted updates."""
-    service.validate_version(version)
-    removed: list[Path] = []
-    if not paths.versions.is_dir():
-        return removed
-    for candidate in paths.versions.glob(f".staging-{version}-*"):
-        candidate = candidate.resolve()
-        if candidate.parent != paths.versions or not candidate.is_dir():
-            continue
-        shutil.rmtree(candidate)
-        removed.append(candidate)
-    return removed
 
 
 LOCK_INIT_WAIT_SECONDS = 2.0
@@ -313,7 +262,7 @@ def _open_lock_handle(lock_path: Path) -> IO[bytes]:
 
 
 @contextmanager
-def update_lock(paths: service.ManagedPaths):
+def update_lock(paths: managed_runtime.ManagedPaths):
     """Hold one crash-safe per-app update lock across staging and activation."""
     lock_path = paths.app_root / ".update.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -351,149 +300,8 @@ def update_lock(paths: service.ManagedPaths):
             handle.close()
 
 
-def install_runtime(
-    paths: service.ManagedPaths,
-    version: str,
-    wheel: Path,
-    data_dir: Path,
-    *,
-    base_python: Path,
-    python_version: str,
-    server_url_value: str | None = None,
-    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-    environment_builder: Callable[[Path], None] | None = None,
-) -> Path:
-    """Prepare one inactive runtime at its permanent path before activation."""
-    runtime = paths.version(version)
-    paths.versions.mkdir(parents=True, exist_ok=True)
-    recover_staging(paths, version)
-    if runtime.exists():
-        if verified_runtime(runtime, version, python_version):
-            return runtime
-        shutil.rmtree(runtime)
-    if environment_builder is None:
-        def environment_builder(target):
-            return service.create_virtual_environment(base_python, target)
-    # Virtual environments are not relocatable: pip's console/GUI launchers
-    # embed the absolute interpreter path. Build at the final version path,
-    # which remains inactive until the verified current pointer is switched.
-    # The per-app update lock protects this preparation, and an interrupted
-    # build has no verified marker so the next attempt safely rebuilds it.
-    try:
-        environment_builder(runtime)
-        python = service.runtime_python(runtime)
-        result = runner(
-            [
-                os.fspath(python), "-m", "pip", "install",
-                f"gusto[web] @ {wheel.resolve().as_uri()}",
-            ],
-            text=True, encoding="utf-8", errors="replace", capture_output=True,
-        )
-        if result.returncode:
-            raise UpdateError(
-                "Installation des Release-Wheels fehlgeschlagen: "
-                + (result.stderr or result.stdout or f"Exit-Code {result.returncode}").strip()
-            )
-        write_runtime_settings(
-            runtime, data_dir, server_url_value=server_url_value,
-        )
-        smoke = runner(
-            [
-                os.fspath(python), "-I", "-c",
-                "import gusto,sys; print(gusto.__version__); "
-                "raise SystemExit(gusto.__version__ != sys.argv[1])",
-                version,
-            ],
-            text=True, encoding="utf-8", errors="replace", capture_output=True,
-        )
-        if smoke.returncode:
-            raise UpdateError(
-                "Import-/Versionsprüfung der neuen Runtime fehlgeschlagen: "
-                + (smoke.stderr or smoke.stdout or
-                   f"Exit-Code {smoke.returncode}").strip()
-            )
-        marker = runtime / ".gusto-runtime.json"
-        marker.write_text(
-            json.dumps({
-                "version": version,
-                "verified": True,
-                "python_runtime": python_version,
-            },
-                       ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-    except Exception:
-        shutil.rmtree(runtime, ignore_errors=True)
-        raise
-    return runtime
-
-
-def cleanup_versions(
-    paths: service.ManagedPaths,
-    keep: set[str],
-) -> list[str]:
-    """Keep current and previous verified runtimes, remove older siblings."""
-    removed: list[str] = []
-    if not paths.versions.is_dir():
-        return removed
-    for candidate in paths.versions.iterdir():
-        if not candidate.is_dir() or candidate.name in keep:
-            continue
-        try:
-            service.validate_version(candidate.name)
-        except service.ServiceError:
-            continue
-        try:
-            marker = json.loads(
-                (candidate / ".gusto-runtime.json").read_text(encoding="utf-8")
-            )
-        except (OSError, json.JSONDecodeError):
-            continue
-        if (not isinstance(marker, dict)
-                or marker.get("version") != candidate.name
-                or marker.get("verified") is not True
-                or not isinstance(marker.get("python_runtime"), str)):
-            continue
-        shutil.rmtree(candidate)
-        removed.append(candidate.name)
-    return sorted(removed, key=service.version_key)
-
-
-def cleanup_python_runtimes(paths: service.ManagedPaths) -> list[str]:
-    """Remove managed Python versions not referenced by a retained Gusto venv."""
-    referenced: set[str] = set()
-    if paths.versions.is_dir():
-        for runtime in paths.versions.iterdir():
-            if not runtime.is_dir():
-                continue
-            try:
-                marker = json.loads(
-                    (runtime / ".gusto-runtime.json").read_text(encoding="utf-8")
-                )
-            except (OSError, json.JSONDecodeError):
-                continue
-            python_version = marker.get("python_runtime") if isinstance(
-                marker, dict,
-            ) else None
-            if isinstance(python_version, str):
-                referenced.add(python_version)
-    removed: list[str] = []
-    if not paths.python_runtimes.is_dir():
-        return removed
-    for candidate in paths.python_runtimes.iterdir():
-        if not candidate.is_dir() or candidate.name in referenced:
-            continue
-        try:
-            service.validate_python_version(candidate.name)
-        except service.ServiceError:
-            continue
-        shutil.rmtree(candidate)
-        removed.append(candidate.name)
-    return sorted(removed, key=service.version_key)
-
-
 def _perform_update_locked(
-    paths: service.ManagedPaths,
+    paths: managed_runtime.ManagedPaths,
     state: dict[str, Any],
     current_version: str,
     manifest: dict[str, Any],
@@ -554,35 +362,35 @@ def _perform_update_locked(
                 extracted.mkdir()
                 extract_python_runtime(package, extracted)
                 try:
-                    base_python = service.install_managed_python(
+                    base_python = managed_runtime.install_managed_python(
                         paths,
                         extracted / "runtime",
                         release_python_version,
                         release_python_sha256,
                     )
-                except service.ServiceError as error:
+                except (service.ServiceError, managed_runtime.RuntimePreparationError) as error:
                     # Still pre-activation, so a plain conversion without
                     # rollback keeps the CLI JSON contract intact.
                     raise UpdateError(str(error)) from error
-                new_python_root = service.managed_python_root(
+                new_python_root = managed_runtime.managed_python_root(
                     paths, release_python_version,
                 )
-                updated_state["python_runtime"] = service.managed_python_state(
+                updated_state["python_runtime"] = managed_runtime.managed_python_state(
                     paths, release_python_version, release_python_sha256,
                 )
                 python_version = release_python_version
             else:
                 try:
-                    base_python = service.state_base_python(paths, state)
-                except service.ServiceError as error:
+                    base_python = managed_runtime.state_base_python(paths, state)
+                except (service.ServiceError, managed_runtime.RuntimePreparationError) as error:
                     raise UpdateError(
                         "Die installierte Python-Runtime ist beschädigt; bitte "
                         "den öffentlichen Installer im Reparaturmodus starten."
                     ) from error
         else:
             try:
-                base_python = service.state_base_python(paths, state)
-            except service.ServiceError as error:
+                base_python = managed_runtime.state_base_python(paths, state)
+            except (service.ServiceError, managed_runtime.RuntimePreparationError) as error:
                 raise UpdateError(str(error)) from error
 
         try:
@@ -595,26 +403,26 @@ def _perform_update_locked(
                 python_version=python_version,
                 server_url_value=service.server_url(updated_state),
             )
-        except service.ServiceError as error:
+        except (service.ServiceError, managed_runtime.RuntimePreparationError) as error:
             # Nothing has been switched yet, so this stays a plain
             # conversion without rollback; the venv build and runtime checks
-            # must not escape as a raw ServiceError under --json.
+            # must not escape as an unconverted preparation error under --json.
             if new_python_root is not None:
-                cleanup_python_runtimes(paths)
+                managed_runtime.cleanup_python_runtimes(paths)
             raise UpdateError(str(error)) from error
         except Exception:
             if new_python_root is not None:
-                cleanup_python_runtimes(paths)
+                managed_runtime.cleanup_python_runtimes(paths)
             raise
 
         try:
             service_controller("stop", app_root=paths.app_root)
-            service.write_current(
+            managed_runtime.write_current(
                 paths, latest, previous_version=current_version,
             )
             switched = True
             if updated_state != state:
-                service.write_state(paths, updated_state)
+                managed_runtime.write_state(paths, updated_state)
             service_installer(paths, updated_state)
             health_waiter(
                 service.health_url(updated_state),
@@ -631,9 +439,9 @@ def _perform_update_locked(
                 # path, which always stops a running task before re-registering.
                 service_controller("stop", app_root=paths.app_root)
                 if switched:
-                    service.write_current(paths, current_version)
+                    managed_runtime.write_current(paths, current_version)
                 if updated_state != state:
-                    service.write_state(paths, original_state)
+                    managed_runtime.write_state(paths, original_state)
                 service_installer(paths, original_state)
                 health_waiter(
                     service.health_url(original_state),
@@ -660,7 +468,7 @@ def _perform_update_locked(
             if new_runtime is not None:
                 shutil.rmtree(new_runtime, ignore_errors=True)
             if new_python_root is not None:
-                cleanup_python_runtimes(paths)
+                managed_runtime.cleanup_python_runtimes(paths)
             message = (
                 "Update-Aktivierung fehlgeschlagen; vorige Version wurde "
                 f"wiederhergestellt: {activation_error}"
@@ -677,8 +485,8 @@ def _perform_update_locked(
                 },
             ) from activation_error
 
-    removed = cleanup_versions(paths, {latest, current_version})
-    removed_python = cleanup_python_runtimes(paths)
+    removed = managed_runtime.cleanup_versions(paths, {latest, current_version})
+    removed_python = managed_runtime.cleanup_python_runtimes(paths)
     return {
         **base_result,
         "status": "updated",
@@ -699,19 +507,19 @@ def run_update(
     check: bool = False,
     dry_run: bool = False,
     downloader: Callable[[str], bytes] = fetch_bytes,
-    runtime_installer: Callable[..., Path] = install_runtime,
+    runtime_installer: Callable[..., Path] = managed_runtime.prepare_release_runtime,
     service_installer: Callable[..., dict[str, object]] = service.install_user_service,
     service_controller: Callable[..., dict[str, object]] = service.service_action,
     health_waiter: Callable[..., dict[str, Any]] = service.wait_for_health,
 ) -> dict[str, object]:
     """Check or atomically activate the latest verified public release."""
     try:
-        paths = service.managed_paths(app_root)
-        state = service.read_state(paths)
-        current = service.read_current(paths)
-    except service.ServiceError as error:
+        paths = managed_runtime.managed_paths(app_root)
+        state = managed_runtime.read_state(paths)
+        current = managed_runtime.read_current(paths)
+    except (service.ServiceError, managed_runtime.RuntimePreparationError) as error:
         # The CLI maps only UpdateError and ValueError/OSError for the
-        # --json contract; a raw ServiceError would escape as a traceback
+        # --json contract; a raw runtime error would escape as a traceback
         # instead of the structured {ok:false, error} object.
         raise UpdateError(str(error)) from error
     current_version = str(current["version"])
@@ -720,7 +528,7 @@ def run_update(
     )
     manifest = load_manifest(location, downloader=downloader)
     latest = str(manifest["version"])
-    available = service.version_key(latest) > service.version_key(current_version)
+    available = managed_runtime.version_key(latest) > managed_runtime.version_key(current_version)
     base_result: dict[str, object] = {
         "ok": True,
         "status": "update_available" if available else "current",
@@ -738,12 +546,12 @@ def run_update(
         # Another process may have completed the same release before this
         # caller acquired the lock.
         try:
-            locked_current = service.read_current(paths)
-            locked_state = service.read_state(paths)
-        except service.ServiceError as error:
+            locked_current = managed_runtime.read_current(paths)
+            locked_state = managed_runtime.read_state(paths)
+        except (service.ServiceError, managed_runtime.RuntimePreparationError) as error:
             raise UpdateError(str(error)) from error
         locked_version = str(locked_current["version"])
-        if service.version_key(latest) <= service.version_key(locked_version):
+        if managed_runtime.version_key(latest) <= managed_runtime.version_key(locked_version):
             return {
                 **base_result,
                 "status": "current",

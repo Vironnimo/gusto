@@ -1,6 +1,6 @@
 # Installation and repair
 
-Owners: `install.py`, `install.ps1`, `install.sh`, and the path/state/Python helpers in `gusto/service.py`. Public usage is in `skill/gusto/references/installation.md`; this file describes constraints an implementation change must preserve.
+Owners: `install.py`, `install.ps1` and `install.sh` orchestrate; `gusto/runtime.py` owns paths, state, settings, interpreter verification and package preparation. Public usage is in `skill/gusto/references/installation.md`; this file describes constraints an implementation change must preserve.
 
 ## Targets and state
 
@@ -10,7 +10,9 @@ Install selects app root from `--install-dir` (alias `--venv`) or the platform d
 
 `current.json` selects a SemVer version under `versions/<version>` and can include `previous_version`. The latter is informational, not an exposed rollback command. `read_current()` validates the target path and, normally, directory existence; it does not validate `.gusto-runtime.json`.
 
-The version marker `.gusto-runtime.json` records the Gusto version, `verified:true` and the base Python version. Install writes it only after an isolated target-interpreter import/version/web-dependency check; the updater's isolated check verifies import/version. `-I` prevents checkout/PYTHONPATH shadowing from making a broken runtime appear healthy. `python/<version>/.gusto-python-runtime.json` records the managed interpreter's expected version, hash and x86_64 architecture; its probe must agree.
+The version marker `.gusto-runtime.json` records the Gusto version, `verified:true` and the base Python version. `runtime.prepare_source_runtime()` writes it only after an isolated target-interpreter import/version/web-dependency check; `prepare_release_runtime()` uses the updater's isolated import/version check. Repair's `runtime_is_usable()` also runs the full dependency probe; update reuse checks the exact marker and interpreter presence. `-I` prevents checkout/PYTHONPATH shadowing from making a broken runtime appear healthy. `python/<version>/.gusto-python-runtime.json` records the managed interpreter's expected version, hash and x86_64 architecture; its probe must agree.
+
+The bootstrap imports lifecycle modules only after choosing the trusted source/wheel payload. `runtime.py` has no web imports at module load; its public dependency probe imports them only when requested. The standalone CLI client therefore remains standard-library only.
 
 Stable wrappers in `bin/` read `current.json` on every call. Linux links `~/.local/bin/gusto` to its wrapper and refuses a foreign link/file there. Windows adds the wrapper directory only to the user PATH. Venvs are built at their final path: moving one breaks embedded launcher paths.
 

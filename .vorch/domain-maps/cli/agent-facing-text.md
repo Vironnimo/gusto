@@ -4,7 +4,7 @@ This file records why each sentence or standalone instruction fragment in the sh
 
 The reasons are current engineering rationales, not claims about unrecorded past incidents. Recorded failures supporting recovery/encoding guidance are in `docs/audit-2026-09-22.md`; warning, partial-uninstall and authority corrections are in `docs/audit-2026-10-10.md`. Source notes are shared by the rows of each file below. Module names refer to `gusto/`; map paths are relative to `.vorch/domain-maps/`.
 
-Headings, navigation links, JSON field names and table data are not prose sentences. JSON examples illustrate the adjacent result contract; their IDs, paths and versions are sample values, not selected targets. Shell examples belong to their adjacent procedure. Forwarded Core/API/lifecycle errors remain owned by those modules; the CLI section covers wording authored in `gusto/cli.py` and its private `gusto/_cli_*.py` units. Registrations stay beside handlers in `_cli_catalog.py`, `_cli_shopping.py`, `_cli_local.py` and `_cli_editor.py`; `cli.py` owns parser assembly and exit handling, and `_cli_terminal.py` owns shared output/remote mechanics.
+Headings, navigation links, JSON field names and table data are not prose sentences. JSON examples illustrate the adjacent result contract; their IDs, paths and versions are sample values, not selected targets. Shell examples belong to their adjacent procedure. Foreground dependency-preflight text lives in `runtime.py` with its reasons in `lifecycle/agent-facing-text.md`. Forwarded Core/API/lifecycle errors remain owned by those modules; the CLI section covers wording authored in `gusto/cli.py` and its private `gusto/_cli_*.py` units. Registrations stay beside handlers in `_cli_catalog.py`, `_cli_shopping.py`, `_cli_local.py` and `_cli_editor.py`; `cli.py` owns parser assembly and exit handling, and `_cli_terminal.py` owns shared output/remote mechanics.
 
 ## skill/gusto/SKILL.md
 
@@ -182,7 +182,7 @@ Evidence: `.vorch/PROJECT.md` records the household/service scope, instance boun
 | `Der Tag ‘schnell’ ist noch keiner Kategorie zugeordnet."` | Demonstrates an unresolved assignment alongside successful recipe storage. |
 ## skill/gusto/references/cli.md
 
-Evidence: `cli.build_parser` and the registrations/`cmd_*` handlers in `_cli_catalog`, `_cli_shopping`, `_cli_local` and `_cli_editor` define calls, results and exits; `tests/test_agent_contract.py` checks leaf coverage. Core ownership and verified functions are indexed in `catalog.md` and `shopping.md`; their domain tests cover the effects. Encoding/editor evidence is in `tests/_cli_editor.py` (`check_edit_readback_contract`, `check_uncertain_delivery_contract`) and `tests/_cli_scenarios.py`, assembled by `tests/test_cli.py`. `checks.check` owns diagnostic keys, including `invalid_data_files`. `service.managed_paths` owns runtime-root discovery; `service_action`, `update.run_update`, `uninstall.perform_uninstall` and `skill_install.install_skill` own local lifecycle results.
+Evidence: `cli.build_parser` and the registrations/`cmd_*` handlers in `_cli_catalog`, `_cli_shopping`, `_cli_local` and `_cli_editor` define calls, results and exits; `tests/test_agent_contract.py` checks leaf coverage. Core ownership and verified functions are indexed in `catalog.md` and `shopping.md`; their domain tests cover the effects. Encoding/editor evidence is in `tests/_cli_editor.py` (`check_edit_readback_contract`, `check_uncertain_delivery_contract`) and `tests/_cli_scenarios.py`, assembled by `tests/test_cli.py`. `checks.check` owns diagnostic keys, including `invalid_data_files`. `runtime.managed_paths` owns runtime-root discovery; `service_action`, `update.run_update`, `uninstall.perform_uninstall` and `skill_install.install_skill` own local lifecycle results.
 
 
 ### Gusto CLI ? Full Reference
@@ -1323,14 +1323,6 @@ Evidence: each subsection names the function that constructs the message. Catalo
 | Text | Reason |
 |---|---|
 | `{count} {noun} entfernt; die Einkaufsliste ist leer.` | Confirms the removed count and empty visible-list result. |
-
-### _web_dependency_error
-
-| Text | Reason |
-|---|---|
-| `Web-Abhängigkeiten fehlen oder sind nicht importierbar: {', '.join(missing)}.` | Names missing web dependencies and distinguishes checkout installation from managed-app repair. |
-| `Projekt-Checkout: python -m pip install -e ".[web]".` | Names missing web dependencies and distinguishes checkout installation from managed-app repair. |
-| `Installierte App: den Installer derselben Gusto-Version im expliziten Reparaturmodus verwenden (--repair...` | Names missing web dependencies and distinguishes checkout installation from managed-app repair. |
 
 ### cmd_serve
 

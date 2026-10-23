@@ -20,6 +20,7 @@ sys.path.insert(0, os.fspath(ROOT))
 
 import gusto  # noqa: E402
 import install  # noqa: E402
+from gusto import runtime as managed_runtime  # noqa: E402
 from gusto import service, update  # noqa: E402
 
 checks = 0
@@ -102,17 +103,17 @@ def installable_wheel(root: Path, version: str) -> Path:
 with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
     root = Path(temporary)
     app = root / "app"
-    paths = service.managed_paths(app)
+    paths = managed_runtime.managed_paths(app)
     old = paths.version("1.0.0")
     old.mkdir(parents=True)
     data = root / "data"
     data.mkdir()
-    service.write_state(paths, {
+    managed_runtime.write_state(paths, {
         "data_dir": os.fspath(data), "host": "127.0.0.1", "port": 8000,
         "manifest_url": os.fspath(root / "gusto-release.json"),
-        "python_runtime": service.system_python_state(),
+        "python_runtime": managed_runtime.system_python_state(),
     })
-    service.write_current(paths, "1.0.0")
+    managed_runtime.write_current(paths, "1.0.0")
     manifest = fixture(root, "1.1.0")
 
     before = sorted(str(path.relative_to(app)) for path in app.rglob("*"))
@@ -123,8 +124,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
           and checked["latest_version"] == "1.1.0",
           "--check must report a newer semantic version")
     check(before == after, "--check must not mutate the installation")
-    with patch.object(service.sys, "prefix", os.fspath(old)), patch.object(
-        service, "default_app_root", side_effect=AssertionError("wrong app root"),
+    with patch.object(service.sys, "prefix", os.fspath(old)), patch.object(managed_runtime, "default_app_root", side_effect=AssertionError("wrong app root"),
     ):
         selected = update.run_update(check=True)
     check(selected["current_version"] == "1.0.0"
@@ -152,7 +152,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         return {"ok": True}
 
     def service_installer(paths_arg, state):
-        orchestration.append(("activate", service.read_current(paths_arg)["version"]))
+        orchestration.append(("activate", managed_runtime.read_current(paths_arg)["version"]))
         return {"ok": True}
 
     # Only verified, recognized Gusto versions are owned cleanup targets.
@@ -196,9 +196,9 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         ),
     )
     check(result["status"] == "updated"
-          and service.read_current(paths)["version"] == "1.1.0",
+          and managed_runtime.read_current(paths)["version"] == "1.1.0",
           "verified update must atomically select the new runtime")
-    python_state = service.read_state(paths)["python_runtime"]
+    python_state = managed_runtime.read_state(paths)["python_runtime"]
     check(orchestration[:3] == [
         (
             "install", "1.1.0", data.resolve(), "http://127.0.0.1:8000",
@@ -211,7 +211,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
     }], "activation health must bind version and data store")
     check(old.exists() and paths.version("1.1.0").exists(),
           "current and previous versions must remain side by side")
-    check(service.read_state(paths)["data_dir"] == os.fspath(data),
+    check(managed_runtime.read_state(paths)["data_dir"] == os.fspath(data),
           "updates must preserve the data path")
     check(result["removed_versions"] == ["0.8.0"]
           and not paths.version("0.8.0").exists()
@@ -223,14 +223,14 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
     # A competing update can finish while this caller fetches the manifest.
     # The current pointer and Python state must be read together under the
     # lock, including the state used when a later activation rolls back.
-    refreshed_paths = service.managed_paths(root / "refreshed-state-app")
+    refreshed_paths = managed_runtime.managed_paths(root / "refreshed-state-app")
     refreshed_paths.version("1.0.0").mkdir(parents=True)
     first_state = {
         "data_dir": os.fspath(data), "host": "127.0.0.1", "port": 8111,
-        "python_runtime": service.system_python_state(),
+        "python_runtime": managed_runtime.system_python_state(),
     }
-    service.write_state(refreshed_paths, first_state)
-    service.write_current(refreshed_paths, "1.0.0")
+    managed_runtime.write_state(refreshed_paths, first_state)
+    managed_runtime.write_current(refreshed_paths, "1.0.0")
     refreshed_state = {
         **first_state,
         "python_runtime": {**first_state["python_runtime"], "version": "3.14.1"},
@@ -243,8 +243,8 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         if not download_started:
             download_started = True
             refreshed_paths.version("1.0.1").mkdir()
-            service.write_current(refreshed_paths, "1.0.1")
-            service.write_state(refreshed_paths, refreshed_state)
+            managed_runtime.write_current(refreshed_paths, "1.0.1")
+            managed_runtime.write_state(refreshed_paths, refreshed_state)
         return update.fetch_bytes(location)
 
     def refreshed_installer(paths_arg, state):
@@ -274,10 +274,10 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         raise AssertionError("ZIP traversal must be rejected")
 
     managed_root = root / "managed-python-update"
-    managed_paths = service.managed_paths(managed_root / "app")
+    managed_paths = managed_runtime.managed_paths(managed_root / "app")
     managed_data = managed_root / "data"
     managed_data.mkdir(parents=True)
-    old_python = service.managed_python_root(managed_paths, "3.13.14")
+    old_python = managed_runtime.managed_python_root(managed_paths, "3.13.14")
     old_python.mkdir(parents=True)
     (old_python / "python.exe").write_bytes(b"old-python")
     old_runtime = managed_paths.version("1.0.0")
@@ -286,19 +286,19 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         "version": "1.0.0", "verified": True,
         "python_runtime": "3.13.14",
     }), encoding="utf-8")
-    service.write_state(managed_paths, {
+    managed_runtime.write_state(managed_paths, {
         "data_dir": os.fspath(managed_data),
         "host": "127.0.0.1",
         "port": 8010,
         "manifest_url": "fixture",
-        "python_runtime": service.managed_python_state(
+        "python_runtime": managed_runtime.managed_python_state(
             managed_paths, "3.13.14", "1" * 64,
         ),
     })
-    service.write_current(managed_paths, "1.0.0")
+    managed_runtime.write_current(managed_paths, "1.0.0")
 
     def fake_python_installer(paths_arg, source, version, sha256, **kwargs):
-        target = service.managed_python_root(paths_arg, version)
+        target = managed_runtime.managed_python_root(paths_arg, version)
         target.mkdir(parents=True, exist_ok=True)
         executable = target / "python.exe"
         executable.write_bytes(b"managed-python")
@@ -320,7 +320,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         managed_root, "1.1.0", python_version="3.14.0",
     )
     with patch.object(
-        update.service, "install_managed_python",
+        managed_runtime, "install_managed_python",
         side_effect=fake_python_installer,
     ):
         managed_result = update.run_update(
@@ -331,10 +331,10 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
             service_installer=lambda *args, **kwargs: {"ok": True},
             health_waiter=lambda *args, **kwargs: {"ok": True},
         )
-    managed_state = service.read_state(managed_paths)
+    managed_state = managed_runtime.read_state(managed_paths)
     check(managed_result["status"] == "updated"
           and managed_state["python_runtime"]["version"] == "3.14.0"
-          and service.managed_python_root(
+          and managed_runtime.managed_python_root(
               managed_paths, "3.14.0",
           ).is_dir()
           and old_python.is_dir(),
@@ -353,7 +353,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         return {"ok": True}
 
     with patch.object(
-        update.service, "install_managed_python",
+        managed_runtime, "install_managed_python",
         side_effect=fake_python_installer,
     ):
         try:
@@ -369,9 +369,9 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
             checks += 1
         else:
             raise AssertionError("managed Python activation failure must roll back")
-    check(service.read_state(managed_paths)["python_runtime"]["version"] == "3.14.0"
-          and service.read_current(managed_paths)["version"] == "1.1.0"
-          and not service.managed_python_root(managed_paths, "3.15.0").exists(),
+    check(managed_runtime.read_state(managed_paths)["python_runtime"]["version"] == "3.14.0"
+          and managed_runtime.read_current(managed_paths)["version"] == "1.1.0"
+          and not managed_runtime.managed_python_root(managed_paths, "3.15.0").exists(),
           "rollback must restore Python state and remove its unused runtime")
 
     try:
@@ -381,7 +381,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
     else:
         raise AssertionError("checksum mismatch must fail")
 
-    stage_paths = service.managed_paths(root / "staging-app")
+    stage_paths = managed_runtime.managed_paths(root / "staging-app")
     stage_paths.versions.mkdir(parents=True)
     abandoned = stage_paths.versions / ".staging-2.0.0-abandoned"
     abandoned.mkdir()
@@ -392,9 +392,9 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         (target / ("Scripts" if os.name == "nt" else "bin")).mkdir(
             parents=True,
         )
-        service.runtime_python(target).write_bytes(b"python")
+        managed_runtime.runtime_python(target).write_bytes(b"python")
 
-    installed = update.install_runtime(
+    installed = managed_runtime.prepare_release_runtime(
         stage_paths, "2.0.0", wheel, data,
         base_python=Path(sys.executable),
         python_version="3.13.14",
@@ -415,10 +415,33 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
           and settings["data_dir"] == os.fspath(data.resolve()),
           "updated runtime must retain the configured server and data locations")
 
+    # Reuse policy belongs to lifecycle preparation: update trusts a matching
+    # verified marker, while installer repair must execute its web-readiness probe.
+    probe_calls = []
+
+    def fail_live_probe(command, **kwargs):
+        probe_calls.append(command)
+        return subprocess.CompletedProcess(command, 1, "", "broken dependencies")
+
+    def forbid_rebuild(*args, **kwargs):
+        raise AssertionError("a verified update runtime must be reused")
+
+    with patch.object(managed_runtime.subprocess, "run", side_effect=fail_live_probe):
+        reused = managed_runtime.prepare_release_runtime(
+            stage_paths, "2.0.0", wheel, data,
+            base_python=Path(sys.executable), python_version="3.13.14",
+            runner=forbid_rebuild, environment_builder=forbid_rebuild,
+        )
+        check(reused == installed and not probe_calls,
+              "update reuse must not silently acquire install/repair's live-probe policy")
+        check(not managed_runtime.runtime_is_usable(installed, "2.0.0", "3.13.14")
+              and len(probe_calls) == 1 and probe_calls[0][1:3] == ["-I", "-c"],
+              "installer repair must reject failed live readiness in an isolated interpreter")
+
     # A mocked pip runner cannot detect broken absolute paths in generated
     # launchers. Exercise the real console and GUI entry points without any
     # network dependency or service registration.
-    actual_paths = service.managed_paths(root / "real runtime app")
+    actual_paths = managed_runtime.managed_paths(root / "real runtime app")
     fixture_wheel = installable_wheel(root, "7.8.9")
     offline_environment = {
         **os.environ,
@@ -429,15 +452,15 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
     def offline_runner(command, **kwargs):
         return subprocess.run(command, env=offline_environment, cwd=root, **kwargs)
 
-    actual_runtime = update.install_runtime(
+    actual_runtime = managed_runtime.prepare_release_runtime(
         actual_paths, "7.8.9", fixture_wheel, data,
         base_python=Path(sys.executable),
         python_version=".".join(map(str, sys.version_info[:3])),
         runner=offline_runner,
     )
     for launcher in (
-        service.runtime_command(actual_runtime),
-        (service.runtime_autostart(actual_runtime) if os.name == "nt"
+        managed_runtime.runtime_command(actual_runtime),
+        (managed_runtime.runtime_autostart(actual_runtime) if os.name == "nt"
          else actual_runtime / "bin" / "gusto-autostart"),
     ):
         launched = subprocess.run(
@@ -464,8 +487,8 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
     attempts = [root / f"update-lock-attempt-{index}" for index in range(4)]
     race_code = (
         "import sys,time; from pathlib import Path; "
-        "from gusto import service,update; "
-        "paths=service.managed_paths(Path(sys.argv[1])); "
+        "from gusto import runtime as managed_runtime,update; "
+        "paths=managed_runtime.managed_paths(Path(sys.argv[1])); "
         "barrier=Path(sys.argv[2]); "
         "attempt=Path(sys.argv[3]); release=Path(sys.argv[4]); "
         "\nwhile not barrier.exists(): time.sleep(0.005)\n"
@@ -517,16 +540,16 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
 
 # ==== F1: rollback stops before restart ====
     rollback_app = root / "rollback-app"
-    rollback_paths = service.managed_paths(rollback_app)
+    rollback_paths = managed_runtime.managed_paths(rollback_app)
     rollback_paths.version("1.0.0").mkdir(parents=True)
     rollback_data = root / "rollback-data"
     rollback_data.mkdir(exist_ok=True)
-    service.write_state(rollback_paths, {
+    managed_runtime.write_state(rollback_paths, {
         "data_dir": os.fspath(rollback_data), "host": "127.0.0.1", "port": 8031,
         "manifest_url": "fixture",
-        "python_runtime": service.system_python_state(),
+        "python_runtime": managed_runtime.system_python_state(),
     })
-    service.write_current(rollback_paths, "1.0.0")
+    managed_runtime.write_current(rollback_paths, "1.0.0")
     rollback_manifest = fixture(root, "1.1.0")
     events = []
 
@@ -544,7 +567,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         return {"ok": True}
 
     def rollback_service_installer(paths_arg, state):
-        events.append(("activate", service.read_current(paths_arg)["version"]))
+        events.append(("activate", managed_runtime.read_current(paths_arg)["version"]))
         return {"ok": True}
 
     def switch_then_fail(url, **kwargs):
@@ -572,7 +595,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         ("health", "1.0.0"),
     ], "the rollback must stop the failed instance before it restarts the "
        "previous runtime, so the restored version is the one that serves")
-    check(service.read_current(rollback_paths)["version"] == "1.0.0"
+    check(managed_runtime.read_current(rollback_paths)["version"] == "1.0.0"
           and not rollback_paths.version("1.1.0").exists(),
           "the rollback must restore the pointer and drop the failed runtime")
 # ==== F1 end ====
@@ -607,7 +630,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
     check(events[-4:] == [
         ("health", "1.1.0"), ("stop",), ("activate", "1.0.0"),
         ("health", "1.0.0"),
-    ] and service.read_current(rollback_paths)["version"] == "1.0.0"
+    ] and managed_runtime.read_current(rollback_paths)["version"] == "1.0.0"
           and rollback_paths.version("1.0.0").is_dir()
           and rollback_paths.version("1.1.0").is_dir(),
           "rollback must attempt old-version health after stopping the failed service; "
@@ -624,21 +647,21 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
     else:
         raise AssertionError(
             "a missing install state must surface as UpdateError, never as "
-            "a raw service error"
+            "a raw preparation error"
         )
     check("Installationszustand" in contract_message,
-          "the wrapped update error must keep the German service message")
+          "the wrapped update error must keep the German preparation message")
 
-    service_error_manifest = fixture(root, "1.3.0")
+    preparation_error_manifest = fixture(root, "1.3.0")
 
-    def failing_service_error_installer(*args, **kwargs):
-        raise service.ServiceError("forced runtime ServiceError")
+    def failing_runtime_installer(*args, **kwargs):
+        raise managed_runtime.RuntimePreparationError("forced runtime preparation failure")
 
-    before_contract = service.read_current(paths)["version"]
+    before_contract = managed_runtime.read_current(paths)["version"]
     try:
         update.run_update(
-            app_root=app, manifest_url=os.fspath(service_error_manifest),
-            runtime_installer=failing_service_error_installer,
+            app_root=app, manifest_url=os.fspath(preparation_error_manifest),
+            runtime_installer=failing_runtime_installer,
             service_controller=lambda *args, **kwargs: {"ok": True},
             service_installer=lambda *args, **kwargs: {"ok": True},
             health_waiter=lambda *args, **kwargs: {"ok": True},
@@ -647,9 +670,9 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         checks += 1
     else:
         raise AssertionError(
-            "a runtime ServiceError must surface as UpdateError"
+            "a runtime preparation error must surface as UpdateError"
         )
-    check(service.read_current(paths)["version"] == before_contract
+    check(managed_runtime.read_current(paths)["version"] == before_contract
           and not paths.version("1.3.0").exists(),
           "a pre-activation service failure must not switch anything")
 # ==== F2a end ====
@@ -663,13 +686,13 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         source, runtime, version, data_dir, server_url, **kwargs,
     ):
         try:
-            with update.update_lock(service.managed_paths(runtime.parent.parent)):
+            with update.update_lock(managed_runtime.managed_paths(runtime.parent.parent)):
                 lock_states.append("free")
         except update.UpdateError:
             lock_states.append("held")
 
     with (
-        patch.object(install, "install_source_runtime",
+        patch.object(managed_runtime, "prepare_source_runtime",
                      side_effect=observing_runtime_installer),
         patch.object(install, "write_wrappers",
                      side_effect=fake_installer_wrappers),
@@ -685,7 +708,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
           "the installer must hold the app update lock while it builds and "
           "publishes the runtime")
 
-    contended_paths = service.managed_paths(root / "contended-app")
+    contended_paths = managed_runtime.managed_paths(root / "contended-app")
     contended_paths.app_root.mkdir(parents=True)
     contended_paths.state.write_text("{}\n", encoding="utf-8")
     contended_paths.current.write_text("{}\n", encoding="utf-8")
@@ -716,7 +739,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
           "before it mutates the app root")
 
     for concurrent_kind in ("managed", "foreign"):
-        concurrent_paths = service.managed_paths(root / f"concurrent-{concurrent_kind}")
+        concurrent_paths = managed_runtime.managed_paths(root / f"concurrent-{concurrent_kind}")
         concurrent_data = root / f"concurrent-{concurrent_kind}-data"
         real_lock = update.update_lock
         concurrent_snapshot = {}
@@ -726,12 +749,12 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
             paths_arg.app_root.mkdir(parents=True)
             if concurrent_kind == "managed":
                 paths_arg.version(gusto.__version__).mkdir(parents=True)
-                service.write_state(paths_arg, {
+                managed_runtime.write_state(paths_arg, {
                     "data_dir": os.fspath(concurrent_data),
                     "host": "127.0.0.1", "port": 8222,
-                    "python_runtime": service.system_python_state(),
+                    "python_runtime": managed_runtime.system_python_state(),
                 })
-                service.write_current(paths_arg, gusto.__version__)
+                managed_runtime.write_current(paths_arg, gusto.__version__)
             sentinel = paths_arg.app_root / "owned-by-other-process.txt"
             sentinel.write_text("preserve me", encoding="utf-8")
             concurrent_snapshot.update({
@@ -744,7 +767,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         concurrent_output = StringIO()
         with (
             patch.object(update, "update_lock", finish_before_lock_acquisition),
-            patch.object(install, "install_source_runtime") as unexpected_install,
+            patch.object(managed_runtime, "prepare_source_runtime") as unexpected_install,
             patch.object(service, "remove_user_service") as unexpected_removal,
             redirect_stdout(concurrent_output),
         ):
@@ -767,7 +790,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
 # ==== F2 end ====
 
 # ==== F4: stale update lock recovery ====
-    stale_paths = service.managed_paths(root / "stale-lock-app")
+    stale_paths = managed_runtime.managed_paths(root / "stale-lock-app")
     stale_lock = stale_paths.app_root / ".update.lock"
     stale_lock.parent.mkdir(parents=True)
     stale_lock.write_bytes(b"")
@@ -784,7 +807,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
     check(stale_lock.stat().st_size == 1,
           "a reclaimed lock must be re-initialized for the next holder")
 
-    initializing_paths = service.managed_paths(root / "initializing-lock-app")
+    initializing_paths = managed_runtime.managed_paths(root / "initializing-lock-app")
     initializing_lock = initializing_paths.app_root / ".update.lock"
     initializing_lock.parent.mkdir(parents=True)
     initializing_lock.write_bytes(b"")
@@ -802,18 +825,18 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
 # ==== F4 end ====
 
 # ==== F5: repair verifies runtime removal ====
-    repair_paths = service.managed_paths(root / "repair-app")
+    repair_paths = managed_runtime.managed_paths(root / "repair-app")
     repair_data = root / "repair-data"
     repair_data.mkdir()
     repair_runtime = repair_paths.version(gusto.__version__)
     repair_runtime.mkdir(parents=True)
     (repair_runtime / "leftover.txt").write_text("partial", encoding="utf-8")
-    service.write_state(repair_paths, {
+    managed_runtime.write_state(repair_paths, {
         "data_dir": os.fspath(repair_data), "host": "127.0.0.1", "port": 8021,
         "manifest_url": "fixture",
-        "python_runtime": service.system_python_state(),
+        "python_runtime": managed_runtime.system_python_state(),
     })
-    service.write_current(repair_paths, gusto.__version__)
+    managed_runtime.write_current(repair_paths, gusto.__version__)
     rebuilt = []
     repair_output = StringIO()
 
@@ -826,7 +849,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         return None
 
     with (
-        patch.object(install, "install_source_runtime",
+        patch.object(managed_runtime, "prepare_source_runtime",
                      side_effect=repairing_runtime_installer),
         patch.object(install.shutil, "rmtree", side_effect=blocked_rmtree),
         patch.object(install, "write_wrappers",
@@ -852,27 +875,25 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
 
 # ==== F5b: venv marker guard ====
     guarded_runtime = root / "guarded-runtime"
-    guarded_python = install.venv_python(guarded_runtime)
+    guarded_python = managed_runtime.runtime_python(guarded_runtime)
     guarded_python.parent.mkdir(parents=True)
     guarded_python.write_bytes(b"stale-python")
     venv_calls = []
 
-    class FakeServiceLoader:
-        @staticmethod
-        def create_virtual_environment(base, target):
-            venv_calls.append(target)
-            python = install.venv_python(target)
-            python.parent.mkdir(parents=True, exist_ok=True)
-            python.write_bytes(b"python")
-            (target / "pyvenv.cfg").write_text("home=x\n", encoding="utf-8")
+    def create_environment(base, target):
+        venv_calls.append(target)
+        python = managed_runtime.runtime_python(target)
+        python.parent.mkdir(parents=True, exist_ok=True)
+        python.write_bytes(b"python")
+        (target / "pyvenv.cfg").write_text("home=x\n", encoding="utf-8")
 
     with (
-        patch.object(install, "load_service_module",
-                     return_value=FakeServiceLoader),
-        patch.object(install.subprocess, "run",
+        patch.object(managed_runtime, "create_virtual_environment",
+                     side_effect=create_environment),
+        patch.object(managed_runtime.subprocess, "run",
                      return_value=subprocess.CompletedProcess([], 0, "", "")),
     ):
-        install.install_source_runtime(
+        managed_runtime.prepare_source_runtime(
             ROOT, guarded_runtime, "9.9.9", root / "guarded-data",
             "http://127.0.0.1:8123", base_python=Path(sys.executable),
             python_version="3.13.14",

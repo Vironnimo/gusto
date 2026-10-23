@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.fspath(ROOT))
 
 import install  # noqa: E402
-from gusto import service  # noqa: E402
+from gusto import runtime as managed_runtime, service  # noqa: E402
 import gusto.core.storage as core_storage  # noqa: E402
 
 checks = 0
@@ -33,12 +33,12 @@ with tempfile.TemporaryDirectory(prefix="gusto-paths-") as temporary:
         "XDG_CONFIG_HOME": os.fspath(root / "xdg-config"),
     }
     check(
-        service.default_app_root("win32", environment, home)
+        managed_runtime.default_app_root("win32", environment, home)
         == (root / "Local" / "Programs" / "Gusto").resolve(),
         "Windows app must live under the current user's LOCALAPPDATA",
     )
     check(
-        service.default_app_root("linux", environment, home)
+        managed_runtime.default_app_root("linux", environment, home)
         == (home / ".local" / "opt" / "gusto").resolve(),
         "Linux app must live under the current user's ~/.local/opt",
     )
@@ -58,23 +58,23 @@ with tempfile.TemporaryDirectory(prefix="gusto-paths-") as temporary:
         "Linux data must honor XDG_DATA_HOME",
     )
 
-    paths = service.managed_paths(root / "app")
+    paths = managed_runtime.managed_paths(root / "app")
     runtime = paths.version("2.3.4")
     runtime.mkdir(parents=True)
-    service.write_current(paths, "2.3.4", previous_version="2.3.3")
-    service.write_state(paths, {
+    managed_runtime.write_current(paths, "2.3.4", previous_version="2.3.3")
+    managed_runtime.write_state(paths, {
         "data_dir": os.fspath(root / "data"),
         "host": "0.0.0.0", "port": 8000,
-        "python_runtime": service.system_python_state(),
+        "python_runtime": managed_runtime.system_python_state(),
     })
-    check(Path(service.read_current(paths)["runtime"]) == runtime,
+    check(Path(managed_runtime.read_current(paths)["runtime"]) == runtime,
           "pointer runtime must be derived inside versions/")
     check(paths.current.parent == paths.app_root
           and paths.state.parent == paths.app_root,
           "pointer and state must be stable siblings of versions/")
     try:
-        service.managed_paths(Path.home())
-    except service.ServiceError:
+        managed_runtime.managed_paths(Path.home())
+    except managed_runtime.RuntimePreparationError:
         checks += 1
     else:
         raise AssertionError("home directory must be rejected as an app root")
@@ -117,7 +117,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-paths-") as temporary:
             check(settings.read_text(encoding="utf-8") == invalid_settings,
                   "path discovery must never repair or rewrite invalid settings")
 
-    settings_written = install.write_instance_settings(
+    settings_written = managed_runtime.write_settings(
         root / "new-runtime", configured, "http://127.0.0.1:9123",
     )
     settings_value = json.loads(settings_written.read_text(encoding="utf-8"))

@@ -1,9 +1,8 @@
-"""Per-user managed runtime and background-service lifecycle for Gusto."""
+"""Current-user service registration, control and health verification."""
 from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -11,59 +10,21 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import runtime as managed_runtime
 
-CURRENT_FILENAME = "current.json"
-STATE_FILENAME = "install-state.json"
+
 TASK_NAME = "Gusto"
 UNIT_NAME = "gusto.service"
-STATE_SCHEMA = 2
 
 
 class ServiceError(RuntimeError):
-    """Raised when a managed runtime or its user service is invalid."""
+    """Raised when a user service cannot be registered, controlled or verified."""
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
-
-
-@dataclass(frozen=True)
-class ManagedPaths:
-    app_root: Path
-    versions: Path
-    python_runtimes: Path
-    wrappers: Path
-    current: Path
-    state: Path
-
-    def version(self, version: str) -> Path:
-        validate_version(version)
-        candidate = (self.versions / version).resolve()
-        if not candidate.is_relative_to(self.versions):
-            raise ServiceError("Ungültiger Versionspfad.")
-        return candidate
-
-
-def default_app_root(
-    platform_name: str | None = None,
-    environ: dict[str, str] | None = None,
-    home: str | Path | None = None,
-) -> Path:
-    """Return Gusto's normal, unprivileged application root."""
-    platform_name = platform_name or sys.platform
-    environ = os.environ if environ is None else environ
-    user_home = Path.home() if home is None else Path(home)
-    if platform_name.startswith("win"):
-        base = Path(environ.get("LOCALAPPDATA") or
-                    user_home / "AppData" / "Local")
-        return (base / "Programs" / "Gusto").expanduser().resolve()
-    if platform_name == "darwin":
-        return (user_home / "Library" / "Application Support" /
-                "Gusto" / "app").resolve()
-    return (user_home / ".local" / "opt" / "gusto").resolve()
 
 
 def default_linux_unit_path(
@@ -76,366 +37,8 @@ def default_linux_unit_path(
     return (base / "systemd" / "user" / UNIT_NAME).expanduser().resolve()
 
 
-def managed_paths(app_root: str | Path | None = None) -> ManagedPaths:
-    """Use an explicit root, the executing managed runtime, or the user default."""
-    if app_root is None:
-        runtime = Path(sys.prefix).resolve()
-        candidate = runtime.parent.parent
-        if (runtime.parent.name == "versions"
-                and (candidate / STATE_FILENAME).is_file()
-                and (candidate / CURRENT_FILENAME).is_file()):
-            app_root = candidate
-        else:
-            app_root = default_app_root()
-    root = Path(app_root).expanduser().resolve()
-    home = Path.home().resolve()
-    if root == Path(root.anchor).resolve() or root == home:
-        raise ServiceError("Der App-Pfad ist zu breit für eine verwaltete Installation.")
-    return ManagedPaths(
-        app_root=root,
-        versions=(root / "versions").resolve(),
-        python_runtimes=(root / "python").resolve(),
-        wrappers=(root / "bin").resolve(),
-        current=(root / CURRENT_FILENAME).resolve(),
-        state=(root / STATE_FILENAME).resolve(),
-    )
-
-
-def validate_version(version: str) -> str:
-    """Accept a conservative SemVer value suitable as one directory name."""
-    import re
-    if not re.fullmatch(
-        r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
-        r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
-        r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?",
-        version,
-    ):
-        raise ServiceError(f"Ungültige Release-Version: {version!r}")
-    return version
-
-
-def version_key(version: str) -> tuple[tuple[int, int, int], tuple[tuple[int, Any], ...]]:
-    """Return a SemVer comparison key (build metadata is ignored)."""
-    validate_version(version)
-    core = version.split("+", 1)[0]
-    numeric, separator, prerelease = core.partition("-")
-    major, minor, patch = (int(value) for value in numeric.split("."))
-    if not separator:
-        pre_key: tuple[tuple[int, Any], ...] = ((2, ""),)
-    else:
-        fields: list[tuple[int, Any]] = []
-        for value in prerelease.split("."):
-            fields.append((0, int(value)) if value.isdigit() else (1, value))
-        pre_key = tuple(fields)
-    return (major, minor, patch), pre_key
-
-
-def _atomic_json(path: Path, value: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
-    try:
-        temporary.write_text(
-            json.dumps(value, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(temporary, path)
-    finally:
-        # A failed replace is exactly the case where the target is temporarily
-        # locked, so the half-written sibling must not survive the attempt.
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-
-def read_json_object(path: Path, label: str) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError as error:
-        raise ServiceError(f"{label} fehlt: {path}") from error
-    except (OSError, json.JSONDecodeError) as error:
-        raise ServiceError(f"{label} ist nicht lesbar: {error}") from error
-    if not isinstance(value, dict):
-        raise ServiceError(f"{label} muss ein JSON-Objekt sein.")
-    return value
-
-
-def read_state(paths: ManagedPaths) -> dict[str, Any]:
-    state = read_json_object(paths.state, "Installationszustand")
-    if state.get("schema_version") != STATE_SCHEMA:
-        raise ServiceError("Unbekannte Version des Installationszustands.")
-    for field in ("data_dir", "host", "port"):
-        if field not in state:
-            raise ServiceError(f"Installationszustand enthält kein {field!r}.")
-    host = state.get("host")
-    if not isinstance(host, str) or not host or "/" in host or " " in host:
-        raise ServiceError("Installationszustand enthält keinen gültigen Host.")
-    port = state.get("port")
-    if (isinstance(port, bool) or not isinstance(port, int)
-            or not 1 <= port <= 65535):
-        raise ServiceError("Installationszustand enthält keinen gültigen Port.")
-    python_runtime = state.get("python_runtime")
-    if (not isinstance(python_runtime, dict)
-            or python_runtime.get("kind") not in {"managed", "system"}
-            or not isinstance(python_runtime.get("version"), str)
-            or not isinstance(python_runtime.get("path"), str)):
-        raise ServiceError(
-            "Installationszustand enthält keine gültige Python-Runtime."
-        )
-    try:
-        validate_python_version(str(python_runtime["version"]))
-        if python_runtime["kind"] == "managed":
-            _python_runtime_marker(
-                str(python_runtime["version"]),
-                str(python_runtime.get("sha256") or ""),
-            )
-    except ServiceError as error:
-        raise ServiceError(
-            "Installationszustand enthält keine gültige Python-Runtime."
-        ) from error
-    return state
-
-
-def write_state(paths: ManagedPaths, state: dict[str, object]) -> None:
-    value = dict(state)
-    value["schema_version"] = STATE_SCHEMA
-    _atomic_json(paths.state, value)
-
-
-def read_current(paths: ManagedPaths, *, require_runtime: bool = True) -> dict[str, Any]:
-    current = read_json_object(paths.current, "Aktiver Versionszeiger")
-    version = current.get("version")
-    if not isinstance(version, str):
-        raise ServiceError("Aktiver Versionszeiger enthält keine Version.")
-    runtime = paths.version(validate_version(version))
-    stored_path = current.get("runtime")
-    if stored_path and Path(str(stored_path)).resolve() != runtime:
-        raise ServiceError("Aktiver Versionszeiger verweist aus dem App-Root.")
-    if require_runtime and not runtime.is_dir():
-        raise ServiceError(f"Aktive Runtime fehlt: {runtime}")
-    return {**current, "version": version, "runtime": os.fspath(runtime)}
-
-
-def write_current(
-    paths: ManagedPaths,
-    version: str,
-    *,
-    previous_version: str | None = None,
-) -> None:
-    runtime = paths.version(version)
-    value: dict[str, object] = {
-        "schema_version": STATE_SCHEMA,
-        "version": version,
-        "runtime": os.fspath(runtime),
-    }
-    if previous_version:
-        validate_version(previous_version)
-        value["previous_version"] = previous_version
-    _atomic_json(paths.current, value)
-
-
-def runtime_python(runtime: Path, platform_name: str | None = None) -> Path:
-    platform_name = platform_name or sys.platform
-    return (runtime / "Scripts" / "python.exe" if platform_name.startswith("win")
-            else runtime / "bin" / "python")
-
-
-def validate_python_version(version: str) -> str:
-    if not isinstance(version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", version):
-        raise ServiceError(f"Ungültige Python-Version: {version!r}")
-    return version
-
-
-def managed_python_root(paths: ManagedPaths, version: str) -> Path:
-    validate_python_version(version)
-    candidate = (paths.python_runtimes / version).resolve()
-    if not candidate.is_relative_to(paths.python_runtimes):
-        raise ServiceError("Ungültiger Pfad der verwalteten Python-Runtime.")
-    return candidate
-
-
-def base_python(root: Path, platform_name: str | None = None) -> Path:
-    platform_name = platform_name or sys.platform
-    return (root / "python.exe" if platform_name.startswith("win")
-            else root / "bin" / "python")
-
-
-def _python_runtime_marker(version: str, sha256: str) -> dict[str, object]:
-    if (not isinstance(sha256, str) or len(sha256) != 64
-            or any(value not in "0123456789abcdef" for value in sha256.lower())):
-        raise ServiceError("Ungültige SHA-256 der Python-Runtime.")
-    return {
-        "schema_version": 1,
-        "kind": "managed",
-        "version": validate_python_version(version),
-        "sha256": sha256.lower(),
-        "architecture": "x86_64",
-    }
-
-
-def managed_python_usable(root: Path, version: str, sha256: str) -> bool:
-    try:
-        marker = read_json_object(
-            root / ".gusto-python-runtime.json", "Python-Runtime-Markierung",
-        )
-    except ServiceError:
-        return False
-    if marker != _python_runtime_marker(version, sha256):
-        return False
-    python = base_python(root, "win32")
-    if not python.is_file():
-        return False
-    try:
-        result = subprocess.run(
-            [
-                os.fspath(python), "-I", "-c",
-                "import struct,sys; print('.'.join(map(str,sys.version_info[:3]))); "
-                "print(struct.calcsize('P') * 8)",
-            ],
-            text=True, encoding="utf-8", errors="replace", capture_output=True,
-        )
-    except OSError:
-        return False
-    return result.returncode == 0 and result.stdout.splitlines() == [version, "64"]
-
-
-def install_managed_python(
-    paths: ManagedPaths,
-    source: Path,
-    version: str,
-    sha256: str,
-    *,
-    replace: bool = False,
-) -> Path:
-    """Stage and publish one app-owned, registry-free Windows Python."""
-    source = source.expanduser().resolve()
-    source_python = base_python(source, "win32")
-    if not source_python.is_file():
-        raise ServiceError(f"Python-Runtime-Quelle ist unvollständig: {source}")
-    for item in source.rglob("*"):
-        if item.is_symlink():
-            raise ServiceError(
-                f"Python-Runtime enthält einen symbolischen Link: {item}"
-            )
-    probe = subprocess.run(
-        [
-            os.fspath(source_python), "-I", "-c",
-            "import struct,sys; print('.'.join(map(str,sys.version_info[:3]))); "
-            "print(struct.calcsize('P') * 8)",
-        ],
-        text=True, encoding="utf-8", errors="replace", capture_output=True,
-    )
-    if probe.returncode or probe.stdout.splitlines() != [version, "64"]:
-        raise ServiceError(
-            "Python-Runtime-Quelle meldet nicht die erwartete Version/Architektur."
-        )
-
-    target = managed_python_root(paths, version)
-    if target.exists() and managed_python_usable(target, version, sha256):
-        return base_python(target, "win32")
-    if target.exists() and not replace:
-        raise ServiceError(
-            f"Vorhandene Python-Runtime ist nicht verifiziert: {target}."
-        )
-    paths.python_runtimes.mkdir(parents=True, exist_ok=True)
-    staging = paths.python_runtimes / f".staging-{version}-{os.getpid()}"
-    if staging.exists():
-        shutil.rmtree(staging)
-    try:
-        shutil.copytree(source, staging)
-        _atomic_json(
-            staging / ".gusto-python-runtime.json",
-            _python_runtime_marker(version, sha256),
-        )
-        if not managed_python_usable(staging, version, sha256):
-            raise ServiceError("Kopierte Python-Runtime hat die Prüfung nicht bestanden.")
-        if target.exists():
-            shutil.rmtree(target)
-        os.replace(staging, target)
-    except Exception:
-        shutil.rmtree(staging, ignore_errors=True)
-        raise
-    return base_python(target, "win32")
-
-
-def managed_python_state(
-    paths: ManagedPaths,
-    version: str,
-    sha256: str,
-) -> dict[str, str]:
-    root = managed_python_root(paths, version)
-    marker = _python_runtime_marker(version, sha256)
-    return {
-        "kind": "managed",
-        "version": str(marker["version"]),
-        "path": os.fspath(root),
-        "sha256": str(marker["sha256"]),
-    }
-
-
-def system_python_state(executable: str | Path | None = None) -> dict[str, str]:
-    executable = Path(
-        executable or getattr(sys, "_base_executable", sys.executable)
-    ).expanduser().resolve()
-    return {
-        "kind": "system",
-        "version": ".".join(str(value) for value in sys.version_info[:3]),
-        "path": os.fspath(executable),
-    }
-
-
-def state_base_python(paths: ManagedPaths, state: dict[str, Any]) -> Path:
-    runtime = state.get("python_runtime")
-    if not isinstance(runtime, dict):
-        raise ServiceError("Installationszustand enthält keine Python-Runtime.")
-    kind = runtime.get("kind")
-    version = runtime.get("version")
-    path = runtime.get("path")
-    if not isinstance(version, str) or not isinstance(path, str):
-        raise ServiceError("Installationszustand enthält eine ungültige Python-Runtime.")
-    if kind == "managed":
-        sha256 = runtime.get("sha256")
-        expected = managed_python_root(paths, version)
-        if Path(path).expanduser().resolve() != expected:
-            raise ServiceError("Python-Runtime verweist aus dem App-Root.")
-        if not isinstance(sha256, str) or not managed_python_usable(
-            expected, version, sha256,
-        ):
-            raise ServiceError("Verwaltete Python-Runtime ist nicht verwendbar.")
-        return base_python(expected, "win32")
-    if kind == "system":
-        executable = Path(path).expanduser().resolve()
-        if executable.is_relative_to(paths.app_root) or not executable.is_file():
-            raise ServiceError("System-Python der Installation ist nicht verwendbar.")
-        return executable
-    raise ServiceError(f"Unbekannte Python-Runtime-Art: {kind!r}")
-
-
-def create_virtual_environment(base: Path, target: Path) -> None:
-    result = subprocess.run(
-        [os.fspath(base), "-I", "-m", "venv", os.fspath(target)],
-        text=True, encoding="utf-8", errors="replace", capture_output=True,
-    )
-    if result.returncode:
-        detail = (result.stderr or result.stdout or "").strip()
-        raise ServiceError(
-            "Virtuelle Umgebung konnte nicht erstellt werden"
-            + (f": {detail}" if detail else ".")
-        )
-
-
-def runtime_command(runtime: Path, platform_name: str | None = None) -> Path:
-    platform_name = platform_name or sys.platform
-    return (runtime / "Scripts" / "gusto.exe" if platform_name.startswith("win")
-            else runtime / "bin" / "gusto")
-
-
-def runtime_autostart(runtime: Path) -> Path:
-    return runtime / "Scripts" / "gusto-autostart.exe"
-
-
 def register_windows_app(
-    paths: ManagedPaths,
+    paths: managed_runtime.ManagedPaths,
     state: dict[str, Any],
     version: str,
 ) -> dict[str, str]:
@@ -585,9 +188,12 @@ def wait_for_unhealthy(
         time.sleep(interval)
 
 
-def render_linux_unit(paths: ManagedPaths, state: dict[str, Any]) -> str:
-    current = read_current(paths)
-    python = runtime_python(Path(current["runtime"]), "linux")
+def render_linux_unit(paths: managed_runtime.ManagedPaths, state: dict[str, Any]) -> str:
+    try:
+        current = managed_runtime.read_current(paths)
+    except managed_runtime.RuntimePreparationError as error:
+        raise ServiceError(str(error)) from error
+    python = managed_runtime.runtime_python(Path(current["runtime"]), "linux")
     data_dir = Path(str(state["data_dir"])).expanduser().resolve()
     host = str(state.get("host", "0.0.0.0"))
     port = int(state.get("port", 8000))
@@ -637,7 +243,7 @@ def _run(
 
 
 def install_user_service(
-    paths: ManagedPaths,
+    paths: managed_runtime.ManagedPaths,
     state: dict[str, Any],
     *,
     platform_name: str | None = None,
@@ -648,12 +254,15 @@ def install_user_service(
 ) -> dict[str, object]:
     """Install/switch and immediately start Gusto's current-user service."""
     platform_name = platform_name or sys.platform
-    current = read_current(paths)
+    try:
+        current = managed_runtime.read_current(paths)
+    except managed_runtime.RuntimePreparationError as error:
+        raise ServiceError(str(error)) from error
     runtime = Path(current["runtime"])
     actions: list[list[str]] = []
     if platform_name.startswith("win"):
         powershell = shutil.which("powershell.exe") or "powershell.exe"
-        launcher = runtime_autostart(runtime)
+        launcher = managed_runtime.runtime_autostart(runtime)
         if not dry_run and not launcher.is_file():
             raise ServiceError(f"Autostart-Launcher fehlt: {launcher}")
         host = str(state.get("host", "0.0.0.0"))
@@ -748,7 +357,7 @@ Register-ScheduledTask -TaskName "Gusto" -Action $action -Trigger $trigger `
 
 
 def remove_user_service(
-    paths: ManagedPaths,
+    paths: managed_runtime.ManagedPaths,
     *,
     platform_name: str | None = None,
     dry_run: bool = False,
@@ -825,9 +434,12 @@ def service_action(
     """Dispatch a local status/start/stop/restart lifecycle operation."""
     if action not in {"status", "start", "stop", "restart"}:
         raise ServiceError(f"Unbekannte Service-Aktion: {action}")
-    paths = managed_paths(app_root)
-    state = read_state(paths)
-    current = read_current(paths)
+    try:
+        paths = managed_runtime.managed_paths(app_root)
+        state = managed_runtime.read_state(paths)
+        current = managed_runtime.read_current(paths)
+    except managed_runtime.RuntimePreparationError as error:
+        raise ServiceError(str(error)) from error
     platform_name = platform_name or sys.platform
     if platform_name.startswith("win"):
         powershell = shutil.which("powershell.exe") or "powershell.exe"
