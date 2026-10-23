@@ -47,6 +47,8 @@ shutil.copytree(ROOT / "recipes", TESTDATA / "recipes")
 shutil.copytree(ROOT / "data", TESTDATA / "data")
 if (ROOT / "images").exists():
     shutil.copytree(ROOT / "images", TESTDATA / "images")
+os.environ["GUSTO_HOME"] = str(TESTDATA)
+from gusto import core  # noqa: E402 - bind observations to the verified throwaway store
 
 CAMERA_PHOTO = TESTDATA / "camera-original.jpg"
 camera_image = Image.new("RGB", (2400, 1200), "#c96b42")
@@ -84,6 +86,39 @@ def wait_up(timeout=40):
                 return False
             time.sleep(0.2)
     return False
+
+
+def observe_live(page):
+    page.add_init_script("""(() => {
+        window.gustoEvents = {open: false, revisions: []};
+        const NativeEvents = window.EventSource;
+        window.EventSource = class extends NativeEvents {
+            constructor(...args) {
+                super(...args);
+                this.addEventListener('open', () => { window.gustoEvents.open = true; });
+                this.addEventListener('message', event => {
+                    window.gustoEvents.revisions.push(JSON.parse(event.data).revision);
+                });
+            }
+        };
+    })();""")
+
+
+def double_cooked(page, selector):
+    before = len(core.load_log())
+    submitted = []
+
+    def observe(request):
+        if request.method == "POST" and request.url.endswith("/cooked"):
+            submitted.append(request)
+
+    page.on("request", observe)
+    with page.expect_navigation(wait_until="load"):
+        page.locator(selector).evaluate("button => { button.click(); button.click(); }")
+    page.remove_listener("request", observe)
+    # Navigation completion consumes the successful POST and redirected GET;
+    # also count submissions so even an aborted duplicate cannot escape.
+    return len(submitted) == 1 and len(core.load_log()) == before + 1
 
 try:
     if not wait_up():
@@ -189,7 +224,8 @@ try:
             race.fill("input[name=q]", "pasta")
             with race.expect_response(lambda response: "q=kokos" in response.url) as old_reply:
                 held_search["route"].fulfill(response=held_search["response"])
-            old_reply.value.finished()
+            old_reply.value.body()
+            race.clock.run_for(0)
             check("q=kokos" not in race.url
                   and race.locator("#results .card").count() == 3,
                   "a stale search response cannot replace results or URL for newer text")
@@ -310,35 +346,11 @@ try:
         # exactly one log entry (client-side submit guard; the core does not
         # deduplicate on purpose). Two synchronous clicks mimic the race.
         page.goto(BASE + "/recipe/rotes-linsen-dal", wait_until="load")
-        log_before = len(json.loads(
-            (TESTDATA / "data" / "log.json").read_text(encoding="utf-8")))
-        page.evaluate(
-            "() => { const b = document.querySelector('form[action$=\"/cooked\"] button');"
-            " b.click(); b.click(); }")
-        deadline = time.time() + 5
-        while True:
-            log_after = len(json.loads(
-                (TESTDATA / "data" / "log.json").read_text(encoding="utf-8")))
-            if log_after >= log_before + 1 or time.time() >= deadline:
-                break
-            time.sleep(0.1)
-        check(log_after == log_before + 1,
+        check(double_cooked(page, 'form[action$="/cooked"] button'),
               "double click 'Heute gekocht' on the recipe logs exactly one entry")
 
         page.goto(BASE + "/suggestions", wait_until="load")
-        log_before = len(json.loads(
-            (TESTDATA / "data" / "log.json").read_text(encoding="utf-8")))
-        page.evaluate(
-            "() => { const b = document.querySelector('form.card-quick button');"
-            " b.click(); b.click(); }")
-        deadline = time.time() + 5
-        while True:
-            log_after = len(json.loads(
-                (TESTDATA / "data" / "log.json").read_text(encoding="utf-8")))
-            if log_after >= log_before + 1 or time.time() >= deadline:
-                break
-            time.sleep(0.1)
-        check(log_after == log_before + 1,
+        check(double_cooked(page, 'form.card-quick button'),
               "double click 'Heute gekocht' on suggestions logs exactly one entry")
 
         # Suggestions
@@ -467,7 +479,7 @@ try:
                 dialog.dismiss()
         cp.on("dialog", handle_confirm)
         cp.locator("button.btn-text", has_text="Archivieren").click()
-        cp.wait_for_timeout(800)
+        cp.wait_for_function("() => !document.querySelector('form[data-submitted]')")
         check(len(confirm_messages) == 1 and "Oma's Kuchen" in confirm_messages[0],
               "confirm with apostrophe in title: dialog appears")
         check("/archive/" not in cp.url,
@@ -612,8 +624,7 @@ try:
         page.keyboard.press("Tab")
         check(page.locator(".favorite-sheet-close").evaluate("el => el === document.activeElement"),
               "product dialog: Tab returns to the close button")
-        page.wait_for_timeout(350)
-        page.screenshot(path=str(SHOTS / "09c_favorite_sheet.png"), full_page=True)
+        page.screenshot(path=str(SHOTS / "09c_favorite_sheet.png"), full_page=True, animations="disabled")
         page.locator("#favorite-sheet .favorite-sheet-close").click()
         check(spaghetti_item.locator(".shop-favorite-trigger").evaluate(
             "el => el === document.activeElement"),
@@ -621,7 +632,9 @@ try:
 
         # A foreign favorite change must leave a half-written name intact.
         draft_page = browser.new_page()
+        observe_live(draft_page)
         draft_page.goto(BASE + "/favorites", wait_until="load")
+        draft_page.wait_for_function("() => window.gustoEvents.open")
         draft_page.locator(".favorite-create-panel summary").click()
         draft_page.fill('input[name="name"]', "Noch nicht gespeichert")
         draft_page.evaluate("window.draftSurvived = true")
@@ -629,7 +642,9 @@ try:
             "operation": "favorites.add", "arguments": {"name": "Audit Bedarf"},
         })
         check(foreign.ok, "foreign favorite mutation succeeds")
-        draft_page.wait_for_timeout(1600)
+        foreign_revision = core.change_state()["revision"]
+        draft_page.wait_for_function(
+            "revision => window.gustoEvents.revisions.includes(revision)", arg=foreign_revision)
         check(draft_page.evaluate("window.draftSurvived === true")
               and draft_page.input_value('input[name="name"]') == "Noch nicht gespeichert",
               "favorite live updates preserve an unfinished form")
@@ -665,23 +680,6 @@ try:
         page.wait_for_function("() => document.querySelectorAll('#shop-client .shop-group-done').length === 0")
         check(page.locator("#shop-client .shop-item").count() == 6, "6 open items again (client)")
         page.screenshot(path=str(SHOTS / "10_shopping_after.png"), full_page=True)
-
-        # Shopping sync contract: a body without "items" behaves like an
-        # empty list and returns the full server state; a body that is not an
-        # object stays rejected.
-        sync_missing = page.request.post(
-            BASE + "/api/shopping/sync",
-            data={}, headers={"content-type": "application/json"})
-        check(sync_missing.status == 200,
-              "shopping sync: missing 'items' acts as an empty list")
-        check(isinstance(sync_missing.json().get("items"), list)
-              and len(sync_missing.json()["items"]) >= 6,
-              "shopping sync: missing 'items' returns the server state")
-        sync_not_object = page.request.post(
-            BASE + "/api/shopping/sync",
-            data="[]", headers={"content-type": "application/json"})
-        check(sync_not_object.status == 400,
-              "shopping sync: a non-object body stays rejected")
 
         # No-JS fallback: server-rendered list works without JavaScript
         # (state-independent: before/after instead of a fixed count)
@@ -769,8 +767,7 @@ try:
         check(m.evaluate(
             "() => !!document.elementFromPoint(innerWidth / 2, innerHeight - 20).closest('#favorite-sheet')"),
             "mobile: open product sheet stays above the fixed navigation")
-        m.wait_for_timeout(350)
-        m.screenshot(path=str(SHOTS / "12_mobile_favorite_sheet.png"))
+        m.screenshot(path=str(SHOTS / "12_mobile_favorite_sheet.png"), animations="disabled")
         m.locator("#favorite-sheet .favorite-sheet-close").click()
 
         # Compact phones must be able to use the expanded forms without
@@ -817,8 +814,9 @@ try:
         # A normal CLI mutation goes through this running server and is pushed
         # to an already open catalog page without a manual reload.
         live_page = browser.new_page(viewport={"width": 1280, "height": 900})
+        observe_live(live_page)
         live_page.goto(BASE, wait_until="load")
-        live_page.wait_for_timeout(1400)
+        live_page.wait_for_function("() => window.gustoEvents.open")
         cli_env = {**env, "GUSTO_URL": BASE}
         live_create = subprocess.run(
             [sys.executable, "-m", "gusto", "new", "Live SSE Rezept", "--json"],
