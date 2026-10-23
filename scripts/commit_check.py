@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Check a commit: format, lint and type-check the staged files.
+"""Check staged Python lint, domain maps and the configured tool versions.
 
 Git runs this through ``.githooks/pre-commit`` and ``.githooks/pre-merge-commit``
 once a clone has enabled the tracked hooks with ``git config core.hooksPath
@@ -10,7 +10,7 @@ and ``scripts/push.py`` runs every check before main reaches the remote.
 Several agents may work in one checkout at once, so the check touches only what
 this commit stages:
 
-- Formatter and linter fixes are applied and re-staged only for files whose whole
+- Linter fixes are applied and re-staged only for files whose whole
   change is staged. A partially staged file is checked as it is in the working tree
   and blocks the commit when it needs a fix, so unstaged work in the same checkout
   (another session's edits included) is never rewritten or swept into the commit.

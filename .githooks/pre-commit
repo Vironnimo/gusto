@@ -1,6 +1,6 @@
 #!/bin/sh
-# Refuse an AI tool identity (scripts/commit_authorship.py), then format, lint and
-# type-check the staged files (scripts/commit_check.py).
+# Refuse an AI tool identity (scripts/commit_authorship.py), then lint staged
+# Python and validate staged domain maps (scripts/commit_check.py).
 # Enable once per clone: git config core.hooksPath .githooks
 PYTHON=python
 command -v python >/dev/null 2>&1 || PYTHON=python3
