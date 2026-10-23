@@ -1,35 +1,21 @@
-## Einkaufsbedarf
+# Glossary
 
-**Definition:** Ein dauerhafter Kaufbedarf wie „Pizzateig“, der bekannte Formulierungen freier Einkaufsposten zusammenführt und eine geordnete Liste bevorzugter Produkte besitzt.
+What Gusto's shared terms mean and what they are not, so they are not confused with the coding agent's own environment or other systems. How a concept currently works lives in its domain map.
 
-**Not:** Kein konkretes Produkt und kein einzelner, vergänglicher Einkaufsposten.
+## Service (`Gusto-Dienst`)
+The one per-user Gusto process that serves Core, the browser UI, the anonymous LAN command API and change events; browser and normal CLI commands are its clients (`service.md`). Not an installed runtime on its own, and not `gusto serve`, which is only the explicit foreground development and recovery start.
 
-## Rezeptarchiv
+## Operational installation (`Betriebsbereite Installation`)
+A versioned app runtime with a stable `gusto` command, registered per-user autostart, a started service and a passed health check (`lifecycle.md`). Not a merely copied runtime and not the installation of an agent skill; normal updates happen only through `gusto update`.
 
-**Definition:** Der reversible Lifecycle-Zustand eines Rezepts, in dem Markdown, vollständige Metadaten und eigene Bilder gemeinsam außerhalb des aktiven Kochbuchs aufbewahrt werden. Ein Agent behandelt ein normales „Rezept löschen/entfernen“ als Archivieren und kann den Snapshot vollständig wiederherstellen.
+## Skill
+The agent instructions Gusto ships in `skill/gusto/` and installs into an agent host on request, teaching agents to operate Gusto through the CLI (`cli.md`). Not a skill of the coding agent working in this repository, and not a Vorch workflow.
 
-**Not:** Kein endgültiges Löschen; nur `archive purge --yes` zerstört den Snapshot, und sichtbare Einkaufsposten mit diesem Rezept als Quelle verhindern das Purge.
+## Recipe archive (`Rezeptarchiv`)
+The reversible state of a removed recipe: its Markdown, full metadata and owned images kept together outside the active cookbook; a normal "delete" archives (`catalog.md`). Not permanent deletion; only an explicitly confirmed purge destroys a snapshot.
 
-## Deployment-Ziel
+## Shopping need (`Einkaufsbedarf`)
+A lasting household purchase need such as `Pizzateig` that groups the known wordings of free-text shopping items and owns a ranked list of preferred products (`shopping.md`). Not a concrete product and not a single, transient shopping-list item.
 
-**Definition:** Eine besonders wichtige Umgebung, auf der Gusto zuverlässig laufen und geprüft werden soll. Sie bestimmt weder das allgemeine Installationsmodell noch schränkt sie die unterstützten Plattformen ein.
-
-**Not:** Der Raspberry Pi ist ein erstes Linux-Deployment-Ziel, keine Exklusivplattform.
-
-## Gusto-Dienst
-
-**Definition:** Der pro Benutzer laufende Gusto-Prozess, der Core, Browser-UI,
-anonyme LAN-API und Änderungsereignisse gemeinsam bereitstellt. Browser und
-normale CLI-Befehle benutzen diesen einen Dienst.
-
-**Not:** Keine bloße installierte Runtime und kein optionaler Zusatz zur App;
-`gusto serve` ist nur der explizite Vordergrund-/Recovery-Start.
-
-## Betriebsbereite Installation
-
-**Definition:** Eine versionierte App-Runtime mit stabilem `gusto`-Befehl,
-registriertem Benutzer-Autostart, sofort gestarteten Gusto-Dienst und
-erfolgreicher Health-Prüfung.
-
-**Not:** Weder eine bloß kopierte Runtime noch die Installation eines
-Agent-Skills; normale Updates erfolgen ausschließlich mit `gusto update`.
+## Deployment target
+An environment on which Gusto must run and be checked reliably. Not a limit on supported platforms: the Raspberry Pi is the first Linux deployment target, not an exclusive one.
