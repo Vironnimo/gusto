@@ -63,7 +63,7 @@ The slug joins Markdown, metadata, images, archive, log entries, shopping source
 
 ## Tests
 
-`tests/test_recipes.py` owns the Core catalog contracts, including the transaction failure matrix and archive lifecycle. API and CLI exposure: `tests/test_api.py`, `tests/test_cli.py`; web-visible behavior: `scripts/browser_check.py` against throwaway data; contention: `tests/test_concurrency.py`.
+`tests/test_recipes.py` owns the Core catalog contracts in independently seeded behavior functions: creation, search/facets, updates, images and import failures, cooking, archive, diagnostics, journal events and the transaction failure matrix. Cooking boundaries use a fixed date to protect repeated appends, the inclusive cutoff and suggestion order. Category corruption is checked through the public loader and diagnostics. API and CLI exposure: `tests/test_api.py`, `tests/test_cli.py`; web-visible behavior: `scripts/browser_check.py` against throwaway data; contention: `tests/test_concurrency.py`.
 
 ## References
 

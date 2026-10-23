@@ -83,7 +83,7 @@ A persisted sequence number identifying a group of durable changes to resources 
 
 ## Tests
 
-`tests/test_concurrency.py` (empty lock recovery, cross-process contention on catalog, favorites, shopping, log and images, parallel CLI adds against a real server, sync during restore, Windows open-reader replacement), `tests/test_temp.py` (checkout temp policy), `tests/test_recipes.py` (`transaction_failure_checks`, monotonic parallel revisions, silent no-op merge, corrupt journal diagnostics without repair), `tests/test_api.py` (compacted replay, journal failure as uncertain outcome). `tests/test_paths.py` holds only one Core check (settings-selected root); the rest are lifecycle path contracts. Not covered: `GUSTO_HOME` precedence, relative `data_dir`, legacy fallback, invalid settings, lock timeout, journal legacy migration.
+`tests/test_concurrency.py` (empty lock recovery, lock timeout before business writes, cross-process contention on catalog, favorites, shopping, log and images, parallel CLI adds against a real server, sync during restore, Windows open-reader replacement), `tests/test_temp.py` (checkout temp policy), `tests/test_recipes.py` (`transaction_failure_checks`, monotonic parallel revisions, corrupt journal diagnostics without repair), `tests/test_merge.py` (silent no-op merge, preserved bytes and revision), `tests/test_api.py` (compacted replay, journal failure as uncertain outcome). `tests/test_paths.py` checks settings-selected roots, relative `data_dir`, invalid settings and `GUSTO_HOME` precedence through public storage discovery alongside lifecycle path contracts. Not covered: legacy fallback, journal legacy migration.
 
 ## References
 

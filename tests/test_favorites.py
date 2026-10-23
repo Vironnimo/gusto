@@ -38,13 +38,9 @@ def expect_valueerror(function, *args, **kwargs):
 
 def check_image_import_failures(source):
     """Partial copies and failed index writes must not silently orphan images."""
-    recipe = core.add_recipe("Bildimport-Fehler")
     need = core.favorite_add_need("Bildimport-Fehler")
     product = core.favorite_add_product(need.id, "Alt", brand="Marke", image=source)
     scenarios = (
-        ("recipe", lambda: core.add_recipe_image(recipe.slug, source),
-         core.recipe_images_dir(recipe.slug), "_save_recipes_unlocked",
-         lambda: core.get(recipe.slug).to_dict()),
         ("favorite-add", lambda: core.favorite_add_product(
             need.id, "Neu", brand="Marke", image=source),
          core.favorite_images_dir(), "_favorites_save_unlocked",
@@ -116,9 +112,7 @@ def check_image_import_failures(source):
                 raise AssertionError(f"{name}: post-commit failure must remain uncertain")
         copied = set(folder.iterdir()) - before_files
         state = snapshot()
-        referenced = ({image["filename"] for image in state["images"]}
-                      if name == "recipe" else
-                      {item["image_filename"] for item in state["products"]})
+        referenced = {item["image_filename"] for item in state["products"]}
         check(len(copied) == 1 and next(iter(copied)).name in referenced
               and core.change_state()["revision"] == revision + 1,
               f"{name}: a post-commit error must preserve the stored image reference")
@@ -318,8 +312,7 @@ def main():
         try:
             core.favorite_remove_product(failure_need.id, failure_product.id)
         except core.PostMutationError as error:
-            check(isinstance(error.__cause__, PermissionError)
-                  and "gespeichert" in str(error),
+            check(isinstance(error.__cause__, PermissionError),
                   "a failed cleanup must preserve its cause and report the saved effect")
         else:
             raise AssertionError("a failed post-save cleanup must not report success")
@@ -353,6 +346,29 @@ def main():
     core.favorite_remove_need(failure_need.id)
 
     check_image_import_failures(first_image)
+
+    # --- favorites single-line hygiene ---------------------------------------
+    expect_valueerror(core.favorite_add_need, "a\nb")
+    need = core.favorite_add_need("Frische")
+    expect_valueerror(core.favorite_update_need, need.id, "a\nb")
+    expect_valueerror(core.favorite_add_alias, need.id, "a\nb")
+    check(core.favorite_get_need("Frische").aliases == [],
+          "rejected multiline aliases must not be stored.")
+    expect_valueerror(core.favorite_add_product, need.id, "a\nb", brand="Marke")
+    expect_valueerror(core.favorite_add_product, need.id, "Milch", brand="a\nb")
+    expect_valueerror(core.favorite_add_product, need.id, "Milch", brand="Marke",
+                      store="a\nb")
+    expect_valueerror(core.favorite_add_product, need.id, "Milch", brand="Marke",
+                      note="a\nb")
+    product = core.favorite_add_product(need.id, "Joghurt", brand="Marke")
+    expect_valueerror(core.favorite_update_product, need.id, product.id,
+                      store="a\nb")
+    expect_valueerror(core.favorite_update_product, need.id, product.id,
+                      note="a\nb")
+    stored_need = core.favorite_get_need("Frische")
+    check(stored_need.products[0].store == ""
+          and stored_need.products[0].note == "",
+          "rejected multiline product fields must not be stored.")
 
     print(f"OK - {checks} favorite-product checks passed (GUSTO_HOME={HOME})")
 

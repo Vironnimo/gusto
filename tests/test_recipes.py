@@ -147,7 +147,7 @@ def transaction_failure_checks():
                                       "a committed cooking entry must not lose its log record")
 
 
-def main():
+def catalog_fixture():
     core.data_dir().mkdir(parents=True)
     core.categories_path().write_text(json.dumps({
         "cuisine": {"label": "Küche", "tags": ["italienisch", "indisch"]},
@@ -169,6 +169,11 @@ def main():
         content="# Schneller Salat\n\n## Zutaten\n\n- Gurke\n",
     )
 
+    return pasta, curry, quick
+
+
+def creation_checks():
+    pasta, _, _ = catalog_fixture()
     check(pasta.slug == "pasta-pomodoro", "title must become the expected slug")
     check(len(core.load_recipes()) == 3, "three recipes must round-trip")
     expect_valueerror(core.add_recipe, "Pasta Pomodoro")
@@ -204,6 +209,37 @@ def main():
           "creating a recipe must not adopt unrelated existing image storage")
     orphan_images.rmdir()
 
+    # Every slug that slugify produces must remain a valid explicit slug.
+    for sample in ("Käse-Soufflé", "Übungs-ß-Rezept", "100% Curry!!",
+                   "Nur Punkt-Slug", "...", "CON", "NUL", "LPT1"):
+        derived = core.slugify(sample)
+        created = core.add_recipe(f"Beliebiger Titel für {sample}", slug=derived)
+        check(created.slug == derived,
+              "every slugify output must remain accepted as an explicit slug")
+        core.purge_archived_recipe(core.archive_recipe(created.slug).slug)
+
+    # The 150-character title cap keeps the atomic writer's ".<slug>.md.<tmp>"
+    # name inside the Windows filename limit (verified live: longer titles
+    # crashed recipe.create with a raw OSError on save).
+    long_title = "L" * 150
+    long_recipe = core.add_recipe(long_title)
+    check(long_recipe.title == long_title,
+          "a 150-character title must stay accepted")
+    expect_valueerror(core.add_recipe, "K" * 151)
+    expect_valueerror(core.update_recipe, long_recipe.slug, title="K" * 151)
+    check(core.get(long_recipe.slug).title == long_title,
+          "a rejected overlong title must not mutate the recipe")
+    expanded = core.add_recipe("Ä" * 150)
+    check(expanded.title == "Ä" * 150 and len(expanded.slug) <= 150,
+          "umlaut expansion must not exceed the portable slug filename bound")
+    core.archive_recipe(expanded.slug)
+    restored_expanded = core.restore_archived_recipe(expanded.slug)
+    check(restored_expanded.content().startswith("# " + "Ä" * 150),
+          "a maximum-length expanded slug must survive archive and restore")
+
+
+def search_checks():
+    pasta, curry, quick = catalog_fixture()
     check([r.slug for r in core.search("kokosmilch")] == [curry.slug],
           "full-text search must include recipe content")
     # Live searches should only open bodies when metadata leaves a term
@@ -240,6 +276,10 @@ def main():
     expect_valueerror(core.search, "kokosmilch", "alle")
     expect_valueerror(core.search, "kokosmilch", "ALL")
     expect_valueerror(core.search, None)
+
+
+def facet_checks():
+    pasta, _, quick = catalog_fixture()
     check(core.uncategorized_tags(["VEGAN", "saisonal", "saisonal"])
           == ["saisonal"],
           "uncategorized tags must be distinct and category matching case-insensitive")
@@ -304,18 +344,13 @@ def main():
     expect_valueerror(core.add_category, "Other", "Reserviert")
     expect_valueerror(core.update_category, "missing", label="Fehlt")
     expect_valueerror(core.move_category_tag, "season", "saisonal", 0)
-    expect_valueerror(core._validated_categories, {
-        "one": {"label": "Eins", "tags": ["gleich"]},
-        "two": {"label": "Zwei", "tags": ["GLEICH"]},
-    })
-    expect_valueerror(core._validated_categories, {
-        "one": {"label": "Eins", "tags": []},
-        " one ": {"label": "Doppelt", "tags": []},
-    })
     preserved = core.assign_category_tags("season", ["SommerTag"])
     check("SommerTag" in preserved["tags"],
           "an unused new tag must preserve the spelling supplied by the agent")
 
+
+def update_checks():
+    _, _, quick = catalog_fixture()
     updated = core.update_recipe(
         quick.slug, title="Gurkensalat", tags=["vegan"], duration_min=12,
         servings=2, content="# Gurkensalat\n",
@@ -389,31 +424,25 @@ def main():
     check(core.check() == store_before,
           "the title and tag experiments must leave the store unchanged")
 
-    # Every slug that slugify produces must remain a valid explicit slug.
-    for sample in ("Käse-Soufflé", "Übungs-ß-Rezept", "100% Curry!!",
-                   "Nur Punkt-Slug", "...", "CON", "NUL", "LPT1"):
-        derived = core.slugify(sample)
-        created = core.add_recipe(f"Beliebiger Titel für {sample}", slug=derived)
-        check(created.slug == derived,
-              "every slugify output must remain accepted as an explicit slug")
-        core.purge_archived_recipe(core.archive_recipe(created.slug).slug)
 
-    # Multiple stored images, free roles/captions, and one selected cover.
-    first_source = HOME / "finished.png"
-    second_source = HOME / "step.jpg"
-    pixel = base64.b64decode(
+def image_source():
+    source = core.project_root() / "source.png"
+    source.write_bytes(base64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-    )
-    first_source.write_bytes(pixel)
-    second_source = HOME / "step.png"
-    second_source.write_bytes(pixel)
+    ))
+    return source
+
+
+def image_checks():
+    pasta, _, _ = catalog_fixture()
+    source = image_source()
     finished = core.add_recipe_image(
-        pasta.slug, first_source, role="result", caption="Fertig angerichtet",
+        pasta.slug, source, role="result", caption="Fertig angerichtet",
     )
     check(core.get(pasta.slug).cover_image_id == finished.id,
           "the first image must persist its id as the selected cover")
     step = core.add_recipe_image(
-        pasta.slug, second_source, role="step", caption="Sauce einrühren",
+        pasta.slug, source, role="step", caption="Sauce einrühren",
     )
     images, cover_id = core.list_recipe_images(pasta.slug)
     check(len(images) == 2 and cover_id == finished.id,
@@ -431,19 +460,22 @@ def main():
     fallback_cover = core.remove_recipe_image(pasta.slug, step.id)
     check(fallback_cover == finished.id and not core.recipe_image_path(pasta.slug, step).exists(),
           "removing the cover must select the first remaining image")
-    expect_valueerror(core.add_recipe_image, pasta.slug, HOME / "missing.png")
-    fake_source = HOME / "fake.png"
+    expect_valueerror(core.add_recipe_image, pasta.slug, core.project_root() / "missing.png")
+    fake_source = core.project_root() / "fake.png"
     fake_source.write_bytes(b"not an image")
     expect_valueerror(core.add_recipe_image, pasta.slug, fake_source)
     # Store hygiene: role and caption are persisted as single lines (matching
     # normalizes whitespace anyway), so the write paths must reject breaks.
-    expect_valueerror(core.add_recipe_image, pasta.slug, second_source, role="a\nb")
-    expect_valueerror(core.add_recipe_image, pasta.slug, second_source, caption="a\nb")
+    expect_valueerror(core.add_recipe_image, pasta.slug, source, role="a\nb")
+    expect_valueerror(core.add_recipe_image, pasta.slug, source, caption="a\nb")
     expect_valueerror(core.update_recipe_image, pasta.slug, finished.id, caption="a\nb")
     expect_valueerror(core.update_recipe_image, pasta.slug, finished.id, role="a\rb")
     check(core.get_recipe_image(pasta.slug, finished.id).caption == "Fertig angerichtet",
           "a rejected multiline caption must not mutate the stored image")
 
+
+def cooking_checks():
+    pasta, curry, _ = catalog_fixture()
     recent_cook = (date.today() - timedelta(days=1)).isoformat()
     older_cook = (date.today() - timedelta(days=3)).isoformat()
     core.log_cooked(pasta.slug, recent_cook)
@@ -465,26 +497,54 @@ def main():
     check(core.load_log(days=10**100) == core.load_log(),
           "a calendar-spanning positive day window must include all history")
 
-    # A failing index write must roll the created Markdown back, and a failing
-    # catalog write must roll the new log entry back.
-    def _failing_save(recipes):
-        raise ValueError("simulierter Schreibfehler")
-    original_save = core._save_recipes_unlocked
-    core._save_recipes_unlocked = _failing_save
-    try:
-        expect_valueerror(core.add_recipe, "Rollback Rezept")
-        check(not core.recipe_file("rollback-rezept").exists()
-              and core.get("rollback-rezept") is None,
-              "a failed index write must roll back the created recipe Markdown")
-        expect_valueerror(core.log_cooked, pasta.slug)
-        check([entry["date"] for entry in core.load_log()]
-              == [older_cook, recent_cook],
-              "a failed catalog write must roll back the new log entry")
-        check(core.get(pasta.slug).last_cooked == recent_cook,
-              "a failed catalog write must leave last_cooked unchanged")
-    finally:
-        core._save_recipes_unlocked = original_save
+    candidates = {recipe.slug for recipe in core.suggest(days=7)}
+    check(pasta.slug not in candidates and curry.slug in candidates,
+          "suggestions must exclude recently cooked recipes")
+    check(core.suggest(days=7, limit=0) == [],
+          "a zero suggestion limit must return no recipes")
+    check(len(core.suggest(days=7, limit=1)) == 1,
+          "a positive suggestion limit must cap the result")
+    expect_valueerror(core.suggest, 7, -1)
+    expect_valueerror(core.suggest, 0)
+    check(pasta.slug not in {recipe.slug for recipe in core.suggest(days=10**100)},
+          "a calendar-spanning suggestion window must still exclude logged recipes")
 
+
+def cooking_boundaries_checks():
+    class Today(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 10, 23)
+
+    with patch.object(core, "date", Today):
+        never = core.add_recipe("Noch nie gekocht")
+        older = core.add_recipe("Ältester Kochtermin")
+        cutoff = core.add_recipe("Am Stichtag")
+        recent = core.add_recipe("Heute gekocht")
+        core.log_cooked(older.slug, "2026-10-15")
+        core.log_cooked(cutoff.slug, "2026-10-16")
+        core.log_cooked(recent.slug)
+        revision = core.change_state()["revision"]
+        core.log_cooked(recent.slug)
+        check(core.load_log(days=1) == [
+            {"date": "2026-10-23", "slug": recent.slug},
+            {"date": "2026-10-23", "slug": recent.slug},
+        ] and core.change_state()["revision"] == revision + 1,
+              "repeated cooking on the same date must append and publish every entry")
+        check([entry["slug"] for entry in core.load_log(days=7)]
+              == [cutoff.slug, recent.slug, recent.slug],
+              "the log window must include its exact cutoff and exclude the previous day")
+        check([recipe.slug for recipe in core.suggest(days=7)] == [never.slug, older.slug],
+              "suggestions must exclude the cutoff date and order never-cooked before oldest")
+        check([recipe.slug for recipe in core.suggest(days=1)]
+              == [never.slug, older.slug, cutoff.slug],
+              "eligible cooked recipes must follow their cooking dates, oldest first")
+
+
+def archive_checks():
+    pasta, _, _ = catalog_fixture()
+    finished = core.add_recipe_image(pasta.slug, image_source())
+    core.log_cooked(pasta.slug)
     # Delete is reversible archive: Markdown, metadata and owned images move
     # together while log and shopping keep resolving the slug.
     sourced = core.shopping_add("Tomaten", source=pasta.slug)
@@ -515,18 +575,67 @@ def main():
           "restore must reconnect Markdown, images and recipe references")
     core.shopping_remove(sourced.id)
 
-    candidates = {r.slug for r in core.suggest(days=7)}
-    check(pasta.slug not in candidates and curry.slug in candidates,
-          "suggestions must exclude recently cooked recipes")
-    check(core.suggest(days=7, limit=0) == [],
-          "a zero suggestion limit must return no recipes")
-    check(len(core.suggest(days=7, limit=1)) == 1,
-          "a positive suggestion limit must cap the result")
-    expect_valueerror(core.suggest, 7, -1)
-    expect_valueerror(core.suggest, 0)
-    check(pasta.slug not in {recipe.slug for recipe in core.suggest(days=10**100)},
-          "a calendar-spanning suggestion window must still exclude logged recipes")
+    archived = core.delete_recipe(pasta.slug)
+    check(core.get(pasta.slug) is None and not core.recipe_file(pasta.slug).exists(),
+          "delete must remove the recipe from the active catalog")
+    check(not core.recipe_images_dir(pasta.slug).exists(),
+          "delete must move all owned images out of active storage")
+    check(archived.slug == pasta.slug and core.archive_recipe_file(pasta.slug).is_file()
+          and core.archive_images_dir(pasta.slug).is_dir(),
+          "delete must be the reversible archive operation")
+    expect_valueerror(core.delete_recipe, pasta.slug)
+    core.purge_archived_recipe(pasta.slug)
+    check(core.get_archived(pasta.slug) is None,
+          "explicit purge must permanently remove the archived snapshot")
 
+    # Purge parks the snapshot in a hidden transaction folder before the
+    # recursive removal, so an interrupted purge can never leave a half-deleted
+    # visible archive entry behind.
+    purge_target = core.add_recipe("Purge-Ziel", content="# Purge-Ziel\n")
+    core.archive_recipe(purge_target.slug)
+    core.purge_archived_recipe(purge_target.slug)
+    check(core.get_archived(purge_target.slug) is None
+          and not any(path.name.startswith(".")
+                      for path in core.archive_dir().iterdir()),
+          "a completed purge must leave no transaction leftovers")
+    interrupt_target = core.add_recipe("Abbruch-Purge", content="# Abbruch-Purge\n")
+    core.archive_recipe(interrupt_target.slug)
+    original_rmtree = core.shutil.rmtree
+    def _failing_rmtree(path, *args, **kwargs):
+        raise OSError("simulierter Abbruch")
+    core.shutil.rmtree = _failing_rmtree
+    purge_revision = core.change_state()["revision"]
+    try:
+        try:
+            core.purge_archived_recipe(interrupt_target.slug)
+            raise AssertionError("purge must fail when the snapshot removal fails")
+        except core.PostMutationError as error:
+            check(isinstance(error.__cause__, OSError),
+                  "an interrupted purge must report its already changed archive state")
+    finally:
+        core.shutil.rmtree = original_rmtree
+    leftovers = sorted(path.name for path in core.archive_dir().iterdir()
+                       if path.name.startswith("."))
+    check(len(leftovers) == 1 and core.get_archived(interrupt_target.slug) is None,
+          "an interrupted purge must park the snapshot in a hidden folder")
+    check(core.change_state()["revision"] == purge_revision + 1,
+          "a purge that already hid the snapshot must notify other clients")
+    interrupted_check = core.check()
+    check(interrupted_check["stale_archive_transactions"] == leftovers
+          and not interrupted_check["invalid_archive_entries"]
+          and not interrupted_check["missing_archive_files"],
+          "an interrupted purge must be visible as a stale transaction, "
+          "not as a broken archive entry")
+    core.shutil.rmtree(core.archive_dir() / leftovers[0])
+    check(core.check()["stale_archive_transactions"] == [],
+          "removing the stale transaction folder must clear the check finding")
+
+
+def consistency_checks():
+    pasta, curry, quick = catalog_fixture()
+    core.update_recipe(quick.slug, title="Gurkensalat")
+    finished = core.add_recipe_image(pasta.slug, image_source())
+    core.log_cooked(pasta.slug)
     initial = core.check()
     check(not initial["orphaned_files"] and not initial["missing_files"],
           "freshly created recipes must be consistent")
@@ -657,6 +766,15 @@ def main():
         for broken_categories in (
             "[kein json]", "[]",
             '{"diet": {"label": "Ernährung", "tags": "vegan"}}',
+            json.dumps({
+                "one": {"label": "Eins", "tags": ["gleich"]},
+                "two": {"label": "Zwei", "tags": ["GLEICH"]},
+            }),
+            json.dumps({
+                "one": {"label": "Eins", "tags": []},
+                " one ": {"label": "Doppelt", "tags": []},
+            }),
+            '{"diet": {"label": "Ernährung", "tags": [], "unknown": true}}',
         ):
             core.categories_path().write_text(broken_categories, encoding="utf-8")
             expect_valueerror(core.load_categories)
@@ -705,25 +823,6 @@ def main():
     finally:
         core.log_path().write_text(log_backup, encoding="utf-8")
 
-    # The 150-character title cap keeps the atomic writer's ".<slug>.md.<tmp>"
-    # name inside the Windows filename limit (verified live: longer titles
-    # crashed recipe.create with a raw OSError on save).
-    long_title = "L" * 150
-    long_recipe = core.add_recipe(long_title)
-    check(long_recipe.title == long_title,
-          "a 150-character title must stay accepted")
-    expect_valueerror(core.add_recipe, "K" * 151)
-    expect_valueerror(core.update_recipe, long_recipe.slug, title="K" * 151)
-    check(core.get(long_recipe.slug).title == long_title,
-          "a rejected overlong title must not mutate the recipe")
-    expanded = core.add_recipe("Ä" * 150)
-    check(expanded.title == "Ä" * 150 and len(expanded.slug) <= 150,
-          "umlaut expansion must not exceed the portable slug filename bound")
-    core.archive_recipe(expanded.slug)
-    restored_expanded = core.restore_archived_recipe(expanded.slug)
-    check(restored_expanded.content().startswith("# " + "Ä" * 150),
-          "a maximum-length expanded slug must survive archive and restore")
-
     (core.recipes_dir() / "orphan.md").write_text("# Orphan\n", encoding="utf-8")
     core.recipe_file(curry.slug).unlink()
     recipes = core.load_recipes()
@@ -751,61 +850,8 @@ def main():
     check(broken["title_mismatches"] == [quick.slug] and broken["ok"] is False,
           "title drift must be a hard consistency error")
 
-    archived = core.delete_recipe(pasta.slug)
-    check(core.get(pasta.slug) is None and not core.recipe_file(pasta.slug).exists(),
-          "delete must remove the recipe from the active catalog")
-    check(not core.recipe_images_dir(pasta.slug).exists(),
-          "delete must move all owned images out of active storage")
-    check(archived.slug == pasta.slug and core.archive_recipe_file(pasta.slug).is_file()
-          and core.archive_images_dir(pasta.slug).is_dir(),
-          "delete must be the reversible archive operation")
-    expect_valueerror(core.delete_recipe, pasta.slug)
-    core.purge_archived_recipe(pasta.slug)
-    check(core.get_archived(pasta.slug) is None,
-          "explicit purge must permanently remove the archived snapshot")
 
-    # Purge parks the snapshot in a hidden transaction folder before the
-    # recursive removal, so an interrupted purge can never leave a half-deleted
-    # visible archive entry behind.
-    purge_target = core.add_recipe("Purge-Ziel", content="# Purge-Ziel\n")
-    core.archive_recipe(purge_target.slug)
-    core.purge_archived_recipe(purge_target.slug)
-    check(core.get_archived(purge_target.slug) is None
-          and not any(path.name.startswith(".")
-                      for path in core.archive_dir().iterdir()),
-          "a completed purge must leave no transaction leftovers")
-    interrupt_target = core.add_recipe("Abbruch-Purge", content="# Abbruch-Purge\n")
-    core.archive_recipe(interrupt_target.slug)
-    original_rmtree = core.shutil.rmtree
-    def _failing_rmtree(path, *args, **kwargs):
-        raise OSError("simulierter Abbruch")
-    core.shutil.rmtree = _failing_rmtree
-    purge_revision = core.change_state()["revision"]
-    try:
-        try:
-            core.purge_archived_recipe(interrupt_target.slug)
-            raise AssertionError("purge must fail when the snapshot removal fails")
-        except core.PostMutationError as error:
-            check(isinstance(error.__cause__, OSError),
-                  "an interrupted purge must report its already changed archive state")
-    finally:
-        core.shutil.rmtree = original_rmtree
-    leftovers = sorted(path.name for path in core.archive_dir().iterdir()
-                       if path.name.startswith("."))
-    check(len(leftovers) == 1 and core.get_archived(interrupt_target.slug) is None,
-          "an interrupted purge must park the snapshot in a hidden folder")
-    check(core.change_state()["revision"] == purge_revision + 1,
-          "a purge that already hid the snapshot must notify other clients")
-    interrupted_check = core.check()
-    check(interrupted_check["stale_archive_transactions"] == leftovers
-          and not interrupted_check["invalid_archive_entries"]
-          and not interrupted_check["missing_archive_files"],
-          "an interrupted purge must be visible as a stale transaction, "
-          "not as a broken archive entry")
-    core.shutil.rmtree(core.archive_dir() / leftovers[0])
-    check(core.check()["stale_archive_transactions"] == [],
-          "removing the stale transaction folder must clear the check finding")
-
+def journal_checks():
     # The persisted change journal is monotone across concurrent transactions,
     # while reads and idempotent PWA merges stay silent.
     before_parallel = core.change_state()["revision"]
@@ -821,16 +867,98 @@ def main():
         all(event["resources"] == ["shopping"] for event in events),
         "change events must identify their affected resource",
     )
-    after_parallel = core.change_state()["revision"]
-    core.shopping_merge([item.to_dict() for item in core.shopping_load()])
-    check(
-        core.change_state()["revision"] == after_parallel,
-        "an idempotent full-state merge must not emit a change event",
-    )
+
     for item in created:
         core.shopping_remove(item.id)
 
-    transaction_failure_checks()
+
+def image_import_failure_checks():
+    recipe = core.add_recipe("Bildimport-Fehler")
+    source = image_source()
+    scenarios = (
+        ("recipe", lambda: core.add_recipe_image(recipe.slug, source),
+         core.recipe_images_dir(recipe.slug), "_save_recipes_unlocked",
+         lambda: core.get(recipe.slug).to_dict()),
+    )
+    def partial_copy(_source, destination, *args, **kwargs):
+        Path(destination).write_bytes(b"partial image")
+        raise OSError("copy interrupted")
+
+    original_unlink = Path.unlink
+    for name, import_image, folder, save_name, snapshot in scenarios:
+        for failed_step in ("copy", "save"):
+            for cleanup_fails in (False, True):
+                before_files = set(folder.iterdir()) if folder.exists() else set()
+                before_state = snapshot()
+                revision = core.change_state()["revision"]
+
+                def reject_cleanup(path, *args, **kwargs):
+                    if path.parent == folder and path not in before_files:
+                        raise PermissionError("copied image busy")
+                    return original_unlink(path, *args, **kwargs)
+
+                failure = (
+                    patch.object(core.shutil, "copy2", partial_copy)
+                    if failed_step == "copy"
+                    else patch.object(core, save_name, side_effect=OSError("index denied"))
+                )
+                with failure, patch.object(
+                    Path, "unlink", reject_cleanup if cleanup_fails else original_unlink,
+                ):
+                    try:
+                        import_image()
+                    except Exception as error:
+                        check(isinstance(error, core.PostMutationError)
+                              if cleanup_fails else isinstance(error, OSError),
+                              f"{name}/{failed_step}: report uncertainty only if cleanup failed")
+                    else:
+                        raise AssertionError(f"{name}/{failed_step}: injected failure ignored")
+                leftovers = set(folder.iterdir()) - before_files
+                check(snapshot() == before_state,
+                      f"{name}/{failed_step}: a rejected import must preserve existing metadata")
+                check(len(leftovers) == (1 if cleanup_fails else 0)
+                      and core.change_state()["revision"] == revision + int(cleanup_fails),
+                      f"{name}/{failed_step}: only retained partial copies may publish a change")
+                for leftover in leftovers:
+                    leftover.unlink()
+
+        # The JSON save itself may succeed before a later cleanup raises.
+        # Removing the copy then would break the already committed reference.
+        before_files = set(folder.iterdir())
+        revision = core.change_state()["revision"]
+        original_save = getattr(core, save_name)
+
+        def save_then_fail(records):
+            original_save(records)
+            raise OSError("failure after index commit")
+
+        with patch.object(core, save_name, save_then_fail):
+            try:
+                import_image()
+            except core.PostMutationError:
+                pass
+            else:
+                raise AssertionError(f"{name}: post-commit failure must remain uncertain")
+        copied = set(folder.iterdir()) - before_files
+        state = snapshot()
+        referenced = {image["filename"] for image in state["images"]}
+        check(len(copied) == 1 and next(iter(copied)).name in referenced
+              and core.change_state()["revision"] == revision + 1,
+              f"{name}: a post-commit error must preserve the stored image reference")
+
+
+
+def main():
+    # Each contract has its own store; no behavior depends on an earlier test.
+    for behavior in (
+        creation_checks, search_checks, facet_checks, update_checks,
+        image_checks, image_import_failure_checks, cooking_checks,
+        cooking_boundaries_checks, archive_checks, consistency_checks,
+        journal_checks, transaction_failure_checks,
+    ):
+        with tempfile.TemporaryDirectory(prefix=behavior.__name__ + "-", dir=HOME) as home:
+            with patch.dict(os.environ, {"GUSTO_HOME": home}):
+                behavior()
     print(f"OK - {checks} recipe core checks passed (GUSTO_HOME={HOME})")
 
 

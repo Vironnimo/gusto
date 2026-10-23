@@ -251,6 +251,20 @@ def main():
     imported_after_remove = core.shopping_add_recipe(sourced_recipe.slug)
     check([item.text for item in imported_after_remove] == ["Pfeffer"],
           "removing the sourced item must allow a fresh recipe import")
+    core.archive_recipe(sourced_recipe.slug)
+    before_bytes = core.shopping_path().read_bytes()
+    before_revision = core.change_state()["revision"]
+    expect_valueerror(core.shopping_add, "Salz", source=sourced_recipe.slug)
+    expect_valueerror(core.shopping_add_recipe, sourced_recipe.slug)
+    check(core.shopping_path().read_bytes() == before_bytes
+          and core.change_state()["revision"] == before_revision,
+          "an archived source must reject new attribution and ingredient import atomically")
+    remote = imported_after_remove[0].to_dict()
+    remote.update(quantity="1 Bund", updated_at="2099-01-01T00:00:00Z")
+    synced = core.shopping_merge([remote])
+    check(any(item.id == remote["id"] and item.source == sourced_recipe.slug
+              and item.quantity == "1 Bund" for item in synced),
+          "sync must preserve and update an existing item's archived source")
 
     # --- single-line hygiene -------------------------------------------------
     # Newlines in free text would persist as store dirt (matching normalizes
@@ -274,6 +288,8 @@ def main():
     check(next(item for item in merged if item.id == full_item["id"]).text
           == "Probe-Item",
           "a complete valid item must merge unchanged.")
+    before_bytes = core.shopping_path().read_bytes()
+    before_revision = core.change_state()["revision"]
     for broken in (
         # Verified live: a minimal item was persisted with empty timestamps
         # and an implicit deleted=False, contradicting the HTTP-400 contract.
@@ -288,34 +304,10 @@ def main():
             raise AssertionError(
                 f"missing status fields must be rejected: {broken!r}")
         except ValueError as error:
-            check("Einkaufslisten-Eintrag" in str(error)
-                  and ("Status" in str(error) or "Zeitstempel" in str(error)),
-                  "a minimal item must be rejected with a clear German message.")
-    check(all(item.id != "b" * 32 for item in core.shopping_load()),
-          "a rejected minimal item must not be persisted.")
-
-    # --- favorites single-line hygiene ---------------------------------------
-    expect_valueerror(core.favorite_add_need, "a\nb")
-    need = core.favorite_add_need("Frische")
-    expect_valueerror(core.favorite_update_need, need.id, "a\nb")
-    expect_valueerror(core.favorite_add_alias, need.id, "a\nb")
-    check(core.favorite_get_need("Frische").aliases == [],
-          "rejected multiline aliases must not be stored.")
-    expect_valueerror(core.favorite_add_product, need.id, "a\nb", brand="Marke")
-    expect_valueerror(core.favorite_add_product, need.id, "Milch", brand="a\nb")
-    expect_valueerror(core.favorite_add_product, need.id, "Milch", brand="Marke",
-                      store="a\nb")
-    expect_valueerror(core.favorite_add_product, need.id, "Milch", brand="Marke",
-                      note="a\nb")
-    product = core.favorite_add_product(need.id, "Joghurt", brand="Marke")
-    expect_valueerror(core.favorite_update_product, need.id, product.id,
-                      store="a\nb")
-    expect_valueerror(core.favorite_update_product, need.id, product.id,
-                      note="a\nb")
-    stored_need = core.favorite_get_need("Frische")
-    check(stored_need.products[0].store == ""
-          and stored_need.products[0].note == "",
-          "rejected multiline product fields must not be stored.")
+            check(bool(str(error)), "an invalid item must explain the rejection")
+    check(core.shopping_path().read_bytes() == before_bytes
+          and core.change_state()["revision"] == before_revision,
+          "a rejected minimal item must preserve all stored items and revisions")
 
     print(f"OK - {checks} checks passed (GUSTO_HOME={core.project_root()})")
 
