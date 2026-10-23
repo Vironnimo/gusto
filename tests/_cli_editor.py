@@ -14,6 +14,8 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib import request
 
+from gusto import _cli_editor as editor_cli
+
 
 from _cli_support import (
     HOME, ENV, SERVER_URL, check, process_json, process_json_error,
@@ -31,7 +33,7 @@ def check_edit_readback_contract():
 
     from _cli_support import invoke
 
-    with patch.object(cli, "_open_editor", side_effect=non_utf8_editor):
+    with patch.object(editor_cli, "_open_editor", side_effect=non_utf8_editor):
         with patch.object(cli.client, "command", return_value={
             "slug": "edit-readback", "content": "# Ok\n",
         }) as command:
@@ -73,7 +75,7 @@ def check_edit_cleanup_failure():
     for plain in (False, True):
         with patch.object(cli.client, "command", side_effect=[
             {"slug": "cleanup", "content": "# Saved\n"}, {"slug": "cleanup"},
-        ]) as command, patch.object(cli, "_open_editor", side_effect=editor), \
+        ]) as command, patch.object(editor_cli, "_open_editor", side_effect=editor), \
                 patch.object(Path, "unlink", refuse_copy_unlink):
             result = invoke(["edit", "cleanup", *([] if plain else ["--json"])])
         check(result.returncode == 0 and not result.stderr,
@@ -265,7 +267,7 @@ def check_uncertain_delivery_contract():
                 return {"editor": "fixture", "path": str(path), "exit_code": 0}
 
             output = io.StringIO()
-            with patch.object(cli, "_open_editor", side_effect=edit_copy):
+            with patch.object(editor_cli, "_open_editor", side_effect=edit_copy):
                 with redirect_stdout(output):
                     try:
                         cli.main([

@@ -51,7 +51,7 @@ The slug joins Markdown, metadata, images, archive, log entries, shopping source
 - A failed image import removes its partial copy; failing to remove that copy counts as a storage change (uncertain outcome), not as a clean rejection.
 - All catalog files, including `data/categories.json`, are server-owned. Clients use the service; direct edits bypass validation, locking and change events.
 - `images/_favorites/` belongs to shopping; recipe image diagnostics ignore it and no slug may claim it.
-- `delete` (Core `delete_recipe`, API `recipe.archive`) means reversible archive; only `archive purge` with explicit confirmation destroys a snapshot.
+- `delete` (Core `archive.archive_recipe`, API `recipe.archive`) means reversible archive; only `archive purge` with explicit confirmation destroys a snapshot.
 - `check` is read-only, never repairs and takes no lock; integrity errors make `ok` false and the CLI exit 1, while `uncategorized_tags` and `unresolved_log_references` are warnings.
 
 ## Constraints & Gotchas

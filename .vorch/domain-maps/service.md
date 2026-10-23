@@ -14,7 +14,7 @@ Core (`catalog.md`, `shopping.md`, `storage.md`).
 
 `gusto/client.py` resolves the server URL, sends one command envelope per call,
 unwraps `result` and classifies failures as definite rejections or uncertain
-outcomes. `gusto/cli.py` is its only production caller.
+outcomes. The CLI and its private command units (`cli.md`) are its production callers.
 
 Not owned here:
 - CLI parsing, presentation, exit codes and local lifecycle commands: `cli.md`.
@@ -168,10 +168,9 @@ server paths.
 - The client never replays a command. Only `health` retries.
 - Contract tests: `tests/test_api.py` owns the envelope, validation, statuses,
   attachments, events, post-save uncertainty and the client's failure
-  classification against a real socket; `tests/test_cli.py`
-  (`check_client_contract`, `check_uncertain_delivery_contract`) owns URL
-  resolution, attachment encoding, timeout scaling and lost-response recovery
-  end to end.
+  classification against a real socket; the CLI owner gate (`tests/test_cli.py`)
+  assembles `tests/_cli_client.py` and `tests/_cli_editor.py` for URL resolution,
+  attachment encoding, timeout scaling and lost-response recovery end to end.
 
 ## Constraints & Gotchas
 

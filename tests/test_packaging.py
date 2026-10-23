@@ -154,7 +154,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-release-test-") as temporary:
     (shadow_package / "__init__.py").write_text(
         f"__version__ = {gusto.__version__!r}\n", encoding="utf-8",
     )
-    (shadow_package / "cli.py").write_text(
+    (shadow_package / "_cli_local.py").write_text(
         "def _missing_web_dependencies(): return []\n", encoding="utf-8",
     )
     marker = skill_runtime / ".gusto-runtime.json"

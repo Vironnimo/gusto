@@ -4,11 +4,11 @@ This file records why each sentence or standalone instruction fragment in the sh
 
 The reasons are current engineering rationales, not claims about unrecorded past incidents. Recorded failures supporting recovery/encoding guidance are in `docs/audit-2026-09-22.md`; warning, partial-uninstall and authority corrections are in `docs/audit-2026-10-10.md`. Source notes are shared by the rows of each file below. Module names refer to `gusto/`; map paths are relative to `.vorch/domain-maps/`.
 
-Headings, navigation links, JSON field names and table data are not prose sentences. JSON examples illustrate the adjacent result contract; their IDs, paths and versions are sample values, not selected targets. Shell examples belong to their adjacent procedure. Forwarded Core/API/lifecycle errors remain owned by those modules; the CLI section covers wording authored in `gusto/cli.py`.
+Headings, navigation links, JSON field names and table data are not prose sentences. JSON examples illustrate the adjacent result contract; their IDs, paths and versions are sample values, not selected targets. Shell examples belong to their adjacent procedure. Forwarded Core/API/lifecycle errors remain owned by those modules; the CLI section covers wording authored in `gusto/cli.py` and its private `gusto/_cli_*.py` units. Registrations stay beside handlers in `_cli_catalog.py`, `_cli_shopping.py`, `_cli_local.py` and `_cli_editor.py`; `cli.py` owns parser assembly and exit handling, and `_cli_terminal.py` owns shared output/remote mechanics.
 
 ## skill/gusto/SKILL.md
 
-Evidence: `.vorch/PROJECT.md` records the household/service scope, instance boundary and explicit no-MCP decision. `cli.cmd_home`, `main`, `_edit_remote`, `client.resolve_server_url` and `READ_ONLY_OPERATIONS` define invocation and recovery. `search.search`, `load_log`, `log_cooked`, `suggest`, `shopping_add`, `shopping_add_recipe`, `shopping_toggle` (with an explicit checked argument), `favorite_match` and `favorite_for_store` define the household operations. `api._tag_warnings`, `_recipe_create` and `_recipe_update` add organization warnings. Authorization and presentation guidance describes the skill policy, not enforcement by Core.
+Evidence: `.vorch/PROJECT.md` records the household/service scope, instance boundary and explicit no-MCP decision. `_cli_local.cmd_home`, `cli.main`, `_cli_editor._edit_remote`, `client.resolve_server_url` and `READ_ONLY_OPERATIONS` define invocation and recovery. `search.search`, `recipes.load_log`, `recipes.log_cooked`, `recipes.suggest`, `shopping.shopping_add`, `shopping.shopping_add_recipe`, `shopping.shopping_toggle` (with an explicit checked argument), `favorites.favorite_match` and `favorites.favorite_for_store` define the household operations. `api._tag_warnings`, `_recipe_create` and `_recipe_update` add organization warnings. Authorization and presentation guidance describes the skill policy, not enforcement by Core.
 
 
 ### Discovery
@@ -182,7 +182,7 @@ Evidence: `.vorch/PROJECT.md` records the household/service scope, instance boun
 | `Der Tag ‘schnell’ ist noch keiner Kategorie zugeordnet."` | Demonstrates an unresolved assignment alongside successful recipe storage. |
 ## skill/gusto/references/cli.md
 
-Evidence: `cli.build_parser` and the matching `cmd_*` handlers define calls, results and exits; `tests/test_agent_contract.py` checks leaf coverage. Core ownership and verified functions are indexed in `catalog.md` and `shopping.md`; their domain tests cover the effects. Encoding/editor evidence is in `tests/test_cli.py` (`check_edit_readback_contract`, `check_uncertain_delivery_contract` and the command round-trip cases). `checks.check` owns diagnostic keys, including `invalid_data_files`. `service.managed_paths` owns runtime-root discovery; `service_action`, `update.run_update`, `uninstall.perform_uninstall` and `skill_install.install_skill` own local lifecycle results.
+Evidence: `cli.build_parser` and the registrations/`cmd_*` handlers in `_cli_catalog`, `_cli_shopping`, `_cli_local` and `_cli_editor` define calls, results and exits; `tests/test_agent_contract.py` checks leaf coverage. Core ownership and verified functions are indexed in `catalog.md` and `shopping.md`; their domain tests cover the effects. Encoding/editor evidence is in `tests/_cli_editor.py` (`check_edit_readback_contract`, `check_uncertain_delivery_contract`) and `tests/_cli_scenarios.py`, assembled by `tests/test_cli.py`. `checks.check` owns diagnostic keys, including `invalid_data_files`. `service.managed_paths` owns runtime-root discovery; `service_action`, `update.run_update`, `uninstall.perform_uninstall` and `skill_install.install_skill` own local lifecycle results.
 
 
 ### Gusto CLI ? Full Reference
@@ -593,7 +593,7 @@ Evidence: `install.ps1`, `install.sh` and `install.main` define bootstrap/repair
 | `Remove it only through the agent host's own lifecycle and only when explicitly requested.` | Keeps host-copy removal under the host's lifecycle and explicit request. |
 ## skill/gusto/references/telegram.md
 
-Evidence: `docs/telegram-shopping-handoff.md` owns the external checklist contract. `cli.cmd_shopping_check` and `cmd_shopping_uncheck` pass explicit booleans; `shopping.shopping_toggle`, `shopping_remove_done` and `shopping_clear` own persistence/removal. Delivery authority is skill policy. The external vBot implementation and a live phone round-trip were not verified here.
+Evidence: `docs/telegram-shopping-handoff.md` owns the external checklist contract. `_cli_shopping.cmd_shopping_check` and `cmd_shopping_uncheck` pass explicit booleans; `shopping.shopping_toggle`, `shopping_remove_done` and `shopping_clear` own persistence/removal. Delivery authority is skill policy. The external vBot implementation and a live phone round-trip were not verified here.
 
 
 ### Telegram shopping checklist through vBot
@@ -683,9 +683,9 @@ Evidence: `.vorch/PROJECT.md` -> Context records the 2026-09-23 decision not to 
 | `Department names can stay in its message text; checklist items are Gusto items only.` | Prevents invented department IDs from entering a checklist. |
 | `Checking items off afterward uses the normal ids (shopping check\|uncheck); the chosen order has no effect...` | Preserves opaque item identity regardless of presentation order. |
 
-## gusto/cli.py help
+## CLI help
 
-Evidence: `build_parser` defines each explicit help string; `_complete_help` repeats summaries as leaf descriptions and adds the exit epilog. The matching `cmd_*` handler and domain operation define its effect. Omission sentences are deliberately paired with their argument meaning so callers do not invent values. Generated argparse syntax/help is library output.
+Evidence: command registrations in `_cli_catalog`, `_cli_shopping`, `_cli_local` and `_cli_editor` define command help; `cli.build_parser` defines the root/shared arguments, and `_complete_help` repeats summaries as leaf descriptions and adds the exit epilog. The matching `cmd_*` handler and domain operation define its effect. Omission sentences are deliberately paired with their argument meaning so callers do not invent values. Generated argparse syntax/help is library output.
 
 | Text | Reason |
 |---|---|
@@ -914,9 +914,9 @@ Evidence: `build_parser` defines each explicit help string; `_complete_help` rep
 | `Gusto-User-Dienst stoppen.` | Stops the managed local user service. |
 | `Gusto-User-Dienst neu starten.` | Restarts the managed local user service with health verification. |
 
-## gusto/cli.py results, errors and prompts
+## CLI results, errors and prompts
 
-Evidence: each subsection names the function that constructs the message. Its conditional branch determines when that sentence appears; `tests/test_cli.py` covers output/exit contracts. Values in braces are runtime data. Serialized JSON data and external error strings are not additional authored prose. `cmd_serve` maps wildcard IPv4 to `127.0.0.1`, wildcard IPv6 to `[::1]`, and brackets literal IPv6 addresses; the existing hermetic serve test covers all three without opening a server.
+Evidence: each subsection names the function that constructs the message. Catalog/tag/image/archive/cooking handlers belong to `_cli_catalog.py`, shopping/favorite handlers and item rendering to `_cli_shopping.py`, local/serve/lifecycle handlers and prompts to `_cli_local.py`, editor/recovery/content handlers to `_cli_editor.py`, and `autostart_main` to `cli.py`. Its conditional branch determines when that sentence appears; `tests/test_cli.py` covers output/exit contracts. Values in braces are runtime data. Serialized JSON data and external error strings are not additional authored prose. `cmd_serve` maps wildcard IPv4 to `127.0.0.1`, wildcard IPv6 to `[::1]`, and brackets literal IPv6 addresses; the existing hermetic serve test covers all three without opening a server.
 
 ### EditError
 

@@ -20,7 +20,7 @@ Contract, coverage, extension and repair paths of `checks.check()`.
 
 ## Adding a diagnostic
 
-Add the list to the result and classify it in `hard_error_fields` or `warning_fields` (an unclassified list never reaches `errors`, `warnings` or `ok`). Add its German label in `cmd_check` in `gusto/cli.py`, document the JSON shape in `skill/gusto/references/cli.md`, and cover it in `tests/test_recipes.py` or the owning domain's test.
+Add the list to the result and classify it in `hard_error_fields` or `warning_fields` (an unclassified list never reaches `errors`, `warnings` or `ok`). Add its German label in `cmd_check` in `gusto/_cli_local.py`, document the JSON shape in `skill/gusto/references/cli.md`, and cover it in `tests/test_recipes.py` or the owning domain's test.
 
 ## Repair paths through the service
 

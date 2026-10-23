@@ -6,7 +6,7 @@ Lifecycle owns the per-user installation, service registration and control, veri
 
 Owners: `install.ps1`, `install.sh` and `install.py` bootstrap and install; `gusto/service.py` owns managed paths, state, Python runtimes, autostart and service control; `gusto/update.py` owns update locking, runtime preparation and activation; `gusto/uninstall.py` owns removal; `gusto/skill_install.py` delivers the skill; `deploy/` holds compatibility registration adapters; `scripts/build_release.py`, `.github/workflows/release.yml`, `scripts/ci_smoke_install.py` and `scripts/ci_systemctl.py` build and check releases.
 
-Not owned here: lifecycle command parsing, help, plain output, JSON error mapping, `serve` and the windowless `autostart_main` entry point (`gusto/cli.py`, `cli.md`); health response (`service.md`); process data-directory selection (`storage.md`); skill content (`cli.md`); reusable quality gates (`development.md`).
+Not owned here: lifecycle command parsing, help, plain output, JSON error mapping, `serve` and the windowless `autostart_main` entry point (`gusto/_cli_local.py` and `gusto/cli.py`, `cli.md`); health response (`service.md`); process data-directory selection (`storage.md`); skill content (`cli.md`); reusable quality gates (`development.md`).
 
 Lifecycle commands act on the local machine. They do not use the command API; `--server` does not redirect them. `service.managed_paths()` selects an explicit `--app-root`, otherwise the managed root containing the executing `sys.prefix` at `versions/<version>` when both state markers exist, otherwise the platform default. Service control and update share this selection. Uninstall has stricter discovery: it requires execution from the active installed runtime and refuses checkouts.
 

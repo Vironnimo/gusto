@@ -238,7 +238,7 @@ data/log.json       cooking log
 gusto/core/      all the logic
 gusto/api.py       anonymous versioned command API + change events
 gusto/client.py    standard-library HTTP client
-gusto/cli.py       thin remote CLI plus local lifecycle commands
+gusto/cli.py       CLI assembly; _cli_*.py own remote/local command groups
 gusto/service.py   current-user service registration and control
 gusto/update.py    verified side-by-side update with rollback
 gusto/uninstall.py safe managed-runtime removal lifecycle
