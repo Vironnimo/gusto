@@ -1,178 +1,125 @@
 # Shopping
 
-The shopping domain owns the shared shopping list, ingredient import, preferred products, offline mutations, and full-state synchronization between browser clients and the server.
+The shopping domain owns the household shopping list, recipe ingredient import, shared preferred products, and the offline shopping PWA with its full-state sync to the Gusto service.
 
 ## Overview
 
-Server-side rules and persistence live in the shopping section of
-`gusto/core.py`. `gusto/api.py` exposes the same operations to the CLI;
-`gusto/web.py` provides HTML fallbacks and browser sync APIs, while
-`gusto/static/shopping-client.js` owns offline browser copies and optimistic
-interaction. Recipe lookup and ingredients come from the catalog domain.
+Owned code and contracts:
+- `gusto/core.py`: the `ShoppingItem`, `ShoppingNeed` and `FavoriteProduct` dataclasses and everything below the `Shopping list` banner (preferred products, ingredient parsing, shopping load/save, modify, sync).
+- `gusto/static/shopping-client.js` (offline browser client) and `gusto/static/sw.js` (service worker, served at `/sw.js` with root scope).
+- `docs/sync-kontrakt.md` (PWA wire and merge contract, German) and `docs/telegram-shopping-handoff.md` (Telegram checklist boundary).
+
+Not owned here, but bound by this domain's contracts:
+- Lock mechanism, atomic JSON writes and the change-revision journal: `storage.md`. This map only states which locks and event resources shopping operations use.
+- Command API operations `shopping.*` and `favorites.*` and the event stream: `service.md`. CLI commands, their output and the shipped skill, including `skill/gusto/references/shopping-trip.md` and `telegram.md`: `cli.md`.
+- `/shopping` and `/favorites*` pages and their no-JS forms, the browser endpoints `/api/shopping`, `/api/shopping/sync`, `/api/favorites`, `/media/favorite/<filename>`, browser photo normalization, and `app.js`, which forwards change events: `web.md`.
+- Recipe lookup, archive/purge and `check` diagnostics: `catalog.md`.
+
+Cross-domain touchpoints:
+- Catalog feeds shopping: ingredient import and `shopping add --source` need an active recipe (`get`); sync validates visible sources against `recipe_references()` (active or archived).
+- Shopping constrains catalog: archive purge refuses while a visible item references the slug (it holds catalog and shopping locks); `check` reports `unresolved_shopping_sources`, `duplicate_favorite_aliases`, orphaned or missing favorite image files and unreadable `shopping_list.json`/`favorites.json` as hard errors; recipe slug `_favorites` is reserved because `images/_favorites/` belongs here.
+- Successful real mutations publish the `shopping` or `favorites` change resource; the shopping page consumes them without reloading.
 
 ## Terms
 
-The cross-cutting term GLOSSARY → Einkaufsbedarf defines the durable owner of aliases and product rankings.
+### Visible item
+
+A shopping item that is not a tombstone. Checked items are visible: they count for the recipe import guard, the purge guard, `shopping list` and `shopping clear`.
 
 ### Tombstone
 
-**Definition:** A shopping item retained with `deleted=true` so a deletion can propagate to other devices. It is hidden from normal lists but remains part of synchronization state.
+A shopping item kept with `deleted: true` so its removal propagates to other devices. Hidden from lists but part of every sync state; nothing hard-deletes it.
 
 ### Sync version
 
-**Definition:** An item's `updated_at` UTC timestamp, compared per id to choose the last writer. Current writers use millisecond precision and must advance beyond that item's previous value.
+An item's `updated_at` UTC timestamp, compared per id to choose the last writer (see Sync Contract).
+
+### Shopping need (`Einkaufsbedarf`)
+
+Defined in `.vorch/GLOSSARY.md`. Domain detail: it has one canonical name and exact aliases, and list items relate to it only by matching their text at read time (`shopping/preferred-products.md`).
+
+### Preferred-product card (`Lieblingsprodukt`)
+
+One concrete product (name, brand, optional store, note, photo) in a shopping need's ranking; array order is the household's preference, best first.
 
 ## Data Model
 
-`data/shopping_list.json` has the shape `{ "items": [...] }`. Each item has a unique id, text, optional quantity, checked state, optional source recipe slug, creation and update timestamps, and deletion state. Visible list order is ascending `created_at`; tombstones are hidden unless explicitly requested.
-
-The browser stores the same full item array, including tombstones, under `localStorage` key `gusto.shopping`.
-When browser storage is full or blocked, the current page retains its latest
-items in memory and continues syncing. Unsaved memory survives renders, not
-page closure; a successful later storage write restores normal persistence.
-
-`data/favorites.json` stores shared household Einkaufsbedarfe. Each has one
-canonical name, explicit exact-match aliases, and a product array whose order
-is the manual preference ranking. Product cards require name and brand; store,
-note, and an owned image filename are optional. Images live under
-`images/_favorites/`; this reserved folder is not a recipe image folder. The
-browser mirrors the catalog under `localStorage` key `gusto.favorites` for
-offline reading only.
+- `data/shopping_list.json` is `{ "items": [...] }`, the complete state including tombstones. An item has an opaque string `id`, single-line `text`, free-text `quantity` (never parsed or combined), `checked`, `source` (recipe slug or `null`), `created_at`, `updated_at` and `deleted`. Exact JSON: `docs/sync-kontrakt.md`.
+- Ids are opaque strings: Core creates 32-hex UUIDs, browsers hyphenated UUIDs or a longer fallback. Every client passes them through verbatim.
+- Visible order is ascending `created_at` (string order); file order has no meaning.
+- Loading tolerates legacy items without `checked`, `deleted`, `quantity`, `source` or timestamps (defaults apply), but one item with a wrong type or a missing `id`/`text` invalidates the whole file: every shopping read and write fails with a `ValueError` until repaired, and `check` names the file. The same all-or-nothing validation applies to `favorites.json`.
+- `data/favorites.json` is `{ "needs": [...] }`; each need holds `aliases` and an ordered `products` array. Product photos live in `images/_favorites/` under `image_filename`; detail in `shopping/preferred-products.md`.
+- Browser: `localStorage` key `gusto.shopping` holds the same `{ "items": [...] }` shape including tombstones; `gusto.favorites` holds the last fetched preference catalog for offline reading only.
 
 ## Interfaces
 
-Core operations load and save full state, add individual entries, add a
-free-text group in one transaction, import ingredients from a recipe, list
-visible entries, set or toggle checked state, tombstone entries, clear completed
-entries, clear the complete visible list, and merge a remote full state.
+Transports (all reach the same Core functions):
+- CLI and agents use `POST /api/v1/command` operations `shopping.*` and `favorites.*` (`service.md`).
+- The PWA uses `POST /api/shopping/sync` (full-state exchange; a body object whose missing or null `items` means an empty state) and `GET /api/favorites`. `GET /api/shopping` returns the full state including tombstones for scripts and tests; the PWA never calls it.
+- No-JS web forms call Core directly; their toggle flips the state, while CLI `check`/`uncheck` set it explicitly.
 
-The sync endpoint accepts an object containing an `items` list; missing or
-null `items` means an empty incoming state. Core validates each remote item's
-required fields and field types before merging;
-malformed JSON shapes return HTTP 400 and are never persisted.
+List mutation semantics (also stated in the skill):
+- Adds create new ids with `checked: false`. Text must be non-empty and single-line; quantity is single-line free text. `add-many` validates every text, then commits the group in one transaction in argument order. Nothing deduplicates same-looking texts or combines quantities.
+- Ingredient import (`shopping_add_recipe`) needs an active recipe and at least one parsed ingredient, and refuses while any visible item has that recipe as `source`; the error names their count. Items get `source = slug`. Once the old items are tombstoned, a new import creates new ids.
+- A sourced single add (`shopping add --source`) needs an active recipe and joins the same import guard. Archived recipes are rejected for new attribution but remain valid sources of existing items, whose presentation resolves through the catalog's active-or-archived reference map.
+- Explicit check/uncheck to the current state and removing an existing tombstone are no-ops: no write, no new `updated_at`, no change event. Unknown ids are errors; check/uncheck of a tombstone is an error too.
+- `remove-done` tombstones every visible checked item, `clear` every visible item, each in one transaction returning `{ "removed": N }`. No restore exists in Core, API, CLI or web.
 
-Under `gusto shopping`, the CLI exposes `list`, `add`, `add-many`, `add-recipe`,
-`check`, `uncheck`, `remove`, `remove-done`, and `clear`. `add-many` accepts one
-or more positional free-text entries, commits them together, and returns their
-array in argument order. Explicit check and uncheck are idempotent and suited
-to agents synchronizing an external checklist; a repeated target state does
-not write or advance its sync version. Re-removing an existing tombstone has
-the same no-op behavior.
+Ingredient parsing (`parse_ingredients`, owned here): only lines after a line that is exactly `## Zutaten` (after trimming), up to the next line starting with `## `. Only `-` or `*` bullets followed by whitespace count, each whole remaining line one entry; `+` bullets, numbered lists, bold lines and thematic breaks are ignored, while H3 subsections and nested bullets stay inside the section. Changing the rule changes what existing recipes import.
 
-CLI shopping commands use `/api/v1/command`; browser PWA full-state exchange
-keeps `GET /api/shopping` and `POST /api/shopping/sync`. Successful real
-mutations advance the shared `shopping` change revision. Idempotent
-check/uncheck/remove retries and no-op merges do not emit a revision.
+Locks and events (mechanism: `storage.md`):
+- Unsourced adds, add-many, check/uncheck/toggle, remove, remove-done, clear: shopping lock; event `shopping`.
+- Sourced add and ingredient import: catalog and shopping locks; event `shopping`.
+- Merge: shopping lock, plus the catalog lock when any incoming item is visible and has a source (so archive/restore cannot hide a valid source mid-merge); event `shopping`.
+- Every preferred-product mutation: favorites lock; event `favorites`.
+- Events are published only when a file actually changed.
 
-`shopping add --source <slug>` attributes one free-text item to an existing
-recipe. Core validates the recipe while holding both catalog and shopping locks;
-unsourced adds retain the shopping-only lock. A visible manually sourced item
-participates in the same active-recipe guard as bulk imports.
+Preferred products (detail: `shopping/preferred-products.md`): `favorite_match(text)` returns the one need whose canonical name or alias equals the text after `normalize_shopping_text` (trim, collapse whitespace, lowercase, `ß` to `ss`), else `None`; the CLI prints `null` with exit 0. No substring, fuzzy or quantity-stripping match exists, and a normalized label belongs to at most one need. `shopping-client.js` duplicates this normalization; change both together.
 
-Existing sourced items remain shopping-owned when their recipe is archived.
-Presentation resolves each source slug through the catalog's active-or-archived
-reference map. New manual source attribution and ingredient import still
-require an active recipe. Permanent archive purge holds both locks and refuses
-while any visible shopping item still references that slug.
+Telegram checklist: Gusto's side is only the CLI. The agent lists items, posts ids verbatim through vBot's `channel_send` `checklist`, and afterwards writes explicit `shopping check|uncheck <id>` for the changed items only. Contract: `docs/telegram-shopping-handoff.md`; agent steps: `skill/gusto/references/telegram.md`; status: `.vorch/PROJECT.md` -> Context.
 
-Ingredient import requires at least one parsed ingredient and refuses a new
-import while any visible item with the same recipe source remains. This blocks
-accidental repeated clicks without deduplicating same-looking text across
-recipes or guessing how quantities should combine. Once the old sourced items
-are tombstoned, a fresh import creates new ids. Rejection reports the number of
-visible sourced items that caused the block.
-
-`shopping remove-done` tombstones every checked visible item. `shopping clear`
-tombstones every visible item, open or checked, in one transaction. Both return
-the removed count, retain tombstones for sync, hide removed items from normal
-lists, and have no CLI restore operation.
-
-The web provides server-rendered `/shopping` forms when JavaScript is unavailable. With JavaScript, the client hides that fallback, mutates local state first, and synchronizes in the background. `GET /api/shopping` returns all server items including tombstones; `POST /api/shopping/sync` accepts `{ "items": [...] }` and returns the merged full state.
-
-While online, the page shell also receives `/api/v1/events`. A `shopping`
-change triggers the existing full-state `sync()` path rather than replacing
-local state or reloading the page; a `favorites` change refreshes the cached
-preference catalog. The revision is replayable after reconnect.
-
-Core also owns deterministic favorite matching, need/alias CRUD, ranked-product
-CRUD and movement, image ownership, and consistency checks. The CLI exposes
-these as `gusto favorites list|show|match|add|set|remove|alias-add|alias-remove`
-and `product-add|product-set|product-move|product-remove`. `show` and `match`
-accept an optional store: Core's `favorite_for_store` keeps the manual ranking
-but returns only cards whose comma-separated `store` names that store (or is
-empty, meaning everywhere) as `products` and the rest as `other_products`; the
-stored ranking is unchanged. The web exposes
-central management under `/favorites`, a no-JS match page, product media, and
-`GET /api/favorites` for the offline-readable browser copy.
-
-Product create/edit forms expose separate native camera and image-library
-actions. The web shell converts either browser upload to metadata-free WebP
-with a 1920 px maximum edge before invoking the existing core product mutation.
+Store trips: Gusto persists no store layout or walking route (user decision 2026-09-23). Route order is agent judgment per answer (`skill/gusto/references/shopping-trip.md`) and never reorders, renames or rewrites items.
 
 ## Sync Contract
 
-- Merge is per item id. The version with the later valid `updated_at` wins; equal versions keep the receiving side's current value.
-- Items present on only one side are retained, so every exchange uploads and returns full state rather than a delta.
-- Tombstones participate like any other version and are never hard-deleted by shopping operations.
-- Both legacy second-precision and current millisecond timestamps are accepted. Valid timestamps outrank malformed legacy values on the server.
-- A winning remote timestamp that cannot advance by another millisecond is
-  rejected before saving the merged state. UTC-conversion overflow is handled
-  like a malformed legacy timestamp; existing malformed values stay repairable.
-- Compare the clock at persisted millisecond precision before advancing it;
-  consecutive mutations within one wall-clock millisecond need distinct versions.
-- The browser merges a response into its current state instead of overwriting it, preserving mutations made while a request was in flight. A queued follow-up sync handles changes during an active sync.
-- Every server-side list mutation and full-state merge holds the shopping
-  transaction lock across load, change, and atomic save. Ingredient import also
-  holds the catalog lock while reading its recipe snapshot. A merge containing
-  visible recipe sources also holds the catalog lock so archive/restore cannot
-  temporarily hide a valid source; locks are acquired in a stable order.
-- A merge without a winning or new item skips the save/serialization stage
-  entirely. An empty initial sync does not create a shopping data file.
+Wire details: `docs/sync-kontrakt.md`. Invariants every shopping change keeps:
+- Merge per id: the later valid `updated_at` wins; on a tie the receiving side keeps its version; ids present on one side only are kept, so a missing item never means deletion. Every exchange sends and returns the full state including tombstones.
+- Timestamps: new values are UTC `YYYY-MM-DDTHH:MM:SS.sssZ`; legacy second precision stays valid. Values compare as instants; a valid value beats a malformed one; two malformed values compare as strings; UTC-conversion overflow counts as malformed. The browser's `isNewer` mirrors Core's `_version_key`.
+- Every state change of an item sets `updated_at` at least 1 ms after its previous value (Core `_now_iso(previous)`, browser `nowIso(previous)`), comparing at the persisted millisecond precision so same-millisecond changes still advance.
+- Remote items must be objects with non-empty string `id` and `text`, string `quantity`, present boolean `checked` and `deleted`, non-empty string timestamps, and `source` string or null. A winning version whose timestamp cannot advance another millisecond is invalid too.
+- A winning visible item's `source` must name an active or archived recipe; tombstones and losing versions are not validated, so purged slugs survive in tombstones.
+- Any invalid item rejects the whole merge before saving (HTTP 400 on the sync endpoint).
+- A merge without a winning or new item saves nothing and publishes no event; an empty first sync creates no file.
+- Clients merge a response into their current local state, never overwrite it, and sync again when the list changed during a request.
+
+## Conventions
+
+- New shopping behavior goes into Core, then the command API and CLI with `--json`, then web and PWA (`.vorch/PROJECT.md` -> Architecture). The PWA is the only offline writer; the CLI never queues offline work.
+- A list mutation is one load-modify-save transaction under its lock: it advances `updated_at` per changed item, tombstones instead of deleting, and skips the save when nothing changed. `shopping_save` and `favorites_save` replace the whole state and exist for tests; product code must not apply mutations through them.
+- User-visible messages and errors are German; error strings reach agents through the CLI JSON error contract.
+- Contract changes update together: Core, `shopping-client.js` (it duplicates normalization, timestamp and merge rules), the matching `docs/` contract, and the skill's shopping sections (`SKILL.md`, `references/cli.md`, `shopping-trip.md`, `telegram.md`; owner `cli.md`).
+- Tests owned here: `tests/test_shopping.py` (list rules, ingredient parsing, data validation), `tests/test_favorites.py` (needs, aliases, matching, store narrowing, product images, their events), `tests/test_merge.py` (merge and timestamps), `scripts/pwa_check.py` (Chromium: sync API, offline use, two devices, live events, product-image cache, manifest, service worker). Related elsewhere: `tests/test_api.py` (command cases and revisions), `tests/test_concurrency.py` (parallel adds and merges), `tests/test_cli.py` (commands and help), `scripts/browser_check.py` (no-JS `/shopping`).
+
+## External Dependencies
+
+- A service worker registers only in a secure context (HTTPS or localhost). Over plain `http://<lan-ip>` a phone gets no offline shell and no install; the page still works online with localStorage, and ids fall back from `crypto.randomUUID` to `getRandomValues`. LAN HTTPS option (undecided): `docs/https-pwa-option.md`.
+- Telegram checklists depend on vBot's built-in `channel_send` `checklist`; Gusto contains no vBot code.
 
 ## Constraints & Gotchas
 
-- Ingredient import recognizes only non-empty `-` or `*` bullets under the exact `## Zutaten` heading and stops at the next H2.
-  A bullet marker requires following whitespace; bold notes and thematic
-  breaks are excluded.
-- Idempotency follows each owner's contract rather than command spelling.
-  Shopping tombstones and explicit check states support safe sync retries;
-  repeating an alias on the same Einkaufsbedarf is also safe. Creating an
-  already existing Einkaufsbedarf or removing an unknown hard-deleted product
-  remains an error because silently accepting it could hide a wrong identity.
-- Independent item adds/checks may arrive concurrently; order-sensitive pairs
-  such as `clear` or `remove-done` with `check` still have a result determined
-  by lock acquisition order and should be sequenced by the caller when order
-  expresses intent.
-- Offline and failed syncs preserve local state. While online, failed syncs
-  retry up to five times with increasing delays. Success or a new `online`
-  event resets that budget. Mutations, queued follow-ups, initialization, and
-  shopping change events also trigger sync.
-- Preferred-product matching only lowercases (including `ß` → `ss`) and
-  collapses whitespace. It does
-  not strip quantities, interpret alternatives, or use substring/fuzzy matches;
-  a name or alias may belong to only one Einkaufsbedarf.
-- Gusto stores no supermarket layout. Ordering a list along a store's walking
-  route is agent judgment per answer (`skill/gusto/references/shopping-trip.md`)
-  and never reorders or rewrites shopping items.
-- Preference catalog mutations are server-side and require connectivity. The
-  last successful catalog and content-specific product-image URLs remain
-  readable offline; replacing an image creates a new filename.
-- Taking or selecting a product photo is an online catalog mutation and is not
-  queued by the shopping PWA. The camera control requests the outward-facing
-  camera as a hint; the separate library control remains the fallback.
-- The service worker uses network-only handling for every `/api/` request and
-  active/archive recipe media. Navigations are network-first with the cached
-  shopping page as fallback; static assets and preferred-product media use the
-  active version's cache. Non-navigation HTML fetches always use the network,
-  including `/shopping` when refreshing recipe-source metadata. Precache
-  installation bypasses the browser HTTP cache to fetch the new asset versions.
-- Catalog events refresh shopping source references without reloading the
-  page or dropping unfinished input. List refreshes preserve keyboard focus;
-  the product dialog traps focus, disables background interaction, and returns
-  focus to the matching current item even if synchronization rebuilt its row.
-- Update the cache version when changing cached assets or offline shell behavior.
-- Verify Core behavior with `tests/test_shopping.py`, `tests/test_favorites.py`,
-  and `tests/test_merge.py`; verify API revision behavior with
-  `tests/test_api.py`; verify offline, two-device, live-event merge, manifest,
-  product-image cache, and service-worker behavior with
-  `scripts/pwa_check.py`.
+- `sw.js` serves every `/static/` asset cache-first from its active cache, also online, and static URLs carry no version. Any change to a precached asset (`style.css`, `app.js`, `photo-input.js`, `shopping-client.js`, manifest, icons) or to offline behavior needs a `CACHE` bump in `sw.js`, or installed browsers keep the old file. No test enforces the bump.
+- Sync rejection is all-or-nothing and the client retries the same payload. A device that was offline while an item was removed and its recipe purged, and that then changes its stale visible copy, sends a winning visible item with an unknown source: every later sync from that device fails until the user removes that item on the device.
+- Tombstones are never compacted, so the file and every sync payload grow. Dropping tombstones would let an offline device resurrect removed items, because ids present on one side only are kept.
+- Preferred-product changes and product photos are online-only server mutations; the PWA shows the last fetched catalog and cached photos offline and queues nothing for favorites.
+- Order-sensitive pairs such as `clear` or `remove-done` with `check` resolve by lock acquisition order; callers sequence them when order expresses intent.
+- Idempotency follows each operation's contract, not its spelling: repeated check/uncheck, tombstone removal and re-adding an alias to its own need are safe; creating an existing need or removing an unknown alias, product or need is an error.
+
+## References
+
+Read these only when your task matches - not by default.
+
+- Changing `shopping-client.js`, `sw.js`, the shopping page hooks, `/api/shopping*` or `/api/favorites`, or debugging offline or multi-device behavior -> `shopping/offline-pwa.md`
+- Changing shopping needs, aliases, product cards, store narrowing, product images or `favorites` commands -> `shopping/preferred-products.md`
+- Exact PWA wire format and merge rules (German) -> `docs/sync-kontrakt.md`
+- Telegram checklist boundary (German) -> `docs/telegram-shopping-handoff.md`
+- Lock mechanism, atomic writes, change journal -> `storage.md`
