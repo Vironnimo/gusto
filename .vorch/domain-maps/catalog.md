@@ -1,158 +1,73 @@
 # Catalog
 
-The catalog domain owns active and archived recipes, their metadata and images, tag-based discovery, cooking history, suggestions, and consistency diagnostics.
+The catalog domain owns active and archived recipes, their metadata and images, tag facets, cooking history, suggestions, and the `check` consistency diagnostics.
 
 ## Overview
 
-Catalog behavior lives in `gusto/core.py`. `gusto/api.py` exposes it to both
-normal CLI and browser clients; surfaces only translate input and present
-results. Shopping consumes recipe content only to extract ingredients.
-Persisted content is split deliberately between portable Markdown and JSON
-metadata.
+Catalog rules live in the recipe sections of `gusto/core.py` (create, categories, search, cooking log, suggestions, update/archive, recipe images, consistency). `gusto/api.py` exposes them to the CLI, and `gusto/web.py` calls the same Core; surfaces only translate input and present results (`service.md`, `cli.md`, `web.md`). Data-root selection, locks, atomic writes and change events are `storage.md`. Shopping consumes catalog lookups and recipe Markdown to import ingredients and resolve item sources. Repository decisions apply: recipes are pure Markdown without frontmatter, and every catalog capability goes through Core, API and CLI with `--json` before web (PROJECT.md).
 
 ## Terms
 
-GLOSSARY → Rezeptarchiv defines the reversible default for recipe deletion.
+Shared: GLOSSARY -> Rezeptarchiv (deletion means reversible archive).
 
 ### Facet
 
-**Definition:** A tag category used as one filter dimension. Selected tags are ORed within one facet and ANDed across facets.
+A tag category used as one filter dimension. Selected tags are ORed within one facet and ANDed across facets; selected tags without a category form one shared OR group.
 
 ### Cover image
 
-**Definition:** The recipe image selected for cards and the top of the detail page. If the stored selection is absent, the first image is the runtime fallback.
+The recipe image shown on cards and at the top of the detail page. At runtime a missing or stale stored selection falls back to the first image, but `check` treats images without a valid stored `cover_image_id` as an error.
 
 ## Data Model
 
-- `recipes/<slug>.md` is pure Markdown and begins with the recipe title as an H1; it contains no metadata or frontmatter.
-- `data/recipes.json` is the catalog index. Each entry carries the stable slug, title, flat tag list, optional duration and servings, latest cooked date, image metadata, and optional cover-image id.
-- `data/categories.json` owns tag-to-facet assignment and display order. A tag remains valid when unassigned, but `check` reports it as uncategorized.
-- `images/<slug>/` contains Gusto-owned copies named from their image ids. Image metadata remains in the catalog index.
-- `archive/<slug>/` is one self-contained reversible snapshot: `recipe.md`,
-  `metadata.json` with archived timestamp and full `Recipe` data, and an
-  optional owned `images/` folder.
-- `data/log.json` is append-only cooking history in `{date, slug}` records.
-  Archiving and purging do not rewrite historical log entries.
+- `recipes/<slug>.md`: pure Markdown beginning with `# <title>`; no metadata, no frontmatter.
+- `data/recipes.json`: list of entries with slug, title, flat tag list, optional `duration_min` and `servings`, `last_cooked`, `images` (id, filename, role, caption, created_at) and `cover_image_id`.
+- `data/categories.json`: `{ "<key>": {"label", "tags": [...]} }`. Object order is facet display order, list order is tag display order. Strict: an invalid key, an unknown field or a tag in two categories (case-insensitive) rejects the whole file. Missing file means no categories.
+- `images/<slug>/<image-id><ext>`: Gusto-owned copies; their metadata exists only in the index.
+- `archive/<slug>/`: reversible snapshot (`catalog/archive.md`).
+- `data/log.json`: list of `{date: "YYYY-MM-DD", slug}`, kept sorted by date and append-only: no Core operation removes entries, archive and purge do not rewrite them. `last_cooked` only moves forward.
 
-The slug joins Markdown, metadata, image storage, log entries, shopping sources, and URLs. Editing a title does not rename the slug.
-Generated slugs are limited to 150 characters after transliteration and avoid
-Windows device names. Explicit slugs must also be portable filenames and may
-not claim `_favorites`. Creation refuses pre-existing Markdown/image paths,
-including files without an index entry; use `check` to diagnose these first.
+The slug joins Markdown, metadata, images, archive, log entries, shopping sources and URLs; title edits never rename it. Generated slugs transliterate `ä ö ü ß`, lowercase, replace other characters with `-`, are cut to 150 characters, fall back to `recipe`, and prefix Windows device names with `recipe-`. Explicit slugs must be portable file names of at most 150 characters (no path separators or reserved characters, no leading dot, no trailing dot or space, no Windows device name) and may not be `_favorites`. The 150 bound keeps the atomic writer's temporary file name within Windows limits. Creation refuses a slug that is active, archived, or already has Markdown or an image folder, even without an index entry; diagnose such files with `check` first.
 
 ## Interfaces
 
-`gusto/core.py` exposes catalog reads and mutations, archive list/show/restore/
-purge, active-or-archived reference lookup, search and facet grouping,
-category definition/order/assignment mutations, cooking-log and suggestion
-operations, image management, and the consistency check. Callers receive
-`Recipe`, `ArchivedRecipe`, and `RecipeImage` objects or JSON-ready dictionaries.
-
-The API command registry exposes these capabilities to the CLI through `gusto
-list|search|tags|show|new|edit|content set|cooked|log|suggest|check|set|delete`,
-`gusto categories list|add|set|remove|assign|unassign|tag-move`, `gusto archive
-list|show|restore|purge`, and `gusto image ...`. `delete` is the compatibility
-verb for reversible archiving; only `archive purge --yes` means destruction.
-`edit` and `content set` write bodies through `recipe.content.set`; normal CLI
-commands never modify catalog files directly. Web catalog/archive pages and
-form actions in `gusto/web.py` use the same Core.
-
-`new` and a tag-changing `set` preserve tags that have no named facet but warn
-immediately in both CLI presentation modes. JSON adds a `warnings` array with
-the stable `uncategorized_tags` code and affected tags; those tags continue to
-share the runtime `Sonstige` facet until `categories assign` maps them through
-the service. Category mutations validate keys/labels/tags, keep each tag in at
-most one category, preserve explicit display order, hold the catalog lock, and
-publish catalog change events.
-
-Used facet choices are deduplicated case-insensitively across recipes. Named
-categories supply their configured spelling/order; unassigned tags retain the
-first catalog spelling and sort alphabetically. Listing never rewrites recipe
-metadata.
-
-Recipe titles must be non-empty. Core always makes the first Markdown H1 match
-the metadata title when creating or setting a title, including when the same
-title is re-applied to repair drift. Duration/servings, time caps, and log/
-suggestion day ranges, when present, must be positive integers.
-`update_recipe` has explicit clear flags for the optional
-numeric values; the CLI exposes them through `gusto set --clear-duration` and
-`--clear-servings`, and blank web edit fields use the same core path.
-
-The recipe detail page links to web image management. It can add a photo from
-the outward-facing camera or image library, edit role/caption, select the cover,
-and remove an image. Both browser choices use the same core image operations as
-the CLI.
-
-Cooking-log writes accept only exact `YYYY-MM-DD` calendar dates no later than
-today, so the log's lexical ordering remains valid. Suggestion limits must be
-nonnegative; zero deliberately returns no candidates.
-Positive day windows beyond the calendar range include all recorded history.
-
-The shopping domain calls the catalog lookup and recipe-content reader when adding every bullet under `## Zutaten` to the shopping list; it does not own recipe parsing beyond that section rule.
+- Callers receive `Recipe`, `ArchivedRecipe` and `RecipeImage` objects or JSON-ready dicts. `recipe_references()` maps every active or archived slug to `{slug, title, archived}` for other stores; an active recipe wins.
+- Title and H1 are one Core-enforced contract. Titles are non-empty, single-line and at most 150 characters after trimming. Every Core write of a title or body passes the body through one rule: a first line that is an H1 (`#` plus whitespace) becomes `# <title>`, otherwise `# <title>` and a blank line are prepended; line endings become LF. Re-applying the same title repairs drift. A title-only update needs the Markdown file. Surfaces may rebuild the H1 themselves but are not the source of truth.
+- Body replacement is `update_recipe(content=...)`, reached through API `recipe.content.set` by CLI `edit` and `content set`. `new` without content writes a template with `## Zutaten` and `## Zubereitung`.
+- Duration, servings, time caps and day windows must be positive integers; the suggestion limit must be non-negative (0 returns nothing). `update_recipe` has explicit clear flags; setting and clearing the same value together is rejected.
+- Recipe tags are trimmed single-line strings, deduplicated case-insensitively keeping the first spelling; an empty list clears them. Create and tag-changing updates through the API add `warnings: [{code: "uncategorized_tags", message, tags}]` for tags without a named facet; the recipe is saved anyway and the tags share the runtime `Sonstige` facet until `categories assign` maps them.
+- Category mutations validate keys (`[a-z0-9][a-z0-9_-]*`; `other` and `__other__` are reserved for `Sonstige`), labels (non-empty, single line) and tags. Assigning moves a tag out of any other category and adopts the existing category spelling, else the first catalog spelling, else the given one. Positions are 1-based. Removing or unassigning never changes recipe tags; removal reports `now_uncategorized`.
+- Facet listing (`tag_groups`): in used mode only used tags, case-insensitively deduplicated; named categories in configured order and spelling, empty ones dropped, then one `other`/`Sonstige` group of unassigned tags in first catalog spelling, sorted case-insensitively. The all mode lists defined categories only. Listing never rewrites metadata.
+- Search: tag facets as defined above; a time cap excludes recipes with unknown duration; query terms are whitespace-split, lowercased substrings matched against title and tags first and against the Markdown body only for terms metadata did not settle (ALL may combine metadata and body hits). `match` accepts only `any` or `all`.
+- Cooking: `log_cooked` requires an active recipe and an exact `YYYY-MM-DD` calendar date no later than today (default today). `load_log(days)` keeps entries within the window; windows beyond the calendar include all history.
+- Suggestions: active recipes not cooked within `days` (default 7), ordered by oldest `last_cooked`, never-cooked first. Deliberately simple; meal intelligence belongs to the calling agent combining log, search and list.
+- Images: Core copies a local file (the API materializes uploads, `service.md`). It accepts `.jpg`, `.jpeg`, `.png`, `.webp`, `.gif` after extension and header/dimension validation without optional libraries; role defaults to `gallery`; role and caption are single-line and open-ended (`result`, `ingredients`, `step`). The first image or an explicit cover becomes the cover; removing the cover promotes the first remaining image; removing the last image deletes the empty folder. Upload size limits and browser photo normalization are transport and web rules (`cli.md`, `service.md`, `web.md`).
+- Shopping uses `get`, `Recipe.content()` and `recipe_references()`; ingredient parsing under `## Zutaten` belongs to `shopping.md`.
 
 ## Conventions
 
-- JSON writes use the shared atomic writer. New catalog behavior belongs in
-  Core, then API/CLI, before web presentation.
-- Atomic JSON/Markdown replacement briefly retries Windows sharing/access
-  conflicts caused by concurrent reader handles; persistent errors still fail.
-- Every catalog mutation holds the cross-process catalog lock across its full
-  read-modify-write transaction. This includes the cooking log and owned recipe
-  images because both also update catalog state.
-- Multi-file mutations keep write checkpoints: completed rollbacks restore the
-  prior checkpoint and raise the original failure without an event. Failed
-  rollback or cleanup after a committed write retains the event and reports
-  `PostMutationError`. A committed index keeps its referenced Markdown/images.
-- `data/categories.json` is server-owned. Normal clients use `categories ...`;
-  direct edits bypass validation, locking, and change events.
-- Core create/update owns the metadata-title ↔ first-H1 invariant; web forms
-  still reconstruct the line, but are not the source of truth for the rule.
-- Images are copied into Gusto storage after extension and header/dimension validation. The first image becomes the cover unless another is explicitly selected.
-  Failed imports remove partial copies; failed cleanup is reported as a
-  storage change rather than as a clean rejection.
-- Before core receives a browser photo, the web shell applies EXIF orientation,
-  limits the longest edge to 1920 px, converts it to WebP, and omits metadata.
-  CLI imports travel as bounded API attachments and are copied in their
-  supported original format, so the CLI client remains dependency-free.
-- `images/_favorites/` is reserved for the shopping domain and must be ignored
-  when diagnosing recipe image folders.
-- `check` diagnoses active/archive H1, index, Markdown, image-file, image-folder,
-  cover, interrupted archive transaction, active/archive collision, visible
-  shopping source, favorite, and historical log-reference issues. It does not
-  repair them. Uncategorized tags and unresolved append-only log history are
-  warnings; other non-empty diagnostics are hard errors.
-  Invalid categories and malformed recipe/favorite/shopping entries appear in
-  `invalid_data_files` rather than aborting the whole diagnostic report.
-  Unreadable or invalid-UTF-8 Markdown and invalid directory paths are also
-  reported without discarding the remaining diagnostics.
+- Every catalog mutation is one storage transaction holding the `catalog` lock across read-modify-write; cooking also holds `log`, purge also `shopping` (`storage.md` -> Interfaces). Never call a locked Core function from inside another.
+- In multi-file mutations (create, body or title update, cooking, archive, restore, image add) the `data/recipes.json` save is the commit point. Write owned files first and the index last. A failure before the index commit rolls back the files and stays a clean rejection without a change event; a failure after it keeps the files the committed index references and surfaces as `PostMutationError` with an event.
+- A failed image import removes its partial copy; failing to remove that copy counts as a storage change (uncertain outcome), not as a clean rejection.
+- All catalog files, including `data/categories.json`, are server-owned. Clients use the service; direct edits bypass validation, locking and change events.
+- `images/_favorites/` belongs to shopping; recipe image diagnostics ignore it and no slug may claim it.
+- `delete` (Core `delete_recipe`, API `recipe.archive`) means reversible archive; only `archive purge` with explicit confirmation destroys a snapshot.
+- `check` is read-only, never repairs and takes no lock; integrity errors make `ok` false and the CLI exit 1, while `uncategorized_tags` and `unresolved_log_references` are warnings.
 
 ## Constraints & Gotchas
 
-- Search reads both indexed metadata and the Markdown body, so ingredient text participates in full-text results.
-  It opens Markdown only when title/tag matches have not already settled the
-  ANY/ALL condition; ALL can combine matches across metadata and body.
-- Separate clients may safely create recipes, record cooking, replace content,
-  or import images concurrently without losing index/log/image metadata. Their
-  final order can follow server lock acquisition order. Lock files must be
-  created with their lockable byte atomically; pre-lock concurrent writes race
-  on Windows. Direct live-store edits are outside the supported client
-  contract.
-- A duration limit excludes recipes whose duration is unknown, not only recipes over the limit.
-- Category key `other` is reserved for the runtime Sonstige facet. Removing or
-  unassigning a mapping never removes recipe tags; used tags become
-  uncategorized and are reported to the caller/check.
-- Suggestions intentionally only exclude recently cooked recipes and order the rest by oldest `last_cooked`; meal intelligence belongs to the calling agent.
-- Removing the selected cover promotes the first remaining image.
-- Archiving moves recipe-owned Markdown, metadata, and the whole image folder
-  out of the active catalog. Restore rejects active file/slug collisions. Purge
-  is irreversible and holds catalog plus shopping locks; it rejects the
-  operation while visible shopping items reference the slug.
-- Log and shopping records are not owned by an archive snapshot. Surfaces
-  resolve their source slug to active or archived metadata; a purge may leave
-  append-only log history showing its raw slug.
-- Native camera capture is a browser hint (`environment`), not a custom live
-  camera. A separate library action remains available when the hint is ignored;
-  both uploads require a reachable server and have a 25 MB input limit.
-- Verify catalog changes with `tests/test_recipes.py`, `tests/test_api.py`,
-  `tests/test_cli.py`, and, for web-visible behavior, `scripts/browser_check.py`
-  against throwaway data.
+- Separate clients may create recipes, record cooking, replace content or import images concurrently without lost index, log or image metadata; the final order follows lock acquisition.
+- Archiving requires the Markdown file; repair a missing file with `content set` first. Restore rejects an active recipe or existing active files with the same slug.
+- Cooking, ingredient import and new source attribution require an active recipe. Log entries and visible shopping items are not part of a snapshot; they keep the slug and resolve through `recipe_references()`. A purge can leave raw-slug log history (`unresolved_log_references` warning).
+- Search reads Markdown files from disk; ingredient text participates in full-text results.
+
+## Tests
+
+`tests/test_recipes.py` owns the Core catalog contracts, including the transaction failure matrix and archive lifecycle. API and CLI exposure: `tests/test_api.py`, `tests/test_cli.py`; web-visible behavior: `scripts/browser_check.py` against throwaway data; contention: `tests/test_concurrency.py`.
+
+## References
+
+Read these only when your task matches - not by default.
+
+- Changing archive, restore or purge, or repairing an interrupted archive transaction -> `catalog/archive.md`
+- Changing `check`, adding a diagnostic, or interpreting or repairing a finding -> `catalog/check.md`
