@@ -140,6 +140,8 @@ Evidence: manifest and payload validation, update lock, activation/rollback bran
 | `Unsicherer ZIP-Eintrag:` | Rejects traversal/absolute archive entries before extraction. |
 | `Symlink im Python-Paket ist nicht erlaubt:` | Prevents a payload link from escaping the extracted tree. |
 | `ZIP-Eintrag verlässt das Ziel:` | Rejects resolved extraction targets outside the destination. |
+| `Das Python-Runtime-Paket ist beschädigt oder nicht lesbar.` | Reports an invalid archive as a structured update failure before activation. |
+| `Die aktive Installation wurde nicht umgeschaltet.` | Makes the unchanged active version explicit after package extraction fails. |
 | `Python-Runtime-Paket enthält tools/python.exe nicht.` | Names the required interpreter payload missing from an otherwise valid archive. |
 | `Die Gusto-Update-Sperre ist nicht initialisiert.` | Distinguishes a short incomplete lock initialization from another operation holding the lock. |
 | `Ein anderes Gusto-Update läuft bereits.` | Reports `update_locked` rather than starting competing preparation or activation. |

@@ -185,14 +185,15 @@ with tempfile.TemporaryDirectory(prefix="gusto-service-") as temporary:
               "an explicit app root must override the executing installation")
         check(not default_root.called,
               "managed execution must not consult the platform default")
-        paths.state.write_text("{broken", encoding="utf-8")
-        try:
-            service.service_action("status", platform_name="linux", runner=runner)
-        except service.ServiceError as error:
-            check("Installationszustand" in str(error) and not default_root.called,
-                  "corrupt executing-installation state must not redirect control")
-        else:
-            raise AssertionError("corrupt managed installation was ignored")
+        for invalid in (b"{broken", b"\xff"):
+            paths.state.write_bytes(invalid)
+            try:
+                service.service_action("status", platform_name="linux", runner=runner)
+            except service.ServiceError as error:
+                check("Installationszustand" in str(error) and not default_root.called,
+                      "corrupt executing-installation state must not redirect control")
+            else:
+                raise AssertionError("corrupt managed installation was ignored")
         managed_runtime.write_state(paths, state)
     with patch.object(service.sys, "prefix", os.fspath(root / "checkout-venv")), \
             patch.object(managed_runtime, "default_app_root", return_value=fallback):

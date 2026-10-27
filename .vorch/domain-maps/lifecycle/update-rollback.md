@@ -28,7 +28,7 @@ Activation stops the old service, writes the new current pointer, writes changed
 | `update_failed`, `rollback:true` | Activation failed, previous runtime/state was restored and passed health. |
 | `rollback_failed`, `rollback:false` | Recovery also failed; no claim that the previous service is healthy. |
 
-On successful rollback the failed new Gusto runtime is removed best-effort. On success, `runtime.cleanup_versions()` removes older SemVer directories only if they have a matching verified marker and Python reference; arbitrary sibling folders are left alone. Update supplies the keep set: current and previous stay. `runtime.cleanup_python_runtimes()` keeps Python versions referenced by retained runtime markers. Cleanup occurs after health success, outside the activation rollback handler; a cleanup error is not evidence that activation failed.
+On successful rollback the failed new Gusto runtime is removed best-effort. On success, `runtime.cleanup_versions()` removes older SemVer directories only if they have a matching verified marker and Python reference; arbitrary sibling folders are left alone. Update supplies the keep set: current and previous stay. `runtime.cleanup_python_runtimes()` keeps Python versions referenced by retained runtime markers and skips interpreter cleanup entirely if a version directory has an unreadable or incomplete marker. Cleanup occurs after health success, outside the activation rollback handler; a cleanup error is not evidence that activation failed.
 
 ## Verification
 

@@ -140,7 +140,7 @@ def _read_json_object(path: Path, label: str) -> dict[str, Any]:
         value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
         raise RuntimePreparationError(f"{label} fehlt: {path}") from error
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise RuntimePreparationError(f"{label} ist nicht lesbar: {error}") from error
     if not isinstance(value, dict):
         raise RuntimePreparationError(f"{label} muss ein JSON-Objekt sein.")
@@ -446,7 +446,7 @@ def verified_runtime(runtime: Path, version: str, python_version: str) -> bool:
         marker = json.loads(
             (runtime / ".gusto-runtime.json").read_text(encoding="utf-8")
         )
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return False
     return (
         marker == {
@@ -711,7 +711,7 @@ def cleanup_versions(
             marker = json.loads(
                 (candidate / ".gusto-runtime.json").read_text(encoding="utf-8")
             )
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             continue
         if (not isinstance(marker, dict)
                 or marker.get("version") != candidate.name
@@ -731,14 +731,35 @@ def cleanup_python_runtimes(paths: ManagedPaths) -> list[str]:
             if not runtime.is_dir():
                 continue
             try:
+                validate_version(runtime.name)
+                version_directory = True
+            except RuntimePreparationError:
+                version_directory = False
+            try:
                 marker = json.loads(
                     (runtime / ".gusto-runtime.json").read_text(encoding="utf-8")
                 )
-            except (OSError, json.JSONDecodeError):
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                if version_directory:
+                    return []
                 continue
             python_version = marker.get("python_runtime") if isinstance(
                 marker, dict,
             ) else None
+            if version_directory and (
+                not isinstance(marker, dict)
+                or marker.get("version") != runtime.name
+                or marker.get("verified") is not True
+                or not isinstance(python_version, str)
+            ):
+                # A retained runtime with an unreadable reference may still
+                # need any managed interpreter. Leave them all until repaired.
+                return []
+            if version_directory:
+                try:
+                    validate_python_version(python_version)
+                except RuntimePreparationError:
+                    return []
             if isinstance(python_version, str):
                 referenced.add(python_version)
     removed: list[str] = []
