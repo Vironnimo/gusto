@@ -25,6 +25,7 @@ READ_ONLY_OPERATIONS = frozenset({
     "recipe.show", "log.list", "suggest.list", "check.run",
     "archive.list", "archive.show", "image.list",
     "favorites.list", "favorites.show", "favorites.match", "shopping.list",
+    "shopping.preview_recipe",
 })
 
 
@@ -40,7 +41,9 @@ def _response_failure(
     message: str, method: str, *, operation: str | None = None,
 ) -> ClientError:
     """A lost command response does not prove the command was not applied."""
-    read_only = isinstance(operation, str) and operation in READ_ONLY_OPERATIONS
+    read_only = isinstance(operation, str) and (
+        operation in READ_ONLY_OPERATIONS or operation == "backup.preview"
+    )
     unknown = method != "GET" and not read_only
     if unknown:
         message += (
@@ -187,13 +190,22 @@ def _request_json(
     *,
     payload: Mapping[str, Any] | None = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    binary: bytes | None = None,
+    extra_headers: Mapping[str, str] | None = None,
+    transport_operation: str | None = None,
 ) -> dict[str, Any]:
     data = None
-    operation = payload.get("operation") if payload else None
+    operation = payload.get("operation") if payload else transport_operation
     headers = {"Accept": "application/json"}
+    if extra_headers:
+        headers.update(extra_headers)
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json; charset=utf-8"
+        timeout += len(data) / (1024 * 1024) * REQUEST_TIMEOUT_SECONDS_PER_MB
+    elif binary is not None:
+        data = binary
+        headers["Content-Type"] = "application/zip"
         timeout += len(data) / (1024 * 1024) * REQUEST_TIMEOUT_SECONDS_PER_MB
     outgoing = request.Request(url, data=data, headers=headers, method=method)
     try:
@@ -276,6 +288,89 @@ def command(
             operation=operation,
         )
     return response["result"]
+
+
+MAX_BACKUP_BYTES = 64 * 1024 * 1024
+
+
+def backup_upload(path: str, *, server_url: str | None = None,
+                  token: str | None = None) -> Any:
+    """Preview or restore a local archive without embedding it in JSON."""
+    source = Path(path).expanduser()
+    try:
+        with source.open("rb") as handle:
+            archive = handle.read(MAX_BACKUP_BYTES + 1)
+    except OSError as error:
+        raise ClientError(f"Backup-Datei '{source}' konnte nicht gelesen werden: {error}") from error
+    if len(archive) > MAX_BACKUP_BYTES:
+        raise ClientError(f"Backup-Datei '{source}' ist größer als 64 MiB.")
+    base = resolve_server_url(server_url)
+    restore = token is not None
+    operation = "backup.restore" if restore else "backup.preview"
+    headers = {"X-Gusto-Restore-Token": token} if restore else None
+    response = _request_json(
+        "POST", f"{base}/api/v1/backup/{'restore' if restore else 'preview'}",
+        binary=archive, extra_headers=headers, transport_operation=operation,
+    )
+    if response.get("ok") is not True or "result" not in response:
+        message = response.get("error")
+        if response.get("ok") is False and isinstance(message, str) and message:
+            if response.get("outcome_unknown") is not True:
+                raise ClientError(message)
+            raise _response_failure(message, "POST", operation=operation)
+        raise _response_failure("Ungültige Backup-Antwort.", "POST", operation=operation)
+    return response["result"]
+
+
+def backup_download(path: str, *, server_url: str | None = None,
+                    safety_id: str | None = None) -> dict[str, Any]:
+    """Write a downloaded archive to a new local file; never overwrite one."""
+    base = resolve_server_url(server_url)
+    suffix = "/safety/" + parse.quote(safety_id, safe="") if safety_id is not None else ""
+    url = f"{base}/api/v1/backup{suffix}"
+    destination = Path(path).expanduser()
+    try:
+        handle = destination.open("xb")
+    except OSError as cause:
+        raise ClientError(f"Backup-Datei '{destination}' konnte nicht angelegt werden: {cause}") from cause
+    try:
+        with handle, request.urlopen(url, timeout=120) as response:
+            if response.headers.get_content_type() != "application/zip":
+                raise ClientError("Der Server lieferte keine ZIP-Backup-Datei.")
+            declared_length = response.headers.get("Content-Length")
+            try:
+                expected_size = int(declared_length) if declared_length is not None else None
+            except ValueError as exc:
+                raise ClientError("Der Server lieferte eine ungültige Backup-Größe.") from exc
+            if expected_size is not None and (expected_size < 0 or expected_size > MAX_BACKUP_BYTES):
+                raise ClientError("Der Server lieferte eine ungültige Backup-Größe.")
+            size = 0
+            while chunk := response.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_BACKUP_BYTES:
+                    raise ClientError("Das Backup ist größer als 64 MiB.")
+                handle.write(chunk)
+            if expected_size is not None and size != expected_size:
+                raise ClientError("Das Backup wurde nicht vollständig heruntergeladen.")
+    except (OSError, error.URLError, http.client.HTTPException, ClientError) as exc:
+        try:
+            destination.unlink(missing_ok=True)
+        except OSError as cleanup_error:
+            raise ClientError(
+                f"Unvollständiges Backup '{destination}' konnte nicht entfernt werden: "
+                f"{cleanup_error}"
+            ) from exc
+        if isinstance(exc, ClientError):
+            raise
+        if isinstance(exc, error.HTTPError):
+            try:
+                payload = _decode_response(exc, url=url)
+            except ClientError:
+                payload = {}
+            if isinstance(payload.get("error"), str) and payload["error"]:
+                raise ClientError(payload["error"]) from exc
+        raise ClientError(f"Backup konnte nicht gespeichert werden: {exc}") from exc
+    return {"path": os.fspath(destination.resolve()), "bytes": size}
 
 
 def health(

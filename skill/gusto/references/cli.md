@@ -38,7 +38,7 @@ write; use the main skill's uncertain-outcome recovery guidance.
   `any` (default) = any term present; `all` = every term present.
 - `show <slug> [--json]`
   Print a recipe. With `--json`, the object additionally carries `content` (the
-  full markdown).
+  full markdown) and its editable-state `revision`.
 - `tags [--all] [--json]`
   Tag categories (facets). Default: only tags actually used; `--all`: every
   defined category/tag.
@@ -71,32 +71,34 @@ write; use the main skill's uncertain-outcome recovery guidance.
   entry by hand first.
   Tags without a named category add a structured `warnings` entry to JSON and
   a warning line to human output; they are still stored in the `Sonstige` facet.
-- `set <slug> [--title ...] [--tags a,b]
+- `set <slug> --revision REVISION [--title ...] [--tags a,b]
   [--duration N|--clear-duration] [--servings N|--clear-servings] [--json]`
   Update metadata. `--title` also rewrites the first Markdown H1. `--tags`
   replaces the whole list; the clear flags remove
   optional duration or serving values. At least one change is required. A
   `--tags` change uses the same uncategorized-tag warning contract as `new`.
+  Supply `revision` from `show --json`; stale revisions are rejected without changes.
 - `edit <slug> [--json]`
   Download Markdown to a temporary file, open it in `$EDITOR`, then upload the
-  completed content through the server. JSON waits until the editor exits and
+  completed content using the initial revision. JSON waits until the editor exits and
   returns `slug`, temporary absolute `path`, `editor`, and `exit_code`.
   The temporary `path` is removed after a confirmed upload; if cleanup fails,
   success includes `retained_path`. A failed edit keeps its local copy and adds
   `slug` and `recovery_path` to the JSON error, also for `new --edit`. Inspect
-  `show` on the same server first; if the intended content is not already
-  saved, continue with `content set <slug> --file <recovery_path> --json`.
+  `show --json` on the same server first; merge concurrent changes, then use
+  `content set <slug> --file <recovery_path> --revision <revision> --json`.
   This manual upload retains the source file; automatic removal belongs to
   a successful interactive `edit` round-trip.
   Without `EDITOR` set, Windows opens notepad and Linux nano — headless agents
   must set `EDITOR` to a scriptable editor or use `content set` instead.
   `EDITOR` accepts an executable path or a command with arguments, such as
   `code --wait`. Quote paths containing spaces when adding arguments.
-- `content set <slug> (--file PATH | --stdin) [--json]`
+- `content set <slug> (--file PATH | --stdin) --revision REVISION [--json]`
   Replace the complete Markdown body through the server from a local file
   or stdin. Use UTF-8; files also accept UTF-8 or UTF-16 with a byte-order mark.
   Stdin is UTF-8. Returns the recipe including the saved `content`, with its H1
   normalized to the stored title. The local source file is retained.
+  Supply `revision` from `show --json`; stale revisions are rejected without changes.
 - `cooked <slug> [--date YYYY-MM-DD] [--json]`
   Add a log entry (default: today) and bump `last_cooked`. An explicit date
   must be a valid calendar date in that exact format and cannot be in the future.
@@ -211,11 +213,16 @@ before sending them.
   Existing items keep their source when that recipe is archived.
 - `shopping add-many "<text>" ... [--json]` — add a non-empty free-text group
   in one transaction; returns the array of created items in argument order.
-- `shopping add-recipe <slug> [--json]` — add all non-empty parsed ingredients
+- `shopping add-recipe <slug> [--servings N --revision REVISION] [--json]` — add all non-empty parsed ingredients
   of an active recipe (`source = slug`); returns the array of created items. It fails
   clearly when none can be parsed or while any visible items from that recipe
   remain, reporting their count and avoiding accidental repeated imports
   without merging quantities.
+  For adjusted portions, supply the checked preview's `recipe_revision` and
+  the same `--servings`; a changed recipe rejects the import.
+- `shopping preview-recipe <slug> [--servings N] [--json]` — show original and
+  scaled ingredients, warnings, source and target servings, and `recipe_revision`.
+  Review warnings before importing; omitted portions leave amounts unchanged.
 - `shopping check <id> [--json]` / `shopping uncheck <id> [--json]` — return the
   item. Repeating the requested state does not advance `updated_at`; an unknown
   `id` follows the JSON error contract above.
@@ -228,6 +235,21 @@ before sending them.
 - `shopping clear [--json]` — tombstone every visible item, open or checked;
   returns `{ "removed": N }`. The complete visible list is empty afterward.
   Neither bulk removal has a CLI restore operation.
+
+### Backup
+
+Archives are limited to 64 MiB compressed, 128 MiB total unpacked and 32 MiB
+per file. Preview rejects larger archives before restore.
+
+- `backup create --file PATH [--json]` — download a ZIP into a new local file.
+- `backup preview --file PATH [--json]` — validate the archive and show counts,
+  warnings, replacement effects and `token`; no household data is changed.
+- `backup restore --file PATH --token TOKEN [--json]` — restore the previewed
+  archive against the previewed server state. The result includes a
+  `safety_backup_id` for the automatic backup of the prior state. A stale token
+  is rejected; preview and inspect again before restoring.
+- `backup safety-download ID --file PATH [--json]` — download that safety backup
+  to a new local file; ID comes from the restore result.
 
 ### Server
 

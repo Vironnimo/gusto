@@ -27,7 +27,7 @@ def check_catalog():
           "new --json must identify tags without a named facet")
     check(not (HOME / "data" / "categories.json").exists(),
           "creating a recipe must not create an ineffective empty category file")
-    human_warning = run("set", slug, "--tags", "vegan,schnell")
+    human_warning = run("set", slug, "--revision", as_json("show", slug)["revision"], "--tags", "vegan,schnell")
     check(all(tag in human_warning.stdout for tag in ("schnell", "vegan")),
           "human set output must warn about tags without a named facet")
 
@@ -78,7 +78,7 @@ def check_catalog():
           "show --json must include Markdown content")
 
     changed = as_json(
-        "set", slug, "--title", "Neue Suppe", "--tags", "vegan,schnell",
+        "set", slug, "--revision", as_json("show", slug)["revision"], "--title", "Neue Suppe", "--tags", "vegan,schnell",
         "--duration", "30",
     )
     check(changed["title"] == "Neue Suppe" and changed["duration_min"] == 30,
@@ -87,7 +87,7 @@ def check_catalog():
           "set --title must keep the Markdown H1 synchronized")
     check("warnings" not in changed,
           "set --tags must stop warning after an agent assigns every facet")
-    cleared = as_json("set", slug, "--clear-duration", "--clear-servings")
+    cleared = as_json("set", slug, "--revision", as_json("show", slug)["revision"], "--clear-duration", "--clear-servings")
     check(cleared["duration_min"] is None and cleared["servings"] is None,
           "set must be able to remove optional duration and servings")
     check(as_json("list", "--max-time", "60") == [],
@@ -98,7 +98,7 @@ def check_catalog():
     check("positive ganze Zahl" in as_json_error(
         "search", "Suppe", "--max-time", "-1",
     )["error"], "search must reject a negative time cap")
-    no_change = as_json_error("set", slug)
+    no_change = as_json_error("set", slug, "--revision", as_json("show", slug)["revision"])
     check("mindestens eine Änderung" in no_change["error"],
           "set without mutation flags must fail explicitly")
     invalid = run("new", "Unmögliche Suppe", "--duration", "0", expect=1)
@@ -182,7 +182,7 @@ def check_content(slug):
         "# Neue Suppe\n\n## Zutaten\n\n- Wasser\n- Salz\n", encoding="utf-8",
     )
     content_result = as_json(
-        "content", "set", slug, "--file", os.fspath(recipe_source),
+        "content", "set", slug, "--revision", as_json("show", slug)["revision"], "--file", os.fspath(recipe_source),
     )
     check(content_result["slug"] == slug,
           "content set --file must transfer Markdown through the API")
@@ -194,12 +194,12 @@ def check_content(slug):
     ):
         source = HOME / f"unicode-{encoding}.md"
         source.write_bytes(encoded)
-        transferred = as_json("content", "set", slug, "--file", os.fspath(source))
+        transferred = as_json("content", "set", slug, "--revision", as_json("show", slug)["revision"], "--file", os.fspath(source))
         check(transferred["content"] == unicode_content
               and source.read_bytes() == encoded,
               f"{encoding} content must round-trip and leave the source file intact")
     source.write_bytes(unicode_content.encode("utf-32"))
-    refused_encoding = as_json_error("content", "set", slug, "--file", os.fspath(source))
+    refused_encoding = as_json_error("content", "set", slug, "--revision", as_json("show", slug)["revision"], "--file", os.fspath(source))
     check("UTF-32" in refused_encoding["error"]
           and as_json("show", slug)["content"] == unicode_content,
           "unsupported UTF-32 must explain its encoding and preserve stored content")
@@ -209,7 +209,7 @@ def check_content(slug):
     )
     stdin_call = [
         sys.executable, "-m", "gusto", "--server", SERVER_URL,
-        "content", "set", slug, "--stdin", "--json",
+        "content", "set", slug, "--revision", as_json("show", slug)["revision"], "--stdin", "--json",
     ]
     stdin_result = subprocess.run(
         stdin_call, cwd=ROOT,
@@ -228,7 +228,7 @@ def check_content(slug):
           and as_json("show", slug)["content"] == stdin_content,
           "invalid UTF-8 stdin must return a structured error before mutation")
     conflicting_content = run(
-        "content", "set", slug, "--stdin", "--file", os.fspath(recipe_source),
+        "content", "set", slug, "--revision", as_json("show", slug)["revision"], "--stdin", "--file", os.fspath(recipe_source),
         expect=2,
     )
     check("not allowed with argument" in conflicting_content.stderr,
@@ -236,7 +236,7 @@ def check_content(slug):
     invalid_utf8 = HOME / "invalid-utf8.md"
     invalid_utf8.write_bytes(b"# Kaputte Suppe\n\n- Zutat \xe4\n")
     broken_encoding = as_json_error(
-        "content", "set", slug, "--file", os.fspath(invalid_utf8),
+        "content", "set", slug, "--revision", as_json("show", slug)["revision"], "--file", os.fspath(invalid_utf8),
     )
     check(os.fspath(invalid_utf8) in broken_encoding["error"]
           and "UTF-8" in broken_encoding["error"]
@@ -446,7 +446,7 @@ def check_diagnostics_and_archive(slug):
           and json.loads(broken_check.stdout)["title_mismatches"] == [slug]
           and json.loads(broken_check.stdout)["ok"] is False,
           "check must return its full JSON diagnostics with status 1 on hard errors")
-    as_json("set", slug, "--title", "Neue Suppe")
+    as_json("set", slug, "--revision", as_json("show", slug)["revision"], "--title", "Neue Suppe")
     check(as_json("check")["ok"] is True,
           "setting the canonical title again must repair a drifting H1")
 

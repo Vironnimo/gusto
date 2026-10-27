@@ -278,6 +278,7 @@ def cmd_set(args):
         "servings": args.servings,
         "clear_duration": args.clear_duration,
         "clear_servings": args.clear_servings,
+        "revision": args.revision,
     })
     if args.json:
         dump(recipe)
@@ -537,6 +538,7 @@ def register_recipes(sub, base) -> None:
 def register_management(sub, base) -> None:
     sp = sub.add_parser("set", parents=[base], help="Metadaten eines Rezepts aendern.")
     sp.add_argument("slug", help="Rezept-Slug aus list oder search; mindestens eine Änderung angeben.")
+    sp.add_argument("--revision", required=True, help="Revision aus show --json; bei Konflikt erneut lesen und Änderungen prüfen.")
     sp.add_argument("--title", help="Titel und Markdown-H1 ändern; Slug bleibt gleich. Ohne Angabe: unverändert.")
     sp.add_argument("--tags", help="Kommagetrennt; ersetzt alle Tags. Leerer Wert entfernt alle. Ohne Angabe: unverändert.")
     duration = sp.add_mutually_exclusive_group()

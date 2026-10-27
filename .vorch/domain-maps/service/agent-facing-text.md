@@ -53,6 +53,18 @@ typed arguments. `tests/test_api.py` owns the corresponding rejection cases.
 | `Der Content-Length-Header muss eine ganze Zahl sein.` | Refuses malformed declared sizes rather than using an invalid value to decide the body limit. |
 | `Der Content-Length-Header darf nicht negativ sein.` | A negative size cannot describe the request or exempt it from transport limits. |
 | `'after' muss eine nichtnegative ganze Zahl sein.` | SSE replay requires a canonical nonnegative revision; rejects negative, signed, padded or non-integer cursors before opening a stream. |
+| `Für angepasste Portionen zuerst preview-recipe aufrufen und die Revision angeben.` | Refuses an import with scaled quantities that was not bound to a reviewed preview. |
+| `Das Backup ist größer als 64 MiB.` | Refuses oversized archive input before restore. |
+| `Für das Wiederherstellen ist der Token aus der Vorschau nötig.` | Refuses restore without the token binding the reviewed archive and state. |
+| `Backup-Datei '{source}' konnte nicht gelesen werden: {error}` | Reports local archive read failure before an upload. |
+| `Backup-Datei '{source}' ist größer als 64 MiB.` | Refuses an oversized local archive before upload. |
+| `Ungültige Backup-Antwort.` | An invalid response does not confirm a restore; transport classification preserves uncertainty. |
+| `Backup-Datei '{destination}' konnte nicht angelegt werden: {error}` | Identifies local output failure without overwriting an existing file. |
+| `Der Server lieferte keine ZIP-Backup-Datei.` | Refuses to save an unrelated response as a backup. |
+| `Der Server lieferte eine ungültige Backup-Größe.` | Rejects an impossible or oversized declared archive before presenting it as a valid backup. |
+| `Das Backup wurde nicht vollständig heruntergeladen.` | Rejects a truncated response instead of reporting a damaged local archive as a successful backup. |
+| `Backup konnte nicht gespeichert werden: {error}` | Reports an incomplete download without presenting it as a usable archive. |
+| `Unvollständiges Backup '{destination}' konnte nicht entfernt werden: {error}` | Identifies an incomplete local file that the failed download could not remove. |
 
 ## Attachments
 

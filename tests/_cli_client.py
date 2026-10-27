@@ -5,7 +5,9 @@ import base64
 import io
 import json
 import os
+from email.message import Message
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 
 from _cli_support import (
@@ -14,6 +16,7 @@ from _cli_support import (
 
 def check_client_contract():
     from gusto import client
+    from _cli_support import invoke
 
     settings = HOME / "client-settings.json"
     settings.write_text(
@@ -197,5 +200,65 @@ def check_client_contract():
                   "health must reject a body without an ok field")
         else:
             raise AssertionError("health accepted a response without ok")
+
+    for argv, method, expected in (
+        (["backup", "create", "--file", "backup.zip"], "backup_download",
+         {"path": "backup.zip", "bytes": 12}),
+        (["backup", "preview", "--file", "backup.zip"], "backup_upload",
+         {"token": "token"}),
+        (["backup", "restore", "--file", "backup.zip", "--token", "token"],
+         "backup_upload", {"safety_backup_id": "saved"}),
+        (["backup", "safety-download", "saved", "--file", "backup.zip"],
+         "backup_download", {"path": "backup.zip", "bytes": 12}),
+    ):
+        with patch.object(client, method, return_value=expected) as call:
+            result = invoke([*argv, "--server", "http://example.test", "--json"])
+        check(result.returncode == 0 and json.loads(result.stdout) == expected
+              and call.call_args.kwargs["server_url"] == "http://example.test",
+              "backup commands must forward to the selected service and return JSON")
+    existing = HOME / "existing-backup.zip"
+    existing.write_bytes(b"do not overwrite")
+    try:
+        client.backup_download(str(existing), server_url="http://example.test")
+    except client.ClientError:
+        check(existing.read_bytes() == b"do not overwrite",
+              "backup download must not replace a local file")
+    else:
+        raise AssertionError("backup download overwrote an existing file")
+    missing_destination = HOME / "missing-safety.zip"
+    failure = HTTPError("http://example.test", 404, "missing", {},
+                        io.BytesIO(b'{"ok":false,"error":"Sicherung nicht gefunden."}'))
+    with patch.object(client.request, "urlopen", side_effect=failure):
+        try:
+            client.backup_download(str(missing_destination), server_url="http://example.test",
+                                   safety_id="missing")
+        except client.ClientError as error:
+            check("Sicherung" in str(error) and not missing_destination.exists(),
+                  "failed backup downloads must expose the server error and remove partial files")
+        else:
+            raise AssertionError("missing safety backup was accepted")
+    truncated = io.BytesIO(b"partial")
+    truncated.headers = Message()
+    truncated.headers["Content-Type"] = "application/zip"
+    truncated.headers["Content-Length"] = "40"
+    with patch.object(client.request, "urlopen", return_value=truncated):
+        try:
+            client.backup_download(str(missing_destination), server_url="http://example.test")
+        except client.ClientError:
+            check(not missing_destination.exists(),
+                  "a truncated backup download must not leave a purportedly complete file")
+        else:
+            raise AssertionError("a truncated backup was accepted")
+    archive = HOME / "input-backup.zip"
+    archive.write_bytes(b"archive fixture")
+    for token, expected_unknown in ((None, False), ("review-token", True)):
+        with patch.object(client.request, "urlopen", side_effect=OSError("lost reply")) as send:
+            try:
+                client.backup_upload(str(archive), server_url="http://example.test", token=token)
+            except client.ClientError as error:
+                check(error.outcome_unknown is expected_unknown and send.call_count == 1,
+                      "backup transport failure must distinguish preview from restore without retry")
+            else:
+                raise AssertionError("a lost backup response was accepted")
 
 

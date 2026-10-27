@@ -35,14 +35,14 @@ def check_forwarding():
         (["show", "soup"], "recipe.show", {"slug": "soup"}),
         (["new", "Green soup", "--tags", "green, quick", "--duration", "20", "--servings", "3"], "recipe.create",
          {"title": "Green soup", "tags": ["green", "quick"], "duration_min": 20, "servings": 3}),
-        (["content", "set", "soup", "--file", str(text)], "recipe.content.set", {"slug": "soup", "content": "# New title\n\n- Salt\n"}),
+        (["content", "set", "soup", "--file", str(text), "--revision", "rev"], "recipe.content.set", {"slug": "soup", "content": "# New title\n\n- Salt\n", "revision": "rev"}),
         (["cooked", "soup", "--date", "2026-07-13"], "recipe.cooked", {"slug": "soup", "date": "2026-07-13"}),
         (["log", "--days", "7"], "log.list", {"days": 7}),
         (["suggest", "--days", "5", "--limit", "4"], "suggest.list", {"days": 5, "limit": 4}),
         (["check"], "check.run", None),
-        (["set", "soup", "--title", "New", "--tags", "", "--clear-duration", "--clear-servings"], "recipe.update",
+        (["set", "soup", "--title", "New", "--tags", "", "--clear-duration", "--clear-servings", "--revision", "rev"], "recipe.update",
          {"slug": "soup", "title": "New", "tags": [], "duration_min": None,
-          "servings": None, "clear_duration": True, "clear_servings": True}),
+          "servings": None, "clear_duration": True, "clear_servings": True, "revision": "rev"}),
         (["delete", "soup"], "recipe.archive", {"slug": "soup"}),
         (["archive", "list"], "archive.list", None),
         (["archive", "show", "soup"], "archive.show", {"slug": "soup"}),
@@ -72,7 +72,8 @@ def check_forwarding():
         (["shopping", "list", "--pending"], "shopping.list", {"pending": True}),
         (["shopping", "add", "Salt", "--quantity", "2 g", "--source", "soup"], "shopping.add", {"text": "Salt", "quantity": "2 g", "source": "soup"}),
         (["shopping", "add-many", "Brot", "6 Eier"], "shopping.add_many", {"texts": ["Brot", "6 Eier"]}),
-        (["shopping", "add-recipe", "soup"], "shopping.add_recipe", {"slug": "soup"}),
+        (["shopping", "add-recipe", "soup"], "shopping.add_recipe", {"slug": "soup", "servings": None, "revision": None}),
+        (["shopping", "preview-recipe", "soup", "--servings", "4"], "shopping.preview_recipe", {"slug": "soup", "servings": 4}),
         (["shopping", "check", "item"], "shopping.check", {"id": "item"}),
         (["shopping", "uncheck", "item"], "shopping.uncheck", {"id": "item"}),
         (["shopping", "remove", "item"], "shopping.remove", {"id": "item"}),
@@ -99,7 +100,8 @@ def check_forwarding():
             check(True, f"{operation} operation, arguments and attachments must match")
         covered.add(" ".join(arguments[:2] if arguments[0] in grouped else arguments[:1]))
     local_or_editor = {"home", "serve", "status", "start", "stop", "restart",
-                       "update", "uninstall", "install-skill", "edit"}
+                       "update", "uninstall", "install-skill", "edit",
+                       "backup create", "backup preview", "backup restore", "backup safety-download"}
     check(covered == EXPECTED_COMMANDS - local_or_editor,
           "the independent forwarding matrix must cover every remote leaf")
 

@@ -17,11 +17,12 @@ from pathlib import Path
 from typing import Callable
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from . import __version__
 import gusto.core.records as core_records
+import gusto.core.backup as core_backup
 import gusto.core.catalog.archive as core_archive
 import gusto.core.catalog.categories as core_categories
 import gusto.core.catalog.images as core_images
@@ -358,10 +359,9 @@ def _categories_tag_move(arguments: dict, _attachments: dict) -> dict:
 def _recipe_show(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(arguments, allowed={"slug"}, required={"slug"})
     slug = _string(values, "slug")
-    recipe = core_recipes.get(slug)
-    if recipe is None:
-        raise CommandError(f"Kein Rezept mit Slug '{slug}'.", 404)
-    return _recipe_dict(recipe, include_content=True)
+    snapshot = core_recipes.get_edit_snapshot(slug)
+    return {**snapshot["recipe"].to_dict(), "content": snapshot["content"],
+            "revision": snapshot["revision"]}
 
 
 def _recipe_create(arguments: dict, _attachments: dict) -> dict:
@@ -387,12 +387,13 @@ def _recipe_create(arguments: dict, _attachments: dict) -> dict:
 
 def _recipe_content_set(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(
-        arguments, allowed={"slug", "content"},
-        required={"slug", "content"},
+        arguments, allowed={"slug", "content", "revision"},
+        required={"slug", "content", "revision"},
     )
     recipe = core_recipes.update_recipe(
         _string(values, "slug"),
         content=_string(values, "content"),
+        expected_revision=_string(values, "revision"),
     )
     with _mutation_result():
         return _recipe_dict(recipe, include_content=True)
@@ -401,9 +402,9 @@ def _recipe_content_set(arguments: dict, _attachments: dict) -> dict:
 def _recipe_update(arguments: dict, _attachments: dict) -> dict:
     allowed = {
         "slug", "title", "tags", "duration_min", "servings",
-        "clear_duration", "clear_servings",
+        "clear_duration", "clear_servings", "revision",
     }
-    values = _arguments(arguments, allowed=allowed, required={"slug"})
+    values = _arguments(arguments, allowed=allowed, required={"slug", "revision"})
     tags = _strings(values, "tags", optional=True)
     slug = _string(values, "slug")
     title = _string(values, "title", optional=True)
@@ -423,6 +424,7 @@ def _recipe_update(arguments: dict, _attachments: dict) -> dict:
         servings=servings,
         clear_duration=clear_duration,
         clear_servings=clear_servings,
+        expected_revision=_string(values, "revision"),
     )
     with _mutation_result():
         result = recipe.to_dict()
@@ -743,11 +745,24 @@ def _shopping_add_many(arguments: dict, _attachments: dict) -> list[dict]:
     ]
 
 
+def _shopping_preview_recipe(arguments: dict, _attachments: dict) -> dict:
+    values = _arguments(arguments, allowed={"slug", "servings"}, required={"slug"})
+    return core_shopping.shopping_preview_recipe(
+        _string(values, "slug"), servings=_integer(values, "servings"),
+    )
+
+
 def _shopping_add_recipe(arguments: dict, _attachments: dict) -> list[dict]:
-    values = _arguments(arguments, allowed={"slug"}, required={"slug"})
+    values = _arguments(arguments, allowed={"slug", "servings", "revision"}, required={"slug"})
+    servings = _integer(values, "servings")
+    revision = _string(values, "revision", optional=True)
+    if servings is not None and not revision:
+        raise CommandError("Für angepasste Portionen zuerst preview-recipe aufrufen und die Revision angeben.")
     return [
         item.to_dict()
-        for item in core_shopping.shopping_add_recipe(_string(values, "slug"))
+        for item in core_shopping.shopping_add_recipe(
+            _string(values, "slug"), servings=servings, expected_revision=revision,
+        )
     ]
 
 
@@ -826,6 +841,7 @@ _OPERATIONS: dict[str, Callable[[dict, dict], object]] = {
     "shopping.list": _shopping_list,
     "shopping.add": _shopping_add,
     "shopping.add_many": _shopping_add_many,
+    "shopping.preview_recipe": _shopping_preview_recipe,
     "shopping.add_recipe": _shopping_add_recipe,
     "shopping.check": _shopping_check,
     "shopping.uncheck": _shopping_uncheck,
@@ -857,6 +873,8 @@ def execute_command(operation: str, arguments: dict,
             ) from error
         except core_errors.NotFoundError as error:
             raise CommandError(str(error), 404) from error
+        except core_errors.RevisionConflictError as error:
+            raise CommandError(str(error), 409) from error
         except ValueError as error:
             raise CommandError(str(error)) from error
 
@@ -871,6 +889,67 @@ def health():
         "data_path": os.fspath(core_storage.project_root()),
         **state,
     }
+
+
+@router.get("/backup")
+def backup_create():
+    try:
+        archive = core_backup.create_backup()
+    except ValueError as error:
+        return _error(str(error))
+    return Response(archive, media_type="application/zip")
+
+
+@router.get("/backup/safety/{backup_id}")
+def backup_safety(backup_id: str):
+    try:
+        archive = core_backup.read_safety_backup(backup_id)
+    except core_errors.NotFoundError as error:
+        return _error(str(error), 404)
+    except ValueError as error:
+        return _error(str(error))
+    return Response(archive, media_type="application/zip")
+
+
+async def _backup_body(request: Request):
+    maximum = core_backup.MAX_ARCHIVE_BYTES
+    data = bytearray()
+    async for chunk in request.stream():
+        if len(data) + len(chunk) > maximum:
+            raise CommandError("Das Backup ist größer als 64 MiB.", 413)
+        data.extend(chunk)
+    return bytes(data)
+
+
+async def _backup_action(request: Request, *, restore: bool):
+    try:
+        token = request.headers.get("x-gusto-restore-token")
+        if restore and not token:
+            raise CommandError("Für das Wiederherstellen ist der Token aus der Vorschau nötig.")
+        archive = await _backup_body(request)
+        if restore:
+            result = await run_in_threadpool(core_backup.restore_backup, archive, token)
+        else:
+            result = await run_in_threadpool(core_backup.preview_restore, archive)
+    except CommandError as error:
+        return _error(str(error), error.status_code)
+    except core_errors.RevisionConflictError as error:
+        return _error(str(error), 409)
+    except core_errors.PostMutationError as error:
+        return _error(str(error), 500, outcome_unknown=True)
+    except ValueError as error:
+        return _error(str(error))
+    return JSONResponse({"ok": True, "result": result})
+
+
+@router.post("/backup/preview")
+async def backup_preview(request: Request):
+    return await _backup_action(request, restore=False)
+
+
+@router.post("/backup/restore")
+async def backup_restore(request: Request):
+    return await _backup_action(request, restore=True)
 
 
 def _command_response(raw_body: bytes | bytearray) -> JSONResponse:
