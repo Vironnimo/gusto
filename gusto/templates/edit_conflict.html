@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="form-wrap conflict-page">
+  <h1 class="page-title">Änderungen vergleichen</h1>
+  <p class="error" role="alert">Deine Änderungen wurden nicht gespeichert. Das Rezept wurde inzwischen geändert oder entfernt.</p>
+  <p>Dein Entwurf steht unten. Kopiere deine Änderungen und öffne danach den aktuellen Stand zum Bearbeiten.</p>
+  {% if current %}<a class="btn" href="/recipe/{{ slug }}/edit" target="_blank" rel="noopener">Aktuellen Stand in neuem Tab öffnen</a>{% else %}<a class="btn-ghost" href="/">Zum Kochbuch</a>{% endif %}
+  <div class="conflict-columns">
+    <section class="conflict-version"><h2>Dein Entwurf</h2>
+      <label>Titel<input value="{{ form.title }}" readonly></label>
+      <label>Tags<input value="{{ form.tags }}" readonly></label>
+      <label>Dauer<input value="{{ form.duration }}" readonly></label>
+      <label>Portionen<input value="{{ form.servings }}" readonly></label>
+      <label>Rezept<textarea rows="16" readonly>{{ form.content }}</textarea></label>
+    </section>
+    {% if current %}<section class="conflict-version"><h2>Aktueller Stand</h2>
+      <label>Titel<input value="{{ current.recipe.title }}" readonly></label>
+      <label>Tags<input value="{{ current.recipe.tags|join(', ') }}" readonly></label>
+      <label>Dauer<input value="{{ current.recipe.duration_min or '' }}" readonly></label>
+      <label>Portionen<input value="{{ current.recipe.servings or '' }}" readonly></label>
+      <label>Rezept<textarea rows="16" readonly>{{ current_body }}</textarea></label>
+    </section>{% endif %}
+  </div>
+</section>
+{% endblock %}

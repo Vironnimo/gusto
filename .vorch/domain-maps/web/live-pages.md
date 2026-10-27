@@ -15,7 +15,7 @@ Behavior of `gusto/static/app.js`, `gusto/static/photo-input.js` and the recipe-
 
 - Pages stamp the change revision they rendered. After a 1 s delay `app.js` opens `EventSource('/api/v1/events?after=<revision>')`, so changes between render and connect replay (`service.md` owns the stream).
 - An event whose revision equals the latest seen one is skipped; any other revision, including a smaller one after a journal reset, is followed.
-- `pageResources` maps paths to resources: `/shopping` -> shopping, favorites, catalog; `/favorites*` -> favorites; `/log` -> log, catalog; `/suggestions` -> catalog, log; `/archive*` -> catalog; `/` and `/recipe/{slug}` -> catalog, log; everything else, including `/new`, `/recipe/*/edit` and `/recipe/*/images`, -> none.
+- `pageResources` maps paths to resources: `/shopping` -> shopping, favorites, catalog; `/favorites*` -> favorites; `/log` -> log, catalog; `/suggestions` -> catalog, log; `/archive*` -> catalog; `/` and `/recipe/{slug}` -> catalog, log; everything else, including `/new`, `/backup`, `/recipe/*/shopping`, `/recipe/*/edit` and `/recipe/*/images`, -> none.
 - A relevant event on `/shopping` dispatches `gusto:change` (handled by `shopping-client.js`); elsewhere the page reloads unless a POST form has `data-dirty="true"`, which any input or change inside it sets.
 - Adding a page: add its path to `pageResources` with the resources it displays, or leave it out when a reload could destroy input.
 

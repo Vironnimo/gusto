@@ -27,9 +27,7 @@
       <form method="post" action="/recipe/{{ r.slug }}/cooked">
         <button class="btn" type="submit">Heute gekocht ✓</button>
       </form>
-      <form method="post" action="/recipe/{{ r.slug }}/shopping">
-        <button class="btn-ghost" type="submit">Zutaten einkaufen</button>
-      </form>
+      <a class="btn-ghost" href="/recipe/{{ r.slug }}/shopping">Zutaten einkaufen</a>
       <a class="btn-ghost recipe-photo-action" href="/recipe/{{ r.slug }}/images#neues-foto">Foto hinzufügen</a>
       <details class="recipe-more">
         <summary class="btn-ghost">Mehr …</summary>

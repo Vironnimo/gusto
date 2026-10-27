@@ -5,6 +5,7 @@
   <h1 class="page-title">{{ 'Rezept bearbeiten' if r else 'Neues Rezept' }}</h1>
   {% if error %}<p class="error">{{ error }}</p>{% endif %}
   <form class="recipe-form" method="post" action="{{ form_action }}">
+    {% if r %}<input type="hidden" name="revision" value="{{ revision }}">{% endif %}
     <label>Titel
       <input type="text" name="title" value="{{ form.title }}" required autofocus>
     </label>

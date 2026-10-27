@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="form-wrap shopping-preview">
+  <a class="back" href="/recipe/{{ r.slug }}">← Zurück zu {{ r.title }}</a>
+  <p class="eyebrow">Zutaten einkaufen</p>
+  <h1 class="page-title">{{ r.title }}</h1>
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  {% if changed %}<p class="error" role="status">Die Portionszahl hat sich geändert. Bitte prüfe die neu berechneten Zutaten vor dem Hinzufügen.</p>{% endif %}
+  <form method="post" action="/recipe/{{ r.slug }}/shopping" class="recipe-form">
+  {% if source_servings %}
+    <label>Für wie viele Portionen?
+      <input type="number" name="servings" min="1" inputmode="numeric" value="{{ servings or source_servings }}" required>
+    </label>
+    <button type="submit" formmethod="get" class="btn-ghost">Mengen berechnen</button>
+  <p class="lede">Das Rezept ist für {{ source_servings }} Portionen hinterlegt.</p>
+  {% else %}<p class="lede">Für dieses Rezept ist keine Portionszahl hinterlegt. Die Zutaten bleiben unverändert.</p>{% endif %}
+  {% if preview %}
+  <h2>Diese Zutaten kommen auf die Liste</h2>
+  <ul class="preview-ingredients">
+    {% for ingredient in preview.ingredients %}
+    <li><strong>{{ ingredient.scaled }}</strong>{% if ingredient.scaled != ingredient.original %}<small>Im Rezept: {{ ingredient.original }}</small>{% endif %}{% if ingredient.warning %}<small class="preview-warning">{{ ingredient.warning }}</small>{% endif %}</li>
+    {% endfor %}
+  </ul>
+    <input type="hidden" name="revision" value="{{ preview.recipe_revision }}">
+    <input type="hidden" name="preview_servings" value="{{ preview.target_servings or '' }}">
+    <button class="btn" type="submit">Zutaten zur Einkaufsliste hinzufügen</button>
+  {% endif %}
+  </form>
+</section>
+{% endblock %}

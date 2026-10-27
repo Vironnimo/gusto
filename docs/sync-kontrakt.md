@@ -180,6 +180,16 @@ Die App-Shell enthält:
 
 Cross-origin Fonts werden nicht precached; offline greifen die Font-Fallbacks.
 
+## Restore generations
+
+Requests can include `generation` beside `items`. Responses include `items`,
+`generation` and `reset`. An absent generation means `initial`. Full household
+restore creates a new generation; a request with an older generation receives
+the restored snapshot with `reset: true` without merging its items. Matching
+generations retain the normal merge rules. The PWA keeps its former local state
+separately for download before adopting a replacement and ignores in-flight
+responses after another tab changed the local generation.
+
 ## Verifikation
 
 `tests/test_merge.py` prüft Versionen, Tombstones und den Core-Merge,
