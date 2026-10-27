@@ -58,6 +58,11 @@ or `http://localhost:8000` locally. Normal updates are deliberately separate:
 gusto update
 ```
 
+A damaged downloaded Windows Python package stops the update before activation;
+the active version remains selected. If a retained version's runtime marker is
+unreadable or incomplete, Gusto skips managed Python cleanup to preserve the
+interpreters it may need.
+
 Running the installer again is rejected. Use its explicit `--repair` /
 `-Repair` mode only to repair an existing managed installation. `gusto status`,
 `gusto start`, `gusto stop`, and `gusto restart` control the current-user
@@ -96,6 +101,8 @@ current-version pointer. The data directory remains separate and survives
 normal updates and app-only uninstall. `gusto home --json` reports the server,
 service reachability and the server-owned data directory. `GUSTO_URL` or the
 global `--server` option selects another Gusto server explicitly.
+Server URLs with missing hosts, invalid ports or embedded whitespace or control
+characters, and settings that are not UTF-8, are rejected before a request.
 
 A development checkout's `gusto.settings.json` selects the shared `gusto-dev`
 data path for a locally started service. It does not select the CLI's remote

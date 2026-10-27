@@ -21,7 +21,7 @@ sys.path.insert(0, os.fspath(ROOT))
 import gusto  # noqa: E402
 import install  # noqa: E402
 from gusto import runtime as managed_runtime  # noqa: E402
-from gusto import service, update  # noqa: E402
+from gusto import cli, service, update  # noqa: E402
 
 checks = 0
 
@@ -102,6 +102,28 @@ def installable_wheel(root: Path, version: str) -> Path:
 
 with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
     root = Path(temporary)
+    cleanup_paths = managed_runtime.managed_paths(root / "cleanup-app")
+    retained = cleanup_paths.version("1.0.0")
+    retained.mkdir(parents=True)
+    interpreter = cleanup_paths.python_runtimes / "3.13.14"
+    interpreter.mkdir(parents=True)
+    marker = retained / ".gusto-runtime.json"
+    for invalid in (
+        b"{broken", b"\xff", b"{}",
+        b'{"version":"1.0.0","verified":true,"python_runtime":""}',
+    ):
+        marker.write_bytes(invalid)
+        check(managed_runtime.cleanup_python_runtimes(cleanup_paths) == []
+              and interpreter.is_dir(),
+              "an unreadable runtime reference must preserve managed interpreters")
+    marker.write_text(json.dumps({
+        "version": "1.0.0", "verified": True, "python_runtime": "3.13.14",
+    }), encoding="utf-8")
+    unused_interpreter = cleanup_paths.python_runtimes / "3.12.0"
+    unused_interpreter.mkdir()
+    check(managed_runtime.cleanup_python_runtimes(cleanup_paths) == ["3.12.0"]
+          and interpreter.is_dir(),
+          "known unreferenced managed interpreters should still be removed")
     app = root / "app"
     paths = managed_runtime.managed_paths(app)
     old = paths.version("1.0.0")
@@ -177,6 +199,11 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
                 marker if isinstance(marker, str) else json.dumps(marker),
                 encoding="utf-8",
             )
+    invalid_utf8 = paths.versions / "0.1.0"
+    invalid_utf8.mkdir()
+    (invalid_utf8 / ".gusto-runtime.json").write_bytes(b"\xff")
+    check(not managed_runtime.verified_runtime(invalid_utf8, "0.1.0", "3.13.14"),
+          "a marker with invalid UTF-8 must be treated as unverified")
     ordinary_file = paths.versions / "unrelated.txt"
     ordinary_file.write_bytes(b"foreign file")
     preserved_siblings = {
@@ -316,6 +343,31 @@ with tempfile.TemporaryDirectory(prefix="gusto-update-") as temporary:
         }), encoding="utf-8")
         return target
 
+    managed_manifest = fixture(
+        managed_root, "1.1.0", python_version="3.14.0",
+    )
+    invalid_package = managed_root / "python-runtime-windows-x64.nupkg"
+    invalid_package.write_bytes(b"not a ZIP archive")
+    invalid_manifest = json.loads(managed_manifest.read_text(encoding="utf-8"))
+    invalid_manifest["assets"]["windows_python_x64"]["sha256"] = hashlib.sha256(
+        invalid_package.read_bytes(),
+    ).hexdigest()
+    managed_manifest.write_text(json.dumps(invalid_manifest), encoding="utf-8")
+    invalid_output = StringIO()
+    with redirect_stdout(invalid_output):
+        try:
+            cli.main([
+                "update", "--json", "--app-root", os.fspath(managed_paths.app_root),
+                "--manifest-url", os.fspath(managed_manifest),
+            ])
+        except SystemExit as error:
+            check(error.code == 1, "invalid Python package must fail the update")
+        else:
+            raise AssertionError("invalid Python package was accepted")
+    invalid_result = json.loads(invalid_output.getvalue())
+    check(invalid_result["ok"] is False and invalid_result["status"] == "failed"
+          and managed_runtime.read_current(managed_paths)["version"] == "1.0.0",
+          "invalid Python package must produce JSON without switching versions")
     managed_manifest = fixture(
         managed_root, "1.1.0", python_version="3.14.0",
     )

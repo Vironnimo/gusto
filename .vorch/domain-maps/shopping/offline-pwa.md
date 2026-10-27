@@ -19,7 +19,7 @@ Browser client `gusto/static/shopping-client.js` and service worker `gusto/stati
 ## Sync loop
 
 - `sync()` runs on init (an empty local state fills from the server), after each mutation, on `online`, on `shopping` events, and once more when a mutation happened during an in-flight request. It does nothing while `navigator.onLine` is false.
-- It posts all local items including tombstones; on success it merges the response into the current local state (`mergeInto`, `isNewer`).
+- It posts all local items including tombstones; on success it accepts the server's result for unchanged submitted items and preserves items changed during the request (`mergeInto`).
 - Network failures and non-2xx responses other than 400 keep local state and retry with backoff: 2 s doubling plus up to 500 ms jitter, capped at 60 s, at most 5 attempts; success or `online` resets the budget.
 - A 400 is a definite atomic rejection. The client shows the endpoint's `detail` as plain text in `#shop-sync-error`, keeps every local item, and does not resend the identical payload on timers, `online` or change events. A different local state unblocks sync, including edits made during the rejected request. Success clears the notice. For a stale visible source purged elsewhere, the notice names the source; the existing row removal creates a valid tombstone, allowing other queued edits through. The user may then re-add the item without that source. Arbitrary malformed localStorage records have no automatic repair or quarantine.
 - A post-write Core failure is an uncertain outcome (`web.md`), never a definite 400 rejection. Full-state sync can safely retry it: already accepted versions do not write again.

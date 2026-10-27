@@ -211,7 +211,13 @@ def safe_extract(archive: Path, destination: Path) -> None:
 def extract_python_runtime(package: Path, destination: Path) -> None:
     """Extract only the verified NuGet package's tools/ runtime subtree."""
     extracted = destination / "package"
-    safe_extract(package, extracted)
+    try:
+        safe_extract(package, extracted)
+    except zipfile.BadZipFile as error:
+        raise UpdateError(
+            "Das Python-Runtime-Paket ist beschädigt oder nicht lesbar. "
+            "Die aktive Installation wurde nicht umgeschaltet."
+        ) from error
     tools = extracted / "tools"
     if not managed_runtime.base_python(tools, "win32").is_file():
         raise UpdateError("Python-Runtime-Paket enthält tools/python.exe nicht.")

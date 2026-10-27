@@ -72,7 +72,7 @@ def _settings_data_root(settings_path: Path, default: Path) -> Path | None:
         return None
     try:
         settings = json.loads(settings_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ValueError(
             f"Ungültige Gusto-Settings in '{settings_path}': {error}"
         ) from error

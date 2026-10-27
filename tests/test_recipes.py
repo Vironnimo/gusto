@@ -495,7 +495,7 @@ def cooking_checks():
     check([entry["date"] for entry in core_recipes.load_log()] == [older_cook, recent_cook],
           "the log must stay chronologically sorted")
     expect_valueerror(core_recipes.log_cooked, "missing")
-    for invalid_date in ["2026-13-45", "15.07.2026", "20260713"]:
+    for invalid_date in ["", "2026-13-45", "15.07.2026", "20260713"]:
         expect_valueerror(core_recipes.log_cooked, pasta.slug, invalid_date)
     expect_valueerror(
         core_recipes.log_cooked, pasta.slug, (date.today() + timedelta(days=1)).isoformat(),

@@ -126,10 +126,14 @@ stops the service, atomically switches the current-version pointer, restarts,
 and checks both expected version and data path. Activation failure switches
 back and health-checks the prior version; JSON distinguishes `update_failed`
 with `rollback:true` from `rollback_failed`.
+A damaged downloaded Windows Python package fails with `status:"failed"`
+before activation; the active version remains selected.
 
 On Windows, an update also downloads a new pinned Python asset when the release
 changes Python versions. Retained Gusto versions keep every Python runtime they
 still reference, so rollback remains usable.
+If a retained version's runtime marker is unreadable or incomplete, interpreter
+cleanup is skipped and `removed_python_runtimes` is empty.
 
 Never present re-running the installer as the update path.
 

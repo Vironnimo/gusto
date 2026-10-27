@@ -130,7 +130,9 @@ server paths.
   `pyproject.toml` in a checkout, else at `sys.prefix`), then
   `http://127.0.0.1:8000`. An invalid value at any level is an error, never a
   fall-through; an empty `--server` included. URLs need `http`/`https` and a
-  host, no query or fragment; a trailing `/` is stripped, a path prefix kept.
+  host and a valid nonzero port if specified, no query, fragment or embedded
+  whitespace/control characters. Non-UTF-8 settings fail before a request. A
+  trailing `/` is stripped, a path prefix kept.
 - `command(...)`: one POST, never retried; returns `result`. Timeout 15 s plus
   1 s per MiB of the request, which is serialized once.
 - `health(server_url, timeout=2, retries=1)`: GET requiring `ok:true`; bounded

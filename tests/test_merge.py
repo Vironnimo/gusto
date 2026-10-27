@@ -168,6 +168,11 @@ check(changed.updated_at == "2099-01-01T00:00:00.001Z",
       "rapid mutation must advance at least one millisecond")
 check(changed.checked is True, "rapid mutation must preserve the actual change")
 
+reset_local([item("fractional", "2099-01-01T00:00:00.123900Z")])
+changed = core_shopping.shopping_toggle("fractional", checked=True)
+check(changed.updated_at == "2099-01-01T00:00:00.125Z",
+      "a sub-millisecond version must advance by at least one full millisecond")
+
 
 class SameMillisecond(datetime):
     @classmethod
@@ -291,6 +296,7 @@ reset_local([item("unchanged", "2026-06-23T18:00:00Z")])
 before_bytes = core_storage.shopping_path().read_bytes()
 before_revision = core_storage.change_state()["revision"]
 for final_instant in ("9999-12-31T23:59:59.999Z",
+                      "9999-12-31T23:59:59.998001Z",
                       "9999-12-31T23:59:59.999999Z"):
     expect_valueerror([item("first", "2026-06-23T19:00:00Z"),
                        item("unwritable", final_instant)])

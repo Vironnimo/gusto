@@ -26,9 +26,13 @@ def _version_key(value: str) -> tuple:
 
 
 def _next_sync_instant(previous: datetime) -> datetime:
-    """Advance a parsed version or reject a timestamp outside writable range."""
+    """Advance by at least 1 ms at persisted precision, or reject overflow."""
     try:
-        return previous + timedelta(milliseconds=1)
+        advanced = previous + timedelta(milliseconds=1)
+        remainder = advanced.microsecond % 1000
+        if remainder:
+            advanced += timedelta(microseconds=1000 - remainder)
+        return advanced
     except OverflowError as error:
         raise ValueError(
             "Der Zeitstempel eines Einkaufslisten-Eintrags liegt zu weit "
@@ -49,6 +53,8 @@ def _now_iso(after: str | None = None) -> str:
     # here, only to serialize it back to the previous identical sync version.
     now = now.replace(microsecond=(now.microsecond // 1000) * 1000)
     previous = _parse_iso(after or "")
-    if previous is not None and now <= previous:
-        now = _next_sync_instant(previous)
+    if previous is not None:
+        minimum = _next_sync_instant(previous)
+        if now < minimum:
+            now = minimum
     return now.isoformat(timespec="milliseconds").replace("+00:00", "Z")

@@ -94,10 +94,16 @@ def _open_editor(path, *, quiet: bool = False) -> dict:
 
 def _edit_remote(args, slug: str) -> dict:
     recipe = remote(args, "recipe.show", {"slug": slug})
-    handle = tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", suffix=".md", prefix=f"gusto-{slug}-",
-        delete=False,
-    )
+    try:
+        handle = tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", suffix=".md", prefix=f"gusto-{slug}-",
+            delete=False,
+        )
+    except OSError as error:
+        raise client.ClientError(
+            f"Lokale Rezeptkopie konnte nicht angelegt werden: {error} "
+            "Es wurde nichts hochgeladen."
+        ) from error
     temporary = Path(handle.name)
     try:
         with handle:

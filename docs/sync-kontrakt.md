@@ -105,10 +105,10 @@ Speichern gilt wieder die normale Persistenz. Ohne erfolgreiche Speicherung
 oder Server-Synchronisation überlebt dieser Ersatzspeicher kein Schließen oder
 Neuladen der Seite.
 
-Ein Sync lädt alle lokalen Items einschließlich Tombstones hoch. Seine Antwort
-wird in den zum Antwortzeitpunkt aktuellen lokalen Stand gemergt. Sie ersetzt
-ihn nicht blind: Änderungen während einer laufenden Anfrage bleiben erhalten.
-Ändert sich die Liste während eines Syncs, folgt ein weiterer Sync.
+Each sync sends all local items including tombstones. For submitted items that
+remain unchanged during the request, the browser accepts the server's merge
+result. Local edits made during the request are preserved and sent in another
+sync.
 
 Sync runs at startup, after local changes, on `online`, and on a service
 `shopping` event. Offline changes remain local. Network failures and non-2xx

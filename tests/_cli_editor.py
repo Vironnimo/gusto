@@ -33,6 +33,17 @@ def check_edit_readback_contract():
 
     from _cli_support import invoke
 
+    with patch.object(cli.client, "command", return_value={
+        "slug": "edit-readback", "content": "# Ok\n",
+    }) as command, patch.object(editor_cli.tempfile, "NamedTemporaryFile",
+                                 side_effect=OSError("scratch unavailable")):
+        result = invoke(["edit", "edit-readback", "--json"])
+    payload = json.loads(result.stdout)
+    check(result.returncode == 1 and not result.stderr and payload["ok"] is False
+          and not payload.get("outcome_unknown") and "recovery_path" not in payload
+          and command.call_count == 1,
+          "failure to create the local editor copy must report a definite JSON error")
+
     with patch.object(editor_cli, "_open_editor", side_effect=non_utf8_editor):
         with patch.object(cli.client, "command", return_value={
             "slug": "edit-readback", "content": "# Ok\n",

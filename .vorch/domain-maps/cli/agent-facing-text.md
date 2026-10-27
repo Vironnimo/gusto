@@ -202,6 +202,7 @@ Evidence: `cli.build_parser` and the registrations/`cmd_*` handlers in `_cli_cat
 | `home [--json] Local diagnosis that shows the configured local store, selected server_url, reachability,...` | Explains the combined local diagnosis and remote identity result. |
 | `It remains usable while the service is down.` | Allows diagnosis without assuming a healthy service. |
 | `path, source, platform_default, and settings_path are local; server_data_path is reported by the selected...` | Prevents comparing a remote target with the wrong local path. |
+| `Missing hosts, invalid ports, embedded whitespace or control characters in a server URL, and non-UTF-8 settings fail before a request; correct the reported configuration source.` | Distinguishes a definite configuration failure from an uncertain mutation so the agent can correct its selected source without checking for a prior write. |
 | `list [--tag T ...] [--max-time N] [--json] List/filter recipes.` | Maps recipe enumeration to its filters. |
 | `--tag is repeatable and comma-separated (--tag a --tag b ≡ --tag a,b).` | Explains equivalent repeatable and comma-separated tag input. |
 | `--max-time caps duration_min and excludes recipes whose duration is unknown; the cap must be positive.` | Prevents invalid caps and unknown-duration inclusions. |
@@ -537,8 +538,10 @@ Evidence: `install.ps1`, `install.sh` and `install.main` define bootstrap/repair
 | `Inspect without changing anything:` | Uses the non-mutating update-check mode. |
 | `The update downloads and verifies the published manifest and Wheel, installs the new runtime at its final,...` | Explains verified side-by-side preparation and health-bound activation. |
 | `Activation failure switches back and health-checks the prior version; JSON distinguishes update_failed...` | Separates successful rollback from failed rollback. |
+| `A damaged downloaded Windows Python package fails with status:"failed" before activation; the active version remains selected.` | Distinguishes a rejected release package before activation from a failed activation requiring rollback. |
 | `On Windows, an update also downloads a new pinned Python asset when the release changes Python versions.` | Explains an additional Windows Python download on runtime changes. |
 | `Retained Gusto versions keep every Python runtime they still reference, so rollback remains usable.` | Preserves Python runtimes still needed for rollback. |
+| `If a retained version's runtime marker is unreadable or incomplete, interpreter cleanup is skipped and removed_python_runtimes is empty.` | Explains why a successful update can retain unused interpreters when a surviving version's dependencies cannot be established. |
 | `Never present re-running the installer as the update path.` | Prevents repair/reinstallation from substituting for update. |
 | `An app update refreshes the skill payload in the newly active runtime.` | Identifies which skill copy an app update refreshes. |
 | `It does not mutate an already installed vBot copy.` | Prevents claiming the installed host copy was refreshed automatically. |
@@ -924,6 +927,13 @@ Evidence: each subsection names the function that constructs the message. Catalo
 |---|---|
 | `{error} Lokale Rezeptkopie bleibt erhalten: '{path}'.` | Preserves the recovery file and requires checking the same recipe before another upload. |
 | `Prüfe zuerst 'show {slug}' auf demselben Server; zum Fortsetzen nutze 'content set {slug}' mit --file und...` | Preserves the recovery file and requires checking the same recipe before another upload. |
+
+### _edit_remote
+
+| Text | Reason |
+|---|---|
+| `Lokale Rezeptkopie konnte nicht angelegt werden: {error}` | Identifies the local failure that prevented opening an editor or creating a recovery file. |
+| `Es wurde nichts hochgeladen.` | Confirms the failure occurred before the remote content write. |
 
 ### _read_content_file
 

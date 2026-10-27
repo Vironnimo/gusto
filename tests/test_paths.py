@@ -100,8 +100,8 @@ with tempfile.TemporaryDirectory(prefix="gusto-paths-") as temporary:
         settings.write_text('{"data_dir": "relative-store"}', encoding="utf-8")
         check(core_storage.project_root() == (root / "relative-store").resolve(),
               "relative data settings must resolve beside the platform default")
-        for invalid_settings in ("{", "[]", '{"data_dir": ""}'):
-            settings.write_text(invalid_settings, encoding="utf-8")
+        for invalid_settings in (b"{", b"[]", b'{"data_dir": ""}', b"\xff"):
+            settings.write_bytes(invalid_settings)
             try:
                 core_storage.storage_info()
             except ValueError as error:
@@ -114,7 +114,7 @@ with tempfile.TemporaryDirectory(prefix="gusto-paths-") as temporary:
                 check(Path(info["path"]) == configured.resolve()
                       and info["source"] == "environment",
                       "an explicit data root must bypass even invalid instance settings")
-            check(settings.read_text(encoding="utf-8") == invalid_settings,
+            check(settings.read_bytes() == invalid_settings,
                   "path discovery must never repair or rewrite invalid settings")
 
     settings_written = managed_runtime.write_settings(

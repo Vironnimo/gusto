@@ -25,6 +25,9 @@ write; use the main skill's uncertain-outcome recovery guidance.
   revision. It remains usable while the service is down. `path`, `source`,
   `platform_default`, and `settings_path` are local; `server_data_path` is
   reported by the selected server and can differ, especially across machines.
+  Missing hosts, invalid ports, embedded whitespace or control characters in a
+  server URL, and non-UTF-8 settings fail before a request; correct the reported
+  configuration source.
 - `list [--tag T ...] [--max-time N] [--json]`
   List/filter recipes. `--tag` is repeatable and comma-separated
   (`--tag a --tag b` ≡ `--tag a,b`). `--max-time` caps `duration_min` and

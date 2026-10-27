@@ -16,7 +16,7 @@ def without_title(text: str) -> str:
             dropped = True
             continue
         out.append(ln)
-    return "\n".join(out).strip()
+    return "\n".join(out).strip("\n")
 
 
 _ALLOWED_TAGS = frozenset({
