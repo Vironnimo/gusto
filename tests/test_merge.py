@@ -319,4 +319,23 @@ check(core_storage.shopping_path().read_bytes() == before_bytes,
       "an invalid stored version must not partially clear the shopping list")
 
 
+# Restoring a store starts a new sync generation; old offline snapshots cannot
+# resurrect data, while clients that accept the new snapshot can write again.
+import gusto.core.shopping_sync as sync_state  # noqa: E402
+
+reset_local([item("restored", "2026-06-23T18:00:00Z")])
+initial = core_shopping.shopping_exchange([])
+generation = core_storage.execute_locked_mutation(("shopping",), sync_state.reset_generation_unlocked)
+revision = core_storage.change_state()["revision"]
+stale = core_shopping.shopping_exchange([item("old-offline", "2099-01-01T00:00:00Z")], initial["generation"])
+check(stale["reset"] and stale["generation"] == generation
+      and [i["id"] for i in stale["items"]] == ["restored"]
+      and core_storage.change_state()["revision"] == revision,
+      "a pre-restore client must receive the restored state without uploading old items")
+check(core_shopping.shopping_exchange([item("old-client", "2099-01-01T00:00:00Z")])["reset"],
+      "a client without a generation must not revive a pre-restore snapshot")
+fresh = core_shopping.shopping_exchange([item("fresh", "2026-06-23T18:00:00Z")], generation)
+check(not fresh["reset"] and {i["id"] for i in fresh["items"]} == {"restored", "fresh"},
+      "a client that accepted the restored generation can add shopping items")
+
 print(f"OK - {checks} checks passed (test_merge.py)")

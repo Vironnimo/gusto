@@ -17,6 +17,7 @@ import gusto  # noqa: E402, F401 - configure temp for this process and its child
 
 
 SCRIPT_CHECKS = (
+    "tests/test_backup.py",
     "tests/test_api.py",
     "tests/test_recipes.py",
     "tests/test_shopping.py",

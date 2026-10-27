@@ -9,6 +9,7 @@ import gusto.core.catalog.recipes as recipe_store
 import gusto.core.catalog.snapshots as snapshots
 import gusto.core.favorites as preferences
 import gusto.core.shopping as shopping
+import gusto.core.shopping_sync as shopping_sync
 import gusto.core.storage as storage
 
 
@@ -22,6 +23,11 @@ def check() -> dict:
         storage.change_state()
     except ValueError as error:
         invalid_data_files.append(f"{storage.changes_path()}: {error}")
+
+    try:
+        shopping_sync.shopping_generation()
+    except ValueError as error:
+        invalid_data_files.append(f"{shopping_sync.generation_path()}: {error}")
 
     def directory_entries(path: Path) -> list[Path]:
         try:
