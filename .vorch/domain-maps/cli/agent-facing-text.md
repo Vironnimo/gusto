@@ -45,7 +45,6 @@ Evidence: `.vorch/PROJECT.md` records the household/service scope, instance boun
 | `Do not switch to another server, python -m gusto, check --offline, or direct file access as a fallback.` | Prevents an unavailable household service from redirecting work elsewhere. |
 | `Global --server http://host:port overrides GUSTO_URL, instance settings, then loopback.` | Explains URL selection when flag, environment and settings differ. |
 | `home combines local diagnosis with selected-server health.` | Explains why home can show both local and remote paths. |
-| `Missing hosts, invalid ports, embedded whitespace or control characters in a server URL, and non-UTF-8 settings fail before a request; correct the reported configuration source.` | Distinguishes a definite configuration failure from an uncertain mutation so the agent can correct its selected source without checking for a prior write. |
 | `serve, status, start, stop, restart, update, uninstall, install-skill, and explicit check --offline act on...` | Prevents a server URL from being mistaken for remote lifecycle control. |
 
 ### Read results and recover
@@ -203,6 +202,7 @@ Evidence: `cli.build_parser` and the registrations/`cmd_*` handlers in `_cli_cat
 | `home [--json] Local diagnosis that shows the configured local store, selected server_url, reachability,...` | Explains the combined local diagnosis and remote identity result. |
 | `It remains usable while the service is down.` | Allows diagnosis without assuming a healthy service. |
 | `path, source, platform_default, and settings_path are local; server_data_path is reported by the selected...` | Prevents comparing a remote target with the wrong local path. |
+| `Missing hosts, invalid ports, embedded whitespace or control characters in a server URL, and non-UTF-8 settings fail before a request; correct the reported configuration source.` | Distinguishes a definite configuration failure from an uncertain mutation so the agent can correct its selected source without checking for a prior write. |
 | `list [--tag T ...] [--max-time N] [--json] List/filter recipes.` | Maps recipe enumeration to its filters. |
 | `--tag is repeatable and comma-separated (--tag a --tag b ≡ --tag a,b).` | Explains equivalent repeatable and comma-separated tag input. |
 | `--max-time caps duration_min and excludes recipes whose duration is unknown; the cap must be positive.` | Prevents invalid caps and unknown-duration inclusions. |
