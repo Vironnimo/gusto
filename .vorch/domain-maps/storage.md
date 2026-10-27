@@ -4,7 +4,7 @@ The storage domain is the persistence kernel in `gusto/core/storage.py`: it sele
 
 ## Overview
 
-Storage owns `gusto/core/storage.py`, `gusto/_temp.py`, and the checkout's `gusto.settings.json`. Shared domain record decoding lives in public `gusto/core/records.py`; domain owners own their loaders and unlocked savers. Entity meaning and file shapes belong to their owners: recipes, archive, images, categories and log to `catalog.md`; shopping list and favorites to `shopping.md`. HTTP exposure of health and the event stream is `service.md`; writing an installed runtime's settings and managed app paths is `lifecycle.md`; `server_url` selection from the same settings file is `cli.md`.
+Storage owns `gusto/core/storage.py`, `gusto/core/backup.py`, `gusto/_temp.py`, and the checkout's `gusto.settings.json`. Shared domain record decoding lives in public `gusto/core/records.py`; domain owners own their loaders and unlocked savers. Entity meaning and file shapes belong to their owners: recipes, archive, images, categories and log to `catalog.md`; shopping list and favorites to `shopping.md`. HTTP exposure of health and the event stream is `service.md`; writing an installed runtime's settings and managed app paths is `lifecycle.md`; `server_url` selection from the same settings file is `cli.md`.
 
 Only Core touches the store, normally inside the one running service (PROJECT.md). Local exceptions in the CLI process: `home` (read-only `storage_info()`), `check --offline` (read-only `checks.check()` against the CLI machine's own data root) and the autostart log path.
 
@@ -39,6 +39,8 @@ A persisted sequence number identifying a group of durable changes to resources 
 | `recipes/`, `images/<slug>/`, `archive/`, `data/recipes.json`, `data/categories.json`, `data/log.json` | `catalog.md` |
 | `data/shopping_list.json`, `data/favorites.json`, `images/_favorites/` | `shopping.md` |
 | `data/changes.json` (change journal) | storage, `storage/change-journal.md` |
+| `data/shopping-generation.json` | shopping sync identity after household restore (`shopping/offline-pwa.md`) |
+| `backups/<id>.zip`, `.gusto-restore-*/` | verified safety copies and retained failed-restore files (`storage/backup.md`) |
 | `data/.gusto-<resource>.lock` | storage; persistent, never deleted, not data |
 | `.<filename>.<random>.tmp` beside a target | storage; transient atomic-write staging (git-ignored `*.tmp`), left only after a crash |
 | `gusto-autostart.log` in the root | `lifecycle.md` |
@@ -86,8 +88,14 @@ A persisted sequence number identifying a group of durable changes to resources 
 
 `tests/test_concurrency.py` (empty lock recovery, lock timeout before business writes, cross-process contention on catalog, favorites, shopping, log and images, parallel CLI adds against a real server, sync during restore, Windows open-reader replacement), `tests/test_temp.py` (checkout temp policy), `tests/test_recipes.py` (`transaction_failure_checks`, monotonic parallel revisions, corrupt journal diagnostics without repair), `tests/test_merge.py` (silent no-op merge, preserved bytes and revision), `tests/test_api.py` (compacted replay, journal failure as uncertain outcome). `tests/test_paths.py` checks settings-selected roots, relative `data_dir`, invalid settings and `GUSTO_HOME` precedence through public storage discovery alongside lifecycle path contracts. Not covered: legacy fallback, journal legacy migration.
 
+## Agent-facing text
+
+This domain owns the backup errors in `gusto/core/backup.py`. Before changing a sentence, read `storage/agent-facing-text.md` and update its reason row with the text.
+
 ## References
 
 Read these only when your task matches - not by default.
 
 - Changing the change journal, compaction or replay, or recovering a broken `data/changes.json` -> `storage/change-journal.md`
+- Changing household backup, validation or guarded restoration -> `storage/backup.md`
+- Changing backup errors supplied to agents -> `storage/agent-facing-text.md`

@@ -14,7 +14,7 @@ from urllib.parse import urlencode, urlsplit
 
 from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import (HTMLResponse, RedirectResponse, PlainTextResponse,
-                               JSONResponse, FileResponse)
+                               JSONResponse, FileResponse, Response)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -23,6 +23,7 @@ from starlette.concurrency import run_in_threadpool
 
 from . import api, rendering
 import gusto.core.records as core_records
+import gusto.core.backup as core_backup
 import gusto.core.catalog.archive as core_archive
 import gusto.core.catalog.categories as core_categories
 import gusto.core.catalog.images as core_images
@@ -43,6 +44,7 @@ templates.env.globals["gusto_change_state"] = core_storage.change_state
 
 MAX_WEB_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_WEB_IMAGE_EDGE = 1920
+MAX_BACKUP_BYTES = 256 * 1024 * 1024
 RECIPE_IMAGE_ROLES = [
     ("result", "Fertiges Gericht"),
     ("ingredients", "Zutaten"),
@@ -400,25 +402,27 @@ def create(request: Request, title: str = Form(...), tags: str = Form(""),
 
 @app.get("/recipe/{slug}/edit", response_class=HTMLResponse)
 def edit_form(request: Request, slug: str):
-    r = core_recipes.get(slug)
-    if r is None:
+    try:
+        snapshot = core_recipes.get_edit_snapshot(slug)
+    except core_errors.NotFoundError:
         raise StarletteHTTPException(status_code=404)
+    r = snapshot["recipe"]
     form = {"title": r.title, "tags": ", ".join(r.tags),
             "duration": r.duration_min or "", "servings": r.servings or "",
-            "content": rendering.without_title(r.content())}
+            "content": rendering.without_title(snapshot["content"])}
     return templates.TemplateResponse(request, "form.html", {
         "nav": "recipes", "title": f"{r.title} bearbeiten",
         "r": r, "form": form, "form_action": f"/recipe/{slug}/edit",
+        "revision": snapshot["revision"],
     })
 
 
 @app.post("/recipe/{slug}/edit")
 def update(request: Request, slug: str, title: str = Form(...), tags: str = Form(""),
            duration: str = Form(""), servings: str = Form(""),
-           content: str = Form("")):
-    recipe = core_recipes.get(slug)
-    if recipe is None:
-        raise StarletteHTTPException(status_code=404)
+           content: str = Form(""), revision: str = Form(...)):
+    form = {"title": title, "tags": tags, "duration": duration,
+            "servings": servings, "content": content}
     body_content = content.strip("\r\n")
     body = f"# {title.strip()}\n\n{body_content}\n"
     try:
@@ -426,16 +430,26 @@ def update(request: Request, slug: str, title: str = Form(...), tags: str = Form
                            duration_min=_int_or_none(duration),
                            servings=_int_or_none(servings), content=body,
                            clear_duration=not duration.strip(),
-                           clear_servings=not servings.strip())
+                           clear_servings=not servings.strip(),
+                           expected_revision=revision)
     except core_errors.PostMutationError:
         raise
+    except (core_errors.RevisionConflictError, core_errors.NotFoundError):
+        try:
+            current = core_recipes.get_edit_snapshot(slug)
+        except core_errors.NotFoundError:
+            current = None
+        return templates.TemplateResponse(request, "edit_conflict.html", {
+            "nav": "recipes", "title": "Änderungen vergleichen", "slug": slug,
+            "form": form, "current": current,
+            "current_body": rendering.without_title(current["content"]) if current else "",
+        }, status_code=409)
     except ValueError as error:
-        form = {"title": title, "tags": tags, "duration": duration,
-                "servings": servings, "content": content}
+        recipe = core_recipes.get(slug) or {"slug": slug}
         return templates.TemplateResponse(request, "form.html", {
-            "nav": "recipes", "title": f"{recipe.title} bearbeiten",
+            "nav": "recipes", "title": "Rezept bearbeiten",
             "r": recipe, "form": form,
-            "form_action": f"/recipe/{slug}/edit", "error": str(error),
+            "form_action": f"/recipe/{slug}/edit", "error": str(error), "revision": revision,
         }, status_code=400)
     return RedirectResponse(f"/recipe/{slug}", status_code=303)
 
@@ -783,17 +797,115 @@ def shopping_clear_route():
     return RedirectResponse("/shopping", status_code=303)
 
 
-@app.post("/recipe/{slug}/shopping")
-def recipe_to_shopping(slug: str):
+@app.get("/recipe/{slug}/shopping", response_class=HTMLResponse)
+def recipe_shopping_preview(request: Request, slug: str, servings: str = "", changed: str = ""):
+    recipe = core_recipes.get(slug)
+    if recipe is None:
+        raise StarletteHTTPException(status_code=404)
     try:
-        core_shopping.shopping_add_recipe(slug)
+        target = _int_or_none(servings)
+        preview = core_shopping.shopping_preview_recipe(slug, servings=target)
+        error = ""
+    except core_errors.NotFoundError:
+        raise StarletteHTTPException(status_code=404)
+    except ValueError as exc:
+        preview, error = None, str(exc)
+    return templates.TemplateResponse(request, "shopping_preview.html", {
+        "nav": "shopping", "title": "Zutaten einkaufen", "r": recipe,
+        "preview": preview, "servings": servings, "error": error,
+        "source_servings": preview["source_servings"] if preview else recipe.servings,
+        "changed": changed == "1",
+    }, status_code=400 if error else 200)
+
+
+@app.post("/recipe/{slug}/shopping")
+def recipe_to_shopping(slug: str, revision: str = Form(...), servings: str = Form(""),
+                       preview_servings: str = Form("")):
+    try:
+        target = _int_or_none(servings)
+        if target != _int_or_none(preview_servings):
+            return RedirectResponse(f"/recipe/{slug}/shopping?" + urlencode({
+                "servings": servings, "changed": "1",
+            }), status_code=303)
+        core_shopping.shopping_add_recipe(slug, servings=target,
+                                          expected_revision=revision)
     except core_errors.PostMutationError:
         raise
+    except core_errors.RevisionConflictError:
+        return _error_redirect(f"/recipe/{slug}",
+                               "Das Rezept wurde geändert. Bitte prüfe die Zutaten erneut.")
     except ValueError as error:
         if core_recipes.get(slug) is None:
             raise StarletteHTTPException(status_code=404)
         return _error_redirect(f"/recipe/{slug}", str(error))
     return RedirectResponse("/shopping", status_code=303)
+
+
+def _backup_bytes(upload: UploadFile) -> bytes:
+    upload.file.seek(0, 2)
+    size = upload.file.tell()
+    upload.file.seek(0)
+    if size > MAX_BACKUP_BYTES:
+        raise ValueError("Die Sicherung ist größer als 256 MiB.")
+    return upload.file.read()
+
+
+@app.get("/backup", response_class=HTMLResponse)
+def backup_page(request: Request, restored: str = ""):
+    return templates.TemplateResponse(request, "backup.html", {
+        "nav": "", "title": "Sicherung", "restored": restored,
+    })
+
+
+@app.get("/backup/download")
+def backup_download():
+    return Response(core_backup.create_backup(), media_type="application/zip", headers={
+        "Content-Disposition": 'attachment; filename="gusto-sicherung.zip"',
+        "Cache-Control": "no-store",
+    })
+
+
+@app.get("/backup/safety/{backup_id}")
+def backup_safety_download(backup_id: str):
+    try:
+        archive = core_backup.read_safety_backup(backup_id)
+    except ValueError:
+        raise StarletteHTTPException(status_code=404)
+    return Response(archive, media_type="application/zip", headers={
+        "Content-Disposition": 'attachment; filename="gusto-vor-wiederherstellung.zip"',
+        "Cache-Control": "no-store",
+    })
+
+
+@app.post("/backup/preview", response_class=HTMLResponse)
+def backup_preview(request: Request, archive: UploadFile = File(...)):
+    try:
+        preview = core_backup.preview_restore(_backup_bytes(archive))
+    except ValueError as error:
+        return templates.TemplateResponse(request, "backup.html", {
+            "nav": "", "title": "Sicherung", "error": str(error),
+        }, status_code=400)
+    return templates.TemplateResponse(request, "backup.html", {
+        "nav": "", "title": "Sicherung", "preview": preview,
+        "filename": archive.filename,
+    })
+
+
+@app.post("/backup/restore", response_class=HTMLResponse)
+def backup_restore(request: Request, archive: UploadFile = File(...),
+                   token: str = Form(...), confirm: str = Form("")):
+    try:
+        if confirm != "1":
+            raise ValueError("Bitte bestätige das Ersetzen des aktuellen Datenbestands.")
+        result = core_backup.restore_backup(_backup_bytes(archive), token)
+    except core_errors.PostMutationError:
+        raise
+    except ValueError as error:
+        return templates.TemplateResponse(request, "backup.html", {
+            "nav": "", "title": "Sicherung", "error": str(error),
+        }, status_code=400)
+    return RedirectResponse("/backup?" + urlencode({"restored": result["safety_backup_id"]}),
+                            status_code=303)
 
 
 # --- Shopping sync API (contract: docs/sync-kontrakt.md) --------------------
@@ -804,7 +916,7 @@ def api_shopping_get():
     """All items incl. tombstones as {"items": [<item-dict>, ...]}.
 
     Read-only starting point for the PWA and for agents/scripts."""
-    return JSONResponse({"items": [i.to_dict() for i in core_shopping.shopping_load()]})
+    return JSONResponse(core_shopping.shopping_exchange([]))
 
 
 @app.get("/api/favorites")
@@ -833,18 +945,18 @@ async def api_shopping_sync(request: Request):
         items = []
     if not isinstance(items, list):
         return JSONResponse({"error": "invalid shopping state"}, status_code=400)
-    return await run_in_threadpool(_shopping_sync_response, items)
+    return await run_in_threadpool(_shopping_sync_response, items, body.get("generation"))
 
 
-def _shopping_sync_response(items: list) -> JSONResponse:
+def _shopping_sync_response(items: list, generation: str | None = None) -> JSONResponse:
     try:
-        merged = core_shopping.shopping_merge(items)
+        merged = core_shopping.shopping_exchange(items, generation)
     except core_errors.PostMutationError:
         raise
     except ValueError as error:
         return JSONResponse({"error": "invalid shopping state", "detail": str(error)},
                             status_code=400)
-    return JSONResponse({"items": [i.to_dict() for i in merged]})
+    return JSONResponse(merged)
 
 
 # --- PWA: serve the service worker from the root ----------------------------

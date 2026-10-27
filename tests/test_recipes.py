@@ -28,6 +28,7 @@ import gusto.core.checks as core_checks  # noqa: E402
 import gusto.core.errors as core_errors  # noqa: E402
 import gusto.core.records as core_records  # noqa: E402
 import gusto.core.shopping as core_shopping  # noqa: E402
+import gusto.core.shopping_sync as core_shopping_sync  # noqa: E402
 import gusto.core.storage as core_storage  # noqa: E402
 
 
@@ -435,6 +436,58 @@ def update_checks():
           "the title and tag experiments must leave the store unchanged")
 
 
+def edit_revision_checks():
+    recipe = core_recipes.add_recipe("Geteiltes Rezept", servings=2)
+    original = core_recipes.get_edit_snapshot(recipe.slug)
+    check(original["content"] == recipe.content()
+          and original["revision"] == core_recipes.edit_revision(
+              original["recipe"], original["content"]),
+          "an edit snapshot must expose matching recipe, content and revision")
+
+    core_recipes.log_cooked(recipe.slug)
+    core_images.add_recipe_image(recipe.slug, image_source())
+    check(core_recipes.get_edit_snapshot(recipe.slug)["revision"] == original["revision"],
+          "cooking and image changes must not invalidate an edit")
+    core_recipes.update_recipe(recipe.slug, content="Neue Anleitung", expected_revision=original["revision"])
+    current = core_recipes.get_edit_snapshot(recipe.slug)
+    journal_revision = core_storage.change_state()["revision"]
+    try:
+        core_recipes.update_recipe(
+            recipe.slug, title="Veralteter Titel", content="Alter Text",
+            expected_revision=original["revision"],
+        )
+    except core_errors.RevisionConflictError as error:
+        check(error.current_revision == current["revision"],
+              "a conflict must report the current edit revision")
+    else:
+        raise AssertionError("a stale edit must fail")
+    after = core_recipes.get_edit_snapshot(recipe.slug)
+    check(after["recipe"].to_dict() == current["recipe"].to_dict()
+          and after["content"] == current["content"]
+          and core_storage.change_state()["revision"] == journal_revision,
+          "a rejected stale edit must leave all state and the journal unchanged")
+
+    def try_edit(title):
+        try:
+            core_recipes.update_recipe(recipe.slug, title=title,
+                                       expected_revision=current["revision"])
+            return "saved"
+        except core_errors.RevisionConflictError:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(try_edit, ("Erste Änderung", "Zweite Änderung")))
+    check(sorted(outcomes) == ["conflict", "saved"],
+          "concurrent edits based on one revision must save at most one version")
+
+    core_storage.recipe_file(recipe.slug).unlink()
+    missing = core_recipes.get_edit_snapshot(recipe.slug)
+    core_recipes.update_recipe(recipe.slug, content="", expected_revision=missing["revision"])
+    check(core_recipes.get_edit_snapshot(recipe.slug)["revision"] != missing["revision"],
+          "the revision must distinguish missing Markdown from a restored file")
+    expect_valueerror(core_recipes.get_edit_snapshot, "fehlt")
+
+
 def image_source():
     source = core_storage.project_root() / "source.png"
     source.write_bytes(base64.b64decode(
@@ -746,6 +799,20 @@ def consistency_checks():
                   "diagnosing a journal must never silently repair or reset it")
     finally:
         core_storage.changes_path().write_bytes(journal_backup)
+    generation_path = core_shopping_sync.generation_path()
+    try:
+        for broken_generation in (b"{broken", b"\xff", b'{}', b'{"generation": 1}'):
+            generation_path.write_bytes(broken_generation)
+            corrupted = core_checks.check()
+            check(corrupted["ok"] is False
+                  and any(str(generation_path) in message
+                          for message in corrupted["invalid_data_files"])
+                  and corrupted["recipe_count"] == len(core_recipes.load_recipes()),
+                  "broken shopping generations must not hide other diagnostics")
+            check(generation_path.read_bytes() == broken_generation,
+                  "diagnosing a shopping generation must never repair or reset it")
+    finally:
+        generation_path.unlink(missing_ok=True)
     index_backup = core_storage.index_path().read_text(encoding="utf-8")
     core_storage.index_path().write_text('{"kaputt": true}', encoding="utf-8")
     try:
@@ -961,7 +1028,7 @@ def image_import_failure_checks():
 def main():
     # Each contract has its own store; no behavior depends on an earlier test.
     for behavior in (
-        creation_checks, search_checks, facet_checks, update_checks,
+        creation_checks, search_checks, facet_checks, update_checks, edit_revision_checks,
         image_checks, image_import_failure_checks, cooking_checks,
         cooking_boundaries_checks, archive_checks, consistency_checks,
         journal_checks, transaction_failure_checks,

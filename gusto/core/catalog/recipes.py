@@ -1,6 +1,7 @@
 """Active recipe metadata, Markdown and cooking transactions."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import date
@@ -52,6 +53,29 @@ def save_recipes(recipes: list[records.Recipe]) -> None:
 
 def get(slug: str) -> records.Recipe | None:
     return next((r for r in load_recipes() if r.slug == slug), None)
+
+
+def edit_revision(recipe: records.Recipe, content: str | None) -> str:
+    """Identify the editable state; None distinguishes a missing Markdown file."""
+    value = [recipe.slug, recipe.title, recipe.tags, recipe.duration_min,
+             recipe.servings, content]
+    encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _edit_content(recipe: records.Recipe) -> str | None:
+    return recipe.path.read_text(encoding="utf-8") if recipe.path.is_file() else None
+
+
+@storage.locked_mutation("catalog")
+def get_edit_snapshot(slug: str) -> dict:
+    """Read recipe metadata, Markdown and its edit token under one lock."""
+    recipe = get(slug)
+    if recipe is None:
+        raise errors.NotFoundError(f"Kein Rezept mit Slug '{slug}'.")
+    content = _edit_content(recipe)
+    return {"recipe": recipe, "content": content or "",
+            "revision": edit_revision(recipe, content)}
 
 
 MAX_RECIPE_SLUG_LENGTH = 150
@@ -291,7 +315,8 @@ def update_recipe(slug: str, title: str | None = None, tags=None,
                   duration_min=None, servings=None,
                   content: str | None = None, *,
                   clear_duration: bool = False,
-                  clear_servings: bool = False) -> records.Recipe:
+                  clear_servings: bool = False,
+                  expected_revision: str | None = None) -> records.Recipe:
     """Update a recipe. None means 'leave unchanged' (exception: tags=[] clears
     the tags). Explicit clear flags remove optional numeric metadata; `content`
     overwrites the .md file."""
@@ -305,6 +330,10 @@ def update_recipe(slug: str, title: str | None = None, tags=None,
     target = next((r for r in recipes if r.slug == slug), None)
     if target is None:
         raise errors.NotFoundError(f"Kein Rezept mit Slug '{slug}'.")
+    if expected_revision is not None:
+        current_revision = edit_revision(target, _edit_content(target))
+        if expected_revision != current_revision:
+            raise errors.RevisionConflictError(current_revision)
     if title is not None:
         target.title = _recipe_title(title)
     if tags is not None:

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import re
+from fractions import Fraction
+import gusto.core._ingredient_scaling as ingredient_scaling
 import gusto.core.records as records
 import gusto.core._timestamps as timestamps
 import gusto.core._validation as validation
@@ -10,6 +12,7 @@ import gusto.core.catalog.recipes as recipe_store
 import gusto.core.catalog.snapshots as snapshots
 import gusto.core.storage as storage
 import gusto.core.errors as errors
+import gusto.core.shopping_sync as sync_state
 
 
 def parse_ingredients(content: str) -> list[str]:
@@ -140,8 +143,40 @@ def shopping_add_many(texts: list[str]) -> list[records.ShoppingItem]:
     return _shopping_append(entries)
 
 
+def _shopping_recipe_preview(recipe: records.Recipe, content: str,
+                             revision: str, servings: int | None) -> dict:
+    if servings is not None and (isinstance(servings, bool)
+                                 or not isinstance(servings, int) or servings < 1):
+        raise ValueError("Die gewünschte Portionszahl muss eine positive ganze Zahl sein.")
+    if servings is not None and recipe.servings is None:
+        raise ValueError(
+            f"Für '{recipe.slug}' ist keine ursprüngliche Portionszahl hinterlegt. "
+            "Bitte ergänze sie im Rezept, bevor du die Zutaten skalierst."
+        )
+    ingredients = parse_ingredients(content)
+    if not ingredients:
+        raise ValueError(f"Rezept '{recipe.slug}' enthält keine importierbaren Zutaten.")
+    factor = Fraction(servings, recipe.servings) if servings is not None else Fraction(1)
+    return {
+        "slug": recipe.slug,
+        "source_servings": recipe.servings,
+        "target_servings": servings if servings is not None else recipe.servings,
+        "factor": float(factor),
+        "recipe_revision": revision,
+        "ingredients": [ingredient_scaling.scale_ingredient(text, factor) for text in ingredients],
+    }
+
+
+def shopping_preview_recipe(slug: str, servings: int | None = None) -> dict:
+    """Preview a consistent recipe snapshot and return its revision for import."""
+    snapshot = recipe_store.get_edit_snapshot(slug)
+    return _shopping_recipe_preview(snapshot["recipe"], snapshot["content"],
+                                    snapshot["revision"], servings)
+
+
 @storage.locked_mutation("catalog", "shopping", event_resources=("shopping",))
-def shopping_add_recipe(slug: str) -> list[records.ShoppingItem]:
+def shopping_add_recipe(slug: str, servings: int | None = None,
+                        expected_revision: str | None = None) -> list[records.ShoppingItem]:
     """Put all ingredients of a recipe (parse_ingredients on its .md) onto the
     list, source=slug. Returns the newly added items. ValueError if the recipe
     is unknown, has no importable ingredients, or already has visible items on
@@ -149,9 +184,19 @@ def shopping_add_recipe(slug: str) -> list[records.ShoppingItem]:
     r = recipe_store.get(slug)
     if r is None:
         raise errors.NotFoundError(f"Kein Rezept mit Slug '{slug}'.")
-    ingredients = parse_ingredients(r.content())
-    if not ingredients:
-        raise ValueError(f"Rezept '{slug}' enthält keine importierbaren Zutaten.")
+    if servings is not None and expected_revision is None:
+        raise ValueError(
+            "Für die angepasste Portionszahl ist eine aktuelle Vorschau erforderlich. "
+            "Bitte erstelle zuerst eine Vorschau."
+        )
+    content = r.path.read_text(encoding="utf-8") if r.path.is_file() else None
+    revision = recipe_store.edit_revision(r, content)
+    if expected_revision is not None and expected_revision != revision:
+        raise errors.RevisionConflictError(
+            revision, "Das Rezept wurde seit der Vorschau geändert. "
+            "Es wurden keine Zutaten übernommen. Bitte erstelle eine neue Vorschau."
+        )
+    preview = _shopping_recipe_preview(r, content or "", revision, servings)
     existing = [
         item for item in shopping_load()
         if item.source == slug and not item.deleted
@@ -162,7 +207,7 @@ def shopping_add_recipe(slug: str) -> list[records.ShoppingItem]:
             f"{len(existing)} Einkaufsposten aus '{slug}' {verb} bereits "
             "auf der Einkaufsliste."
         )
-    entries = [(ingredient, "") for ingredient in ingredients]
+    entries = [(ingredient["scaled"], "") for ingredient in preview["ingredients"]]
     return _shopping_append(entries, source=slug)
 
 
@@ -267,6 +312,18 @@ def shopping_merge(remote_items: list[dict]) -> list[records.ShoppingItem]:
         resources, lambda: _shopping_merge_unlocked(remote_items),
         event_resources=("shopping",),
     )
+
+
+@storage.locked_mutation("catalog", "shopping", event_resources=("shopping",))
+def shopping_exchange(remote_items: list[dict], generation: str | None = None) -> dict:
+    """Exchange one generation's state, rejecting uploads from before a restore."""
+    if generation is not None and (not isinstance(generation, str) or not generation):
+        raise ValueError("Der Wiederherstellungsstand der Einkaufsliste ist ungültig.")
+    current = sync_state.shopping_generation()
+    reset = (generation or "initial") != current
+    items = shopping_load() if reset else _shopping_merge_unlocked(remote_items)
+    return {"items": [item.to_dict() for item in items],
+            "generation": current, "reset": reset}
 
 
 def _shopping_merge_unlocked(remote_items: list[dict]) -> list[records.ShoppingItem]:

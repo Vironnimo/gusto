@@ -26,10 +26,11 @@ EXPECTED_COMMANDS = {
     "favorites alias-remove", "favorites product-add",
     "favorites product-set", "favorites product-move",
     "favorites product-remove", "shopping list", "shopping add",
-    "shopping add-many", "shopping add-recipe", "shopping check",
+    "shopping add-many", "shopping add-recipe", "shopping preview-recipe", "shopping check",
     "shopping uncheck", "shopping remove", "shopping remove-done",
     "shopping clear", "serve", "status", "start", "stop", "restart",
-    "update", "uninstall",
+    "update", "uninstall", "backup create", "backup preview", "backup restore",
+    "backup safety-download",
 }
 checks = 0
 

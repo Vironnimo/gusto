@@ -81,6 +81,43 @@ def png_pixel():
     )
 
 
+def check_backup_transport():
+    check(remote_client.MAX_BACKUP_BYTES == api.core_backup.MAX_ARCHIVE_BYTES,
+          "client and service backup size limits must agree")
+    archive = b"example zip bytes"
+    preview = {"token": "review-token", "counts": {"file_count": 1},
+               "effects": {"added": 1, "removed": 0, "replaced": 0}, "warnings": []}
+    with patch.object(api.core_backup, "create_backup", return_value=archive), \
+            patch.object(api.core_backup, "read_safety_backup", return_value=archive), \
+            patch.object(api.core_backup, "preview_restore", return_value=preview) as inspect, \
+            patch.object(api.core_backup, "restore_backup", return_value={
+                "safety_backup_id": "saved",
+            }) as restore:
+        response = client.get("/api/v1/backup")
+        check(response.status_code == 200 and response.content == archive
+              and response.headers["content-type"] == "application/zip",
+              "backup download must use a binary ZIP response")
+        response = client.get("/api/v1/backup/safety/saved")
+        check(response.status_code == 200 and response.content == archive,
+              "safety backup download must return its binary archive")
+        response = client.post("/api/v1/backup/preview", content=archive)
+        check(response.json()["result"] == preview and inspect.call_args.args == (archive,),
+              "backup preview must pass the archive without modifying the store")
+        response = client.post("/api/v1/backup/restore", content=archive)
+        check(response.status_code == 400 and not restore.called,
+              "restore must require the preview token before invoking Core")
+        response = client.post("/api/v1/backup/restore", content=archive,
+                               headers={"X-Gusto-Restore-Token": "review-token"})
+        check(response.json()["result"]["safety_backup_id"] == "saved"
+              and restore.call_args.args == (archive, "review-token"),
+              "restore must forward archive and reviewed token and return safety id")
+    with patch.object(api.core_backup, "MAX_ARCHIVE_BYTES", 4), \
+            patch.object(api.core_backup, "preview_restore") as inspect:
+        response = client.post("/api/v1/backup/preview", content=archive)
+        check(response.status_code == 413 and not inspect.called,
+              "oversized binary archives must be rejected before Core")
+
+
 def parse_sse(chunk):
     line = chunk.strip().splitlines()[0]
     check(line.startswith("data: "), "SSE changes must use a data field")
@@ -297,7 +334,7 @@ def check_client_failure_recovery():
             "catalog.list", "catalog.search", "tags.list", "categories.list",
             "recipe.show", "log.list", "suggest.list", "check.run",
             "archive.list", "archive.show", "image.list", "favorites.list",
-            "favorites.show", "favorites.match", "shopping.list",
+            "favorites.show", "favorites.match", "shopping.list", "shopping.preview_recipe",
         }
         writes = {
             "categories.add", "categories.set", "categories.remove", "categories.assign",
@@ -380,6 +417,7 @@ def check_post_mutation_failures():
               "failed tag warnings must not hide a created recipe")
         failure = command("recipe.update", {
             "slug": recipe.slug, "tags": ["changed-tag"],
+            "revision": core_recipes.get_edit_snapshot(recipe.slug)["revision"],
         }, status=500)
         check(failure.get("outcome_unknown") is True
               and core_recipes.get(recipe.slug).tags == ["changed-tag"],
@@ -390,6 +428,7 @@ def check_post_mutation_failures():
     with patch.object(core_records.Recipe, "content", side_effect=ValueError("unreadable body")):
         failure = command("recipe.content.set", {
             "slug": recipe.slug, "content": "# Ignored title\n\nSaved body.\n",
+            "revision": core_recipes.get_edit_snapshot(recipe.slug)["revision"],
         }, status=500)
     check(failure.get("outcome_unknown") is True
           and "Saved body." in core_recipes.get(recipe.slug).content(),
@@ -416,6 +455,7 @@ def check_post_mutation_failures():
 
 
 def main():
+    check_backup_transport()
     core_storage.data_dir().mkdir(parents=True)
     core_storage.categories_path().write_text(json.dumps({
         "diet": {"label": "Ernährung", "tags": ["vegan"]},
@@ -543,16 +583,21 @@ def main():
         "recipe.show must include Markdown content",
     )
     content = "# Falscher Transporttitel\n\n## Zutaten\n\n- Kartoffeln\n- Brühe\n"
+    command("recipe.content.set", {"slug": soup["slug"], "content": content}, status=400)
     content_result = command("recipe.content.set", {
         "slug": soup["slug"],
-        "content": content,
+        "content": content, "revision": shown["revision"],
     })
     check(
         content_result["content"].startswith("# Kartoffelsuppe\n"),
         "recipe.content.set must preserve the canonical metadata/H1 invariant",
     )
+    command("recipe.content.set", {"slug": soup["slug"], "content": "# Lost\n",
+            "revision": shown["revision"]}, status=409)
+    check(command("recipe.show", {"slug": soup["slug"]})["content"]
+          == content_result["content"], "stale content must not overwrite the recipe")
     updated = command("recipe.update", {
-        "slug": soup["slug"],
+        "slug": soup["slug"], "revision": command("recipe.show", {"slug": soup["slug"]})["revision"],
         "title": "Kartoffelsuppe fein",
         "tags": ["vegan", "saisonal"],
         "duration_min": 25,
@@ -569,7 +614,7 @@ def main():
     )
     unchanged_recipe = command("recipe.show", {"slug": soup["slug"]})
     command("recipe.update", {
-        "slug": soup["slug"],
+        "slug": soup["slug"], "revision": command("recipe.show", {"slug": soup["slug"]})["revision"],
         "title": None, "tags": None, "duration_min": None, "servings": None,
         "clear_duration": False, "clear_servings": False,
     }, status=400)
@@ -579,6 +624,7 @@ def main():
     )
     renamed = command("recipe.update", {
         "slug": soup["slug"], "title": "Kartoffelsuppe klassisch",
+        "revision": command("recipe.show", {"slug": soup["slug"]})["revision"],
     })
     check(
         renamed["title"] == "Kartoffelsuppe klassisch"
@@ -587,7 +633,7 @@ def main():
         "recipe.update must still apply one single effective value",
     )
     served = command("recipe.update", {
-        "slug": soup["slug"],
+        "slug": soup["slug"], "revision": command("recipe.show", {"slug": soup["slug"]})["revision"],
         "title": None, "tags": None, "duration_min": None, "servings": 2,
         "clear_duration": False, "clear_servings": False,
     })
@@ -596,7 +642,7 @@ def main():
         and served["title"] == "Kartoffelsuppe klassisch",
         "recipe.update must keep working with the full CLI payload",
     )
-    cleared = command("recipe.update", {"slug": soup["slug"], "tags": []})
+    cleared = command("recipe.update", {"slug": soup["slug"], "tags": [], "revision": command("recipe.show", {"slug": soup["slug"]})["revision"]})
     check(
         cleared["tags"] == [],
         "recipe.update must clear tags with an explicit empty list",
@@ -852,6 +898,13 @@ def main():
     })
     many = command("shopping.add_many", {"texts": ["Brot", "Salz"]})
     check(len(many) == 2, "shopping.add_many must preserve the requested group")
+    preview = command("shopping.preview_recipe", {"slug": soup["slug"], "servings": 4})
+    check(preview["target_servings"] == 4 and preview["source_servings"] == 2
+          and preview["recipe_revision"] and len(preview["ingredients"]) == 2,
+          "shopping preview must identify scaled ingredients and its recipe revision")
+    command("shopping.add_recipe", {"slug": soup["slug"], "servings": 4}, status=400)
+    command("shopping.add_recipe", {"slug": soup["slug"], "servings": 4,
+            "revision": "stale"}, status=409)
     imported = command("shopping.add_recipe", {"slug": soup["slug"]})
     check(len(imported) == 2, "shopping.add_recipe must import each ingredient")
     check(len(command("shopping.list", {"pending": True})) == 5,
@@ -896,8 +949,8 @@ def main():
     # Representative entity lookups distinguish not-found from invalid input.
     for operation, arguments, attachments in [
         ("recipe.show", {"slug": "missing"}, None),
-        ("recipe.content.set", {"slug": "missing", "content": "# Missing\n"}, None),
-        ("recipe.update", {"slug": "missing", "title": "Missing"}, None),
+        ("recipe.content.set", {"slug": "missing", "content": "# Missing\n", "revision": "missing"}, None),
+        ("recipe.update", {"slug": "missing", "title": "Missing", "revision": "missing"}, None),
         ("recipe.cooked", {"slug": "missing"}, None),
         ("recipe.archive", {"slug": "missing"}, None),
         ("archive.show", {"slug": "missing"}, None),

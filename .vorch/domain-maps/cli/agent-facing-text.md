@@ -15,8 +15,8 @@ Evidence: `.vorch/PROJECT.md` records the household/service scope, instance boun
 
 | Text | Reason |
 |---|---|
-| `Operate the Gusto household cookbook and shopping list.` | Identifies the household app the skill operates. |
-| `Use when the user wants meals from their saved recipes, recipe or shopping changes in Gusto, or help with...` | Loads for saved-recipe, shopping and lifecycle work, not generic cooking advice. |
+| `Operate Gusto's cookbook, shopping list, and backups.` | Identifies the household app and backup workflow the skill operates. |
+| `Use when the user wants meals from saved recipes, recipe or shopping changes, Gusto backup or restore, or help with its installation, service, or bundled vBot skill.` | Loads for saved-recipe, shopping, backup and lifecycle work, not generic cooking or other applications' backups. |
 
 ### Gusto
 
@@ -59,10 +59,9 @@ Evidence: `.vorch/PROJECT.md` records the household/service scope, instance boun
 | `When outcome_unknown:true, a timeout, or an interrupted call leaves a mutation uncertain, inspect its...` | Prevents duplicate writes after lost replies; names appropriate recovery reads. |
 | `Server file cleanup can fail after a saved write and return the same uncertainty flag.` | Explains why failure can occur after the requested state was saved. |
 | `Read-only calls and documented idempotent operations can be retried.` | Allows retries only for reads and operations with documented idempotency. |
-| `Successful mutations normally return the resulting object or a confirmation.` | Identifies the mutation response as usable resulting state. |
-| `Use that result; run check for an integrity diagnosis or a reported integrity problem, not after every...` | Avoids redundant integrity scans after ordinary successful edits. |
+| `Use the result of a successful mutation; run check for an integrity diagnosis, not after every edit.` | Avoids redundant integrity scans after ordinary successful edits. |
 | `An edit or new --edit failure can leave the recipe created and a local copy at recovery_path.` | Preserves a created recipe and edited local content after a later failure. |
-| `Read show before uploading that copy with content set <slug> --file <recovery_path> --json.` | Checks whether the upload already succeeded before replaying a recovery copy. |
+| `Read show, merge any concurrent changes, then upload the copy with content set --revision.` | Checks whether the upload already succeeded before replaying a recovery copy. |
 | `retained_path after success means the upload succeeded but local cleanup failed.` | Prevents repeating a successful upload merely because local cleanup failed. |
 
 ### Act within the request
@@ -81,9 +80,8 @@ Evidence: `.vorch/PROJECT.md` records the household/service scope, instance boun
 | `Use the scope the user requested; a request to check items off does not request their removal.` | Prevents a check-off request from expanding into deletion. |
 | `Install, update, control, or uninstall the app when the request calls for it; read...` | Routes requested app lifecycle work to its complete procedure. |
 | `Installing/refreshing the vBot copy replaces ~/.vbot/skills/gusto; it is a separate requested action, even...` | Keeps host-skill replacement separate from updating the app. |
-| `Read-only calls can run in parallel.` | Avoids serializing independent reads unnecessarily. |
-| `The server serializes writes sharing a store, so independent adds, image uploads, and item-specific checks...` | Explains which independent writes are safe under resource locking. |
-| `Keep dependencies and ordering sequential: create before using its returned id, and do not race...` | Preserves creation dependencies and order-sensitive collection changes. |
+| `Read-only calls and independent adds, uploads, and item-specific checks can run in parallel.` | Explains which independent writes are safe under resource locking. |
+| `Create before using its id; do not race reorder/remove/cover with changes to that collection.` | Preserves creation dependencies and order-sensitive collection changes. |
 
 ### Choose a meal
 
@@ -94,10 +92,10 @@ Evidence: `.vorch/PROJECT.md` records the household/service scope, instance boun
 | `For available ingredients: gusto search "haehnchen paprika" --match any --json searches title, tags, and...` | Gives the ingredient-text search mode without a discovery call. |
 | `A match mentions an ingredient; it does not prove the user has everything required.` | Prevents a text hit from being mistaken for a complete pantry match. |
 | `Read show for the chosen candidates.` | Obtains the recipe body before assessing a candidate. |
-| `Return 2–3 choices when available, with a reason based on variety and the user's constraints.` | Produces a usable choice rather than an unexplained raw ranking. |
-| `suggest is a simple ordering, not a dietary judgment.` | Prevents treating simple recency ranking as dietary analysis. |
+| `Return 2–3 choices when available, with reasons based on variety and the user's constraints.` | Produces a usable choice rather than an unexplained raw ranking. |
+| `suggest is not a dietary judgment.` | Prevents treating simple recency ranking as dietary analysis. |
 | `A positive --max-time excludes unknown durations.` | Prevents including unknown-duration recipes in a time-capped recommendation. |
-| `Log JSON is oldest-first; compare date values when deciding what was cooked recently.` | Prevents selecting the first JSON log entry as the latest cooking event. |
+| `Log JSON is oldest-first.` | Prevents selecting the first JSON log entry as the latest cooking event. |
 | `Tags are facets: repeated --tag values are OR within a category and AND across categories.` | Explains the facet-specific AND/OR filter semantics. |
 | `gusto tags --json shows used facets; --all shows all configured categories and tags.` | Distinguishes used tags from the complete configured category/tag definition. |
 | `Matching ignores case; displayed choices use category spelling or the first catalog spelling for an...` | Explains case-insensitive matching without inventing new display spellings. |
@@ -111,12 +109,14 @@ Evidence: `.vorch/PROJECT.md` records the household/service scope, instance boun
 | `If it already exists, inspect show; update when requested, otherwise explain the match before replacing it.` | Prevents importing over an existing recipe without a request to replace it. |
 | `For a new recipe, run gusto new "<title>" --json and use the returned slug.` | Uses the server-created slug for subsequent writes. |
 | `Add --tags, --duration (minutes), or --servings only for known values.` | Prevents inventing metadata from examples or guesses. |
-| `For existing metadata use gusto set <slug> ... --json: --title also rewrites the Markdown H1, --tags...` | Distinguishes replacement, clearing and title synchronization in metadata edits. |
-| `For an existing body, read show to obtain the content to preserve.` | Obtains the existing content needed to preserve unrelated passages. |
-| `Prepare the complete replacement in a local UTF-8 file and run gusto content set <slug> --file <path> --json.` | Uses a complete file upload for headless body replacement. |
+| `Before preparing metadata changes, read show --json and use its revision with gusto set <slug> --revision <revision> ... --json.` | Obtains the reviewed snapshot token before preparing metadata edits and avoids inventing or silently refreshing it. |
+| `--title rewrites H1; --tags replaces tags; --clear-duration and --clear-servings remove values.` | Prevents misunderstanding whole-field replacement and metadata clearing. |
+| `For body changes, read show --json for content and revision, including after new.` | Obtains the reviewed snapshot and existing content needed to preserve unrelated passages. |
+| `Prepare the complete replacement in a local UTF-8 file and run gusto content set <slug> --file <path> --revision <revision> --json.` | Uses a complete file upload for headless body replacement. |
 | `Preserve existing content outside the requested edit.` | Prevents the requested edit from erasing unrelated user content. |
 | `Use # <title>, ## Zutaten with bullets, and ## Zubereitung with numbered steps, without frontmatter.` | Produces recipe structure that ingredient import recognizes. |
 | `Gusto rewrites the first H1 from stored metadata.` | Prevents attempting to rename a recipe through its body H1 alone. |
+| `On a revision conflict, read show again and merge changes before retrying.` | Prevents overwriting a concurrent change by reusing a stale edit. |
 | `UTF-8 stdin is another input option; gusto edit <slug> is for an interactive human editor.` | Separates headless input from an interactive editor workflow. |
 | `For supplied images, inspect them and attach each useful one with gusto image add <slug> <path> --role...` | Attaches the supplied useful images with meaningful metadata. |
 | `Gusto owns a copy.` | Clarifies that later source-file changes do not update Gusto's copy. |
@@ -151,6 +151,7 @@ Evidence: `.vorch/PROJECT.md` records the household/service scope, instance boun
 | `To import ingredients use gusto shopping add-recipe <slug> --json.` | Uses the recipe ingredient parser rather than inventing ingredient splitting. |
 | `It rejects an empty ingredient section or a repeat while any visible sourced items remain, including...` | Explains empty-import and duplicate-import rejection, including checked items. |
 | `Both ingredient import and new --source attribution require an active recipe.` | Prevents new recipe attribution to an archived recipe. |
+| `For adjusted portions, use shopping preview-recipe, review warnings, then shopping add-recipe with the same --servings and preview --revision.` | Requires review of uncertain quantities and binds import to the reviewed recipe. |
 | `Report the existing import instead of clearing it to bypass the guard.` | Prevents clearing existing shopping work to bypass the import guard. |
 | `Set explicit states with shopping check <id> or shopping uncheck <id>.` | Sets intended check states rather than toggling possibly stale state. |
 | `Repeating the same state is idempotent.` | Explains why repeating an explicit unchanged state is safe. |
@@ -210,7 +211,7 @@ Evidence: `cli.build_parser` and the registrations/`cmd_*` handlers in `_cli_cat
 | `search "<query>" [--match any\|all] [--tag T ...] [--max-time N] [--json] Full-text over title, tags, and...` | Explains that ingredient text participates in search. |
 | `any (default) = any term present; all = every term present.` | Separates any-term and all-term matching. |
 | `show <slug> [--json] Print a recipe.` | Obtains the selected recipe rather than a list summary. |
-| `With --json, the object additionally carries content (the full markdown).` | Locates the full body within the JSON object. |
+| `With --json, the object additionally carries content (the full markdown) and its editable-state revision.` | Locates the full body within the JSON object. |
 | `tags [--all] [--json] Tag categories (facets).` | Maps the tag command to facet presentation. |
 | `Default: only tags actually used; --all: every defined category/tag.` | Explains used-only versus configured-tag scope. |
 | `Used tags are distinct case-insensitively across recipes.` | Prevents counting spelling variants as separate used tags. |
@@ -237,24 +238,26 @@ Evidence: `cli.build_parser` and the registrations/`cmd_*` handlers in `_cli_cat
 | `Check a matching title before creating a duplicate; it does not authorize replacing the existing recipe.` | Prevents duplicate creation and unauthorized replacement. |
 | `Never create a live Markdown file or catalog entry by hand first.` | Prevents bypassing catalog bookkeeping and mutation locks. |
 | `Tags without a named category add a structured warnings entry to JSON and a warning line to human output;...` | Explains that uncategorized tags are saved despite warnings. |
-| `set <slug> [--title ...] [--tags a,b] [--duration N\|--clear-duration] [--servings N\|--clear-servings]...` | Selects metadata editing rather than body replacement. |
+| `set <slug> --revision REVISION [--title ...] [--tags a,b] [--duration N\|--clear-duration] [--servings N\|--clear-servings]...` | Selects metadata editing rather than body replacement. |
 | `--title also rewrites the first Markdown H1.` | Prevents separate manual title/H1 edits. |
 | `--tags replaces the whole list; the clear flags remove optional duration or serving values.` | Distinguishes full tag replacement from optional-value clearing. |
 | `At least one change is required.` | Avoids a no-effect metadata command. |
+| `Supply revision from show --json; stale revisions are rejected without changes.` | Requires the snapshot used to prepare the metadata change. |
 | `A --tags change uses the same uncategorized-tag warning contract as new.` | Keeps tag-update warnings consistent with creation. |
 | `edit <slug> [--json] Download Markdown to a temporary file, open it in $EDITOR, then upload the completed...` | Explains why interactive editing requires a temporary download and upload. |
 | `JSON waits until the editor exits and returns slug, temporary absolute path, editor, and exit_code.` | Prevents treating editor launch as completed upload. |
 | `The temporary path is removed after a confirmed upload; if cleanup fails, success includes retained_path.` | Separates successful upload from failed temporary-file deletion. |
 | `A failed edit keeps its local copy and adds slug and recovery_path to the JSON error, also for new --edit.` | Keeps recoverable work and the created slug after editor failure. |
-| `Inspect show on the same server first; if the intended content is not already saved, continue with content...` | Prevents replaying an upload already saved on the same server. |
+| `Inspect show --json on the same server first; merge concurrent changes, then use content set with --file and --revision.` | Prevents replaying an upload already saved on the same server. |
 | `This manual upload retains the source file; automatic removal belongs to a successful interactive edit...` | Clarifies ownership of the manual recovery source file. |
 | `Without EDITOR set, Windows opens notepad and Linux nano — headless agents must set EDITOR to a scriptable...` | Prevents unattended tasks from launching the default interactive editor. |
 | `EDITOR accepts an executable path or a command with arguments, such as code --wait.` | Explains how to supply an editor that waits for completion. |
 | `Quote paths containing spaces when adding arguments.` | Prevents splitting executable paths at spaces. |
-| `content set <slug> (--file PATH \| --stdin) [--json] Replace the complete Markdown body through the server...` | Makes replacement scope and mutually exclusive input sources explicit. |
+| `content set <slug> (--file PATH \| --stdin) --revision REVISION [--json] Replace the complete Markdown body through the server...` | Makes replacement scope and mutually exclusive input sources explicit. |
 | `Use UTF-8; files also accept UTF-8 or UTF-16 with a byte-order mark.` | Prevents encoding failures in common Windows-generated files. |
 | `Stdin is UTF-8.` | Separates stdin's encoding contract from file BOM detection. |
 | `Returns the recipe including the saved content, with its H1 normalized to the stored title.` | Provides saved content and explains title normalization. |
+| `Supply revision from show --json; stale revisions are rejected without changes.` | Requires the snapshot used to prepare the replacement and prevents lost edits. |
 | `The local source file is retained.` | Prevents expecting upload to consume the user's source file. |
 | `cooked <slug> [--date YYYY-MM-DD] [--json] Add a log entry (default: today) and bump last_cooked.` | Maps cooking to history plus last-cooked metadata. |
 | `An explicit date must be a valid calendar date in that exact format and cannot be in the future.` | Prevents invalid or future cooking dates. |
@@ -343,8 +346,11 @@ Evidence: `cli.build_parser` and the registrations/`cmd_*` handlers in `_cli_cat
 | `--source must name an active recipe, records its slug on the item, and makes that visible item participate...` | Prevents attribution to archived recipes and explains import-guard participation. |
 | `Existing items keep their source when that recipe is archived.` | Prevents deleting existing references merely because a recipe is archived. |
 | `shopping add-many "<text>" ... [--json] — add a non-empty free-text group in one transaction; returns the...` | Explains atomic group creation and result order. |
-| `shopping add-recipe <slug> [--json] — add all non-empty parsed ingredients of an active recipe (source =...` | Uses parsed ingredients of an active recipe with retained source attribution. |
+| `shopping add-recipe <slug> [--servings N --revision REVISION] [--json] — add all non-empty parsed ingredients of an active recipe (source =...` | Uses parsed ingredients of an active recipe with retained source attribution. |
 | `It fails clearly when none can be parsed or while any visible items from that recipe remain, reporting...` | Explains empty/duplicate rejection without invented quantity merging. |
+| `For adjusted portions, supply the checked preview's recipe_revision and the same --servings; a changed recipe rejects the import.` | Binds the import to reviewed quantities. |
+| `shopping preview-recipe <slug> [--servings N] [--json] — show original and scaled ingredients, warnings, source and target servings, and recipe_revision.` | Identifies the non-mutating preview and its token. |
+| `Review warnings before importing; omitted portions leave amounts unchanged.` | Prevents unreviewed ambiguous quantities and explains the default. |
 | `shopping check <id> [--json] / shopping uncheck <id> [--json] — return the item.` | Returns the resulting state after explicit check/uncheck. |
 | `Repeating the requested state does not advance updated_at; an unknown id follows the JSON error contract...` | Explains same-state no-ops and unknown-ID failure. |
 | `shopping remove <id> [--json] — tombstone (sync-safe; never hard-deleted).` | Preserves deletions through synchronization rather than hard-deleting records. |
@@ -926,7 +932,7 @@ Evidence: each subsection names the function that constructs the message. Catalo
 | Text | Reason |
 |---|---|
 | `{error} Lokale Rezeptkopie bleibt erhalten: '{path}'.` | Preserves the recovery file and requires checking the same recipe before another upload. |
-| `Prüfe zuerst 'show {slug}' auf demselben Server; zum Fortsetzen nutze 'content set {slug}' mit --file und...` | Preserves the recovery file and requires checking the same recipe before another upload. |
+| `Lies 'show {slug} --json' auf demselben Server und führe Änderungen zusammen; nutze dann 'content set {slug}' mit --file, diesem Dateipfad und --revision aus show.` | Preserves the recovery file and requires checking the same recipe before another upload. |
 
 ### _edit_remote
 
@@ -1412,3 +1418,41 @@ Evidence: each subsection names the function that constructs the message. Catalo
 | `Hinzugefuegt:` | Distinguishes a newly created item from an ordinary list row in `cmd_shopping_add`. |
 | `Abgehakt:` | Confirms explicit checked state in `cmd_shopping_check`. |
 | `Wieder offen:` | Confirms explicit open state in `cmd_shopping_uncheck`. |
+
+## Revision, portion preview and backup additions
+
+| Text | Reason |
+|---|---|
+| `Restore a backup only on explicit request: preview it and review effects before backup restore with its token.` | Prevents an unrequested household-wide replacement and requires review of the specific archive and current store. |
+| `Revision aus show --json; bei Konflikt Inhalt erneut lesen und Änderungen zusammenführen.` | Requires the editable snapshot used to prepare content and directs conflict recovery. |
+| `Revision aus show --json; bei Konflikt erneut lesen und Änderungen prüfen.` | Requires the editable snapshot used to prepare metadata changes. |
+| `Für angepasste Portionen zuerst preview-recipe aufrufen und die Revision angeben.` | Rejects scaling that was not tied to the reviewed recipe. |
+| `Zutaten für eine Portionszahl ohne Änderung prüfen.` | Identifies the read-only preview. |
+| `Gewünschte Portionszahl; erfordert die Revision aus preview-recipe.` | Binds a scaled import to its reviewed preview. |
+| `recipe_revision aus der geprüften Vorschau.` | Names the source of the required import token. |
+| `Gewünschte Portionszahl. Ohne Angabe: Rezeptportionen.` | Explains preview's portion argument and omission. |
+| `Backup erstellen oder nach Vorschau wiederherstellen.` | Identifies the backup command group and restore prerequisite. |
+| `Backup vom Server in eine neue lokale Datei schreiben.` | Identifies the selected-server export and local destination. |
+| `Neue lokale ZIP-Datei; bestehende Dateien werden nicht ersetzt.` | Prevents an export from overwriting a local file. |
+| `Backup und Wiederherstellung prüfen, ohne Daten zu ändern.` | Distinguishes preview from restoration. |
+| `Lokale ZIP-Backup-Datei.` | Identifies preview's local input. |
+| `Geprüftes Backup wiederherstellen; erstellt zuvor ein Sicherheitsbackup.` | Names the whole-store effect and automatic recovery snapshot. |
+| `Dieselbe lokale ZIP-Backup-Datei wie bei preview.` | Binds restore input to the reviewed archive. |
+| `Token aus der aktuellen Vorschau für dieses Backup und den Serverzustand.` | Requires the token that binds archive and state. |
+| `Sicherheitsbackup nach Wiederherstellung herunterladen.` | Makes the automatic recovery snapshot available locally. |
+| `safety_backup_id aus backup restore.` | Identifies the exact safety snapshot. |
+| `Backup gespeichert: {path} ({bytes} Bytes)` | Reports the local export path and size. |
+| `Wiederherstellungsvorschau:` | Identifies the non-mutating preview. |
+| `Token: {token}` | Makes the preview token usable in a restore. |
+| `Backup wiederhergestellt; Sicherheitsbackup: {id}` | Reports completion and the recovery snapshot. |
+| `Sicherheitsbackup gespeichert: {path} ({bytes} Bytes)` | Reports the downloaded recovery archive. |
+| `Zutaten für {target_servings} Portionen (Revision: {recipe_revision}):` | Makes the preview target and token visible for plain output. |
+| `Hinweis: {warning}` | Preserves scaling warnings for human review. |
+| `backup create --file PATH [--json] — download a ZIP into a new local file.` | Identifies the local export destination. |
+| `Archives are limited to 64 MiB compressed, 128 MiB total unpacked and 32 MiB per file.` | Sets the accepted backup size bounds before transfer. |
+| `Preview rejects larger archives before restore.` | Makes oversize refusal a pre-restore failure. |
+| `backup preview --file PATH [--json] — validate the archive and show counts, warnings, replacement effects and token; no household data is changed.` | Makes preview effects and its non-mutating behavior clear. |
+| `backup restore --file PATH --token TOKEN [--json] — restore the previewed archive against the previewed server state.` | Binds restoration to the reviewed archive and state. |
+| `The result includes a safety_backup_id for the automatic backup of the prior state.` | Provides the identifier needed to recover the pre-restore data. |
+| `A stale token is rejected; preview and inspect again before restoring.` | Prevents reusing approval for changed data or archive. |
+| `backup safety-download ID --file PATH [--json] — download that safety backup to a new local file; ID comes from the restore result.` | Makes the automatic safety snapshot retrievable. |

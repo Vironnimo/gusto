@@ -8,7 +8,8 @@ Entry points: console script `gusto` and `python -m gusto` both run
 `gusto.cli:main`; the windowless GUI script `gusto-autostart` runs
 `gusto.cli:autostart_main` (registered by `lifecycle.md`).
 
-Private CLI units own registrations beside their handlers: `_cli_catalog.py`
+Private CLI units own registrations beside their handlers: `_cli_backup.py`
+for backup transfer and restore, `_cli_catalog.py`
 for discovery/recipes/cooking/archive/images, `_cli_shopping.py` for the
 shopping list and preferred products, `_cli_local.py` for local recovery and
 lifecycle, and `_cli_editor.py` for text input, editor execution and recovery.
@@ -19,7 +20,8 @@ one-call remote dispatch. These are internal edit units of the CLI domain, not
 separate public APIs.
 
 Normal domain commands use `_cli_terminal.remote`; each call sends one command operation
-through `gusto/client.py` (`service.md`). Editor round-trips and plain `log`
+through `gusto/client.py` (`service.md`). Backup commands use the client's binary
+transfer interface. Editor round-trips and plain `log`
 make multiple calls as described below. Local commands act on the CLI machine without the service: `home`,
 `check --offline`, `serve`, `status|start|stop|restart`, `update`, `uninstall`
 and `install-skill`. They are thin wrappers over Core (`home`,
@@ -37,7 +39,7 @@ classification (`service.md`), lifecycle behavior and result shapes
 
 ### Leaf command
 
-**Definition:** A complete command path whose parser has no subcommands, such as `shopping add`. The agent contract fixes the set (59 today) in `tests/test_agent_contract.py`.
+**Definition:** A complete command path whose parser has no subcommands, such as `shopping add`. The agent contract fixes the set in `tests/test_agent_contract.py`.
 
 ### Local command
 
@@ -91,7 +93,7 @@ classification (`service.md`), lifecycle behavior and result shapes
   survive a cp1252 Windows console.
 
 **Recipe text:**
-- `content set` reads exactly one of `--file` (UTF-8 with optional BOM or
+- `content set` requires `--revision` from `show --json` and reads exactly one of `--file` (UTF-8 with optional BOM or
   UTF-16 with BOM; UTF-32 and invalid bytes are rejected before upload; CR and
   CRLF become LF; the source file is never removed) or `--stdin` (UTF-8 only)
   and uploads through `recipe.content.set`, so Core rewrites the H1
@@ -106,6 +108,8 @@ classification (`service.md`), lifecycle behavior and result shapes
   with native quoting; on POSIX `shlex.split` is used. No `shell=True`. Under
   `--json` the editor's stdout and stderr are discarded so the output stays one
   JSON document. Editors that detach need their own wait flag.
+- `set` also requires the `show` revision; a stale edit is rejected before
+  mutation. `edit` uses the revision from its initial read.
 - A failure once the temporary file exists keeps it and raises `_cli_editor.EditError`
   (`slug`, `recovery_path`, inheriting `outcome_unknown` from a failed upload).
   Failure to create that copy is a definite command error before upload and has

@@ -250,13 +250,30 @@ def cmd_shopping_add_many(args):
 
 
 def cmd_shopping_add_recipe(args):
-    items = remote(args, "shopping.add_recipe", {"slug": args.slug})
+    items = remote(args, "shopping.add_recipe", {"slug": args.slug,
+                   "servings": args.servings, "revision": args.revision})
     if args.json:
         dump(items)
     else:
         print(f"{len(items)} Zutat(en) aus '{args.slug}' hinzugefuegt.")
         for item in items:
             _print_shopping_item(item, False, prefix="  ")
+
+
+def cmd_shopping_preview_recipe(args):
+    preview = remote(args, "shopping.preview_recipe", {
+        "slug": args.slug, "servings": args.servings,
+    })
+    if args.json:
+        dump(preview)
+        return
+    servings = preview["target_servings"]
+    label = f"{servings} Portionen" if servings is not None else "unbekannte Portionszahl"
+    print(f"Zutaten für {label} (Revision: {preview['recipe_revision']}):")
+    for ingredient in preview["ingredients"]:
+        print("  " + text(ingredient["scaled"]))
+        if ingredient.get("warning"):
+            print("    Hinweis: " + text(ingredient["warning"]))
 
 
 def cmd_shopping_check(args):
@@ -434,7 +451,15 @@ def register_commands(sub, base) -> None:
         help=add_recipe_help, description=add_recipe_help,
     )
     ep.add_argument("slug", help="Rezept-Slug aus list oder search; Zutatenabschnitt darf nicht leer sein.")
+    ep.add_argument("--servings", type=int, help="Gewünschte Portionszahl; erfordert die Revision aus preview-recipe.")
+    ep.add_argument("--revision", help="recipe_revision aus der geprüften Vorschau.")
     ep.set_defaults(func=cmd_shopping_add_recipe)
+
+    ep = esub.add_parser("preview-recipe", parents=[base],
+                         help="Zutaten für eine Portionszahl ohne Änderung prüfen.")
+    ep.add_argument("slug", help="Rezept-Slug aus list oder search.")
+    ep.add_argument("--servings", type=int, help="Gewünschte Portionszahl. Ohne Angabe: Rezeptportionen.")
+    ep.set_defaults(func=cmd_shopping_preview_recipe)
 
     ep = esub.add_parser("check", parents=[base], help="Eintrag abhaken.")
     ep.add_argument("id", help="Eintrags-ID aus shopping list. Bereits abgehakt bleibt unverändert.")

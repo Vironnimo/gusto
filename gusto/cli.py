@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import _cli_catalog as _catalog
+from . import _cli_backup as _backup
 from . import _cli_editor as _editor
 from . import _cli_local as _local
 from . import _cli_shopping as _shopping
@@ -117,6 +118,7 @@ def build_parser() -> argparse.ArgumentParser:
     _local.register_check(sub, base)
     _catalog.register_management(sub, base)
     _shopping.register_commands(sub, base)
+    _backup.register_commands(sub, base)
     _local.register_lifecycle(sub, base)
 
     _complete_help(p)

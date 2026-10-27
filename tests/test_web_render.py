@@ -14,6 +14,7 @@ from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -211,33 +212,126 @@ def test_recipe_form_preserves_markdown_indentation():
     check("<pre><code>Code am Anfang" in client.get(path).text,
           "the first indented line must remain a Markdown code block")
     form = client.get(path + "/edit")
+    revision = re.search(r'name="revision" value="([^"]+)"', form.text).group(1)
     check("    Code am Anfang" in form.text and "Zeilenumbruch  \n" in form.text,
           "editing must keep indentation and Markdown hard-break spaces")
     rejected = client.post(path + "/edit", data={
-        "title": "Einrückung", "duration": "invalid", "content": body,
+        "title": "Einrückung", "duration": "invalid", "content": body, "revision": revision,
     })
     check(rejected.status_code == 400 and "    Code am Anfang" in rejected.text
           and "Zeilenumbruch  \n" in rejected.text,
           "a validation error must retain the submitted Markdown")
-    saved = client.post(path + "/edit", data={"title": "Einrückung", "content": body})
+    saved = client.post(path + "/edit", data={"title": "Einrückung", "content": body,
+                                              "revision": revision})
     check(saved.status_code == 303 and "<pre><code>Code am Anfang" in client.get(path).text,
           "saving edits must keep the leading Markdown indentation")
+
+
+def test_recipe_edit_conflict_keeps_both_versions():
+    client = TestClient(web.app, follow_redirects=False)
+    recipe = core_recipes.add_recipe("Web Konflikt", content="## Zutaten\n\n- Salz")
+    path = f"/recipe/{recipe.slug}/edit"
+    page = client.get(path)
+    token = re.search(r'name="revision" value="([^"]+)"', page.text).group(1)
+    core_recipes.update_recipe(recipe.slug, content="## Zutaten\n\n- Pfeffer")
+    response = client.post(path, data={"title": recipe.title, "revision": token,
+                                       "content": "## Zutaten\n\n- Mein Entwurf"})
+    check(response.status_code == 409 and "Mein Entwurf" in response.text
+          and "Pfeffer" in response.text and 'name="revision"' not in response.text,
+          "a stale form must preserve both versions without offering a silent overwrite")
+    check("Pfeffer" in core_recipes.get(recipe.slug).content(),
+          "a stale save must not change the current recipe")
+
+
+def test_recipe_shopping_preview_is_bound_to_recipe():
+    client = TestClient(web.app, follow_redirects=False)
+    recipe = core_recipes.add_recipe("Web Portionen", servings=2,
+                                    content="## Zutaten\n\n- 2 Eier\n- Salz")
+    path = f"/recipe/{recipe.slug}/shopping"
+    page = client.get(path, params={"servings": 4})
+    token = re.search(r'name="revision" value="([^"]+)"', page.text).group(1)
+    check(page.status_code == 200 and "4 Eier" in page.text and "Salz" in page.text
+          and 'class="preview-warning"' in page.text,
+          "the preview must show scaled ingredients and unscaled warnings")
+    before = core_shopping.shopping_list()
+    changed = client.post(path, data={"servings": "6", "preview_servings": "4", "revision": token})
+    check(changed.status_code == 303 and "changed=1" in changed.headers["location"]
+          and core_shopping.shopping_list() == before,
+          "changing portions without recalculating must require another review")
+    core_recipes.update_recipe(recipe.slug, content="## Zutaten\n\n- 3 Eier")
+    before = core_shopping.shopping_list()
+    response = client.post(path, data={"servings": "4", "preview_servings": "4", "revision": token})
+    check(response.status_code == 303 and core_shopping.shopping_list() == before,
+          "a stale preview must not import ingredients")
+    page = client.get(path, params={"servings": 4})
+    token = re.search(r'name="revision" value="([^"]+)"', page.text).group(1)
+    response = client.post(path, data={"servings": "4", "preview_servings": "4", "revision": token})
+    check(response.status_code == 303 and any(item.text == "6 Eier" for item in core_shopping.shopping_list()),
+          "confirmation must import exactly the current scaled preview")
+
+
+def test_backup_forms_require_confirmation_and_matching_upload():
+    client = TestClient(web.app, follow_redirects=False)
+    preview = {"token": "preview-token", "counts": {"recipe_count": 1, "archive_count": 0,
+               "favorite_need_count": 0, "shopping_visible_count": 0, "log_count": 0,
+               "image_count": 0, "archive_image_count": 0, "favorite_image_count": 0,
+               "file_count": 1, "total_bytes": 4},
+               "effects": {"added": 1, "replaced": 0, "removed": 0}, "warnings": []}
+    upload = {"archive": ("sicherung.zip", b"ZIPDATA", "application/zip")}
+    with patch.object(web.core_backup, "preview_restore", return_value=preview) as inspect, \
+            patch.object(web.core_backup, "restore_backup", return_value={"safety_backup_id": "a" * 32}) as restore:
+        page = client.post("/backup/preview", files=upload)
+        check(page.status_code == 200 and 'value="preview-token"' in page.text
+              and inspect.call_args.args == (b"ZIPDATA",), "preview must show the reviewed archive token")
+        rejected = client.post("/backup/restore", files=upload, data={"token": "preview-token"})
+        check(rejected.status_code == 400 and not restore.called,
+              "restore without explicit confirmation must never call Core")
+        response = client.post("/backup/restore", files=upload,
+                               data={"token": "preview-token", "confirm": "1"})
+        check(response.status_code == 303 and restore.call_args.args == (b"ZIPDATA", "preview-token")
+              and "restored=" in response.headers["location"],
+              "confirmed restore must pass the chosen archive and preview token to Core")
+    with patch.object(web, "MAX_BACKUP_BYTES", 4), \
+            patch.object(web.core_backup, "preview_restore") as inspect, \
+            patch.object(web.core_backup, "restore_backup") as restore:
+        oversized = client.post("/backup/preview", files=upload)
+        rejected = client.post("/backup/restore", files=upload,
+                               data={"token": "preview-token", "confirm": "1"})
+        check(oversized.status_code == 400 and rejected.status_code == 400
+              and not inspect.called and not restore.called,
+              "oversized uploads must be rejected before preview or restore reaches Core")
+
+
+def test_backup_restore_rejects_stale_preview_without_writes():
+    client = TestClient(web.app, follow_redirects=False)
+    download = client.get("/backup/download")
+    check(download.status_code == 200 and download.headers["content-type"].startswith("application/zip"),
+          "backup download must return the ZIP")
+    upload = {"archive": ("sicherung.zip", download.content, "application/zip")}
+    page = client.post("/backup/preview", files=upload)
+    token = re.search(r'name="token" value="([^"]+)"', page.text).group(1)
+    core_shopping.shopping_add("Nach der Vorschau")
+    before = client.get("/api/shopping").json()
+    response = client.post("/backup/restore", files=upload,
+                           data={"token": token, "confirm": "1"})
+    check(response.status_code == 400 and client.get("/api/shopping").json() == before,
+          "stale restore preview must leave the current store unchanged")
 
 
 def test_shopping_sync_keeps_server_responsive():
     started = threading.Event()
     release = threading.Event()
 
-    def slow_merge(items):
+    def slow_merge(items, generation):
         started.set()
         if not release.wait(timeout=3):
             raise AssertionError("another request could not release the simulated lock")
-        return []
+        return {"items": [], "generation": "initial", "reset": False}
 
     # Both requests share the TestClient's application event loop. A blocking
     # merge on that loop would prevent health from releasing the barrier.
     with TestClient(web.app) as client, ThreadPoolExecutor(max_workers=1) as worker:
-        with patch.object(core_shopping, "shopping_merge", side_effect=slow_merge):
+        with patch.object(core_shopping, "shopping_exchange", side_effect=slow_merge):
             pending = worker.submit(client.post, "/api/shopping/sync", json={"items": []})
             try:
                 check(started.wait(timeout=2), "sync must reach the simulated lock")
@@ -245,7 +339,7 @@ def test_shopping_sync_keeps_server_responsive():
             finally:
                 release.set()
             response = pending.result(timeout=3)
-    check(health.status_code == 200 and response.json() == {"items": []},
+    check(health.status_code == 200 and response.json()["items"] == [],
           "shopping sync waiting on a file lock must not block other requests")
 
 
@@ -363,11 +457,11 @@ def test_saved_mutations_never_look_rejected():
     check(response.status_code == 500 and 'href="/shopping"' in response.text,
           "the recovery page must render without reading the failed journal")
 
-    with patch.object(core_shopping, "shopping_merge", side_effect=core_errors.PostMutationError("saved")):
+    with patch.object(core_shopping, "shopping_exchange", side_effect=core_errors.PostMutationError("saved")):
         response = client.post("/api/shopping/sync", json={"items": []})
     check(response.status_code == 500 and response.json().get("outcome_unknown") is True,
           "a saved sync must report uncertainty, never invalid input")
-    with patch.object(core_shopping, "shopping_merge", side_effect=ValueError("invalid recipe source")):
+    with patch.object(core_shopping, "shopping_exchange", side_effect=ValueError("invalid recipe source")):
         response = client.post("/api/shopping/sync", json={"items": []})
     check(response.status_code == 400 and response.json().get("detail") == "invalid recipe source",
           "a rejected sync must include its validation detail for recovery")
@@ -473,12 +567,16 @@ def main():
     test_return_destination_stays_local()
     test_favorite_creation_error_keeps_shopping_context()
     test_recipe_form_preserves_markdown_indentation()
+    test_recipe_edit_conflict_keeps_both_versions()
+    test_recipe_shopping_preview_is_bound_to_recipe()
+    test_backup_forms_require_confirmation_and_matching_upload()
     test_shopping_sync_keeps_server_responsive()
     test_shopping_sync_endpoint_contract()
     test_browser_writes_require_same_origin()
     test_saved_mutations_never_look_rejected()
     test_tag_filters_keep_stale_selections_removable()
     test_prepared_photo_translates_only_preparation_errors()
+    test_backup_restore_rejects_stale_preview_without_writes()
     print(f"OK: {checks} checks passed")
 
 

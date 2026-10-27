@@ -20,6 +20,14 @@
   var storageWriteFailed = false;
   var rejectedPayload = null;
   var syncRejection = "";
+  var generation = "initial";
+  var recoveryKey = "gusto.shopping.before-restore";
+  var previousLists = [];
+  var recoveryInMemory = false;
+  try {
+    var savedRecovery = JSON.parse(localStorage.getItem(recoveryKey) || "[]");
+    if (Array.isArray(savedRecovery)) previousLists = savedRecovery;
+  } catch (e) { /* A blocked browser store still permits current-page recovery. */ }
 
   // --- localStorage binding --------------------------------------------------
 
@@ -33,6 +41,7 @@
       var raw = localStorage.getItem(STORAGE_KEY);
       var data = raw ? JSON.parse(raw) : null;
       memoryItems = data && Array.isArray(data.items) ? data.items : [];
+      generation = data && typeof data.generation === "string" ? data.generation : "initial";
     } catch (e) {
       // Keep the last known state when storage is blocked or corrupt.
     }
@@ -42,7 +51,7 @@
   function saveItems(items) {
     memoryItems = items;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ items: items }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ items: items, generation: generation }));
       storageWriteFailed = false;
     } catch (e) {
       // Current-page edits still render and sync even without persistence.
@@ -340,6 +349,33 @@
     }
     while (clientEl.lastChild && clientEl.lastChild !== addPanel) {
         clientEl.removeChild(clientEl.lastChild);
+    }
+
+    if (previousLists.length) {
+      var restored = el("div", "error");
+      restored.id = "shop-restore-notice";
+      restored.setAttribute("role", "status");
+      var explanation = el("p");
+      explanation.textContent = "Eine Sicherung wurde wiederhergestellt. Deine bisherige lokale "
+        + "Einkaufsliste wurde getrennt aufbewahrt und nicht erneut hochgeladen."
+        + (recoveryInMemory ? " Lade sie vor dem Schließen dieses Tabs herunter." : "");
+      restored.appendChild(explanation);
+      var download = el("button", "btn");
+      download.type = "button";
+      download.textContent = "Vorherige lokale Listen herunterladen";
+      download.addEventListener("click", function () {
+        var url = URL.createObjectURL(new Blob([JSON.stringify(previousLists, null, 2)],
+          { type: "application/json" }));
+        var link = el("a");
+        link.href = url;
+        link.download = "gusto-lokale-listen-vor-wiederherstellung.json";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      });
+      restored.appendChild(download);
+      clientEl.appendChild(restored);
     }
 
     if (syncRejection) {
@@ -910,7 +946,9 @@
   function sync() {
     if (!navigator.onLine) return;
     if (syncing) { pending = true; return; } // changed during sync -> follow up
-    var payload = JSON.stringify({ items: loadItems() });
+    var currentItems = loadItems();
+    var payload = JSON.stringify({ items: currentItems, generation: generation });
+    var submittedGeneration = generation;
     // A rejected full state cannot succeed unchanged. Keep it locally and
     // let an actual list change unblock sync, including an in-flight edit.
     if (payload === rejectedPayload) return;
@@ -940,7 +978,30 @@
         rejectedPayload = null;
         syncRejection = "";
         var incoming = data && Array.isArray(data.items) ? data.items : [];
-        var merged = mergeInto(loadItems(), incoming, submitted);
+        var latestItems = loadItems();
+        if (generation !== submittedGeneration) {
+          // Another tab adopted a restored store during this request. Any
+          // response for the former generation is obsolete, even a success.
+          pending = true;
+          return;
+        }
+        if (data.reset === true) {
+          var previousItems = latestItems;
+          if (previousItems.length) {
+            previousLists.push({ generation: generation, items: previousItems });
+            try {
+              localStorage.setItem(recoveryKey, JSON.stringify(previousLists));
+              recoveryInMemory = false;
+            } catch (e) { recoveryInMemory = true; }
+          }
+          generation = data.generation;
+          saveItems(incoming);
+          pending = false;
+          render();
+          return;
+        }
+        var merged = mergeInto(latestItems, incoming, submitted);
+        if (typeof data.generation === "string") generation = data.generation;
         saveItems(merged.items);
         if (merged.changedDuringRequest) pending = true;
         render();

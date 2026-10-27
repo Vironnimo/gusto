@@ -4,8 +4,8 @@ The service domain is the versioned anonymous LAN API over Core (`gusto/api.py`)
 
 ## Overview
 
-`gusto/api.py` defines one FastAPI `APIRouter` under `/api/v1` with three routes:
-health, command and events. It has no app of its own: `gusto.web:app` mounts it,
+`gusto/api.py` defines one FastAPI `APIRouter` under `/api/v1` with
+health, command, backup and events routes. It has no app of its own: `gusto.web:app` mounts it,
 so API, browser UI and PWA run in one process (the service). The API validates
 and materializes transport input, delegates the requested operation to Core
 and serializes the result; some handlers also read related data for presentation.
@@ -70,7 +70,7 @@ gates compare `data_path` before acting.
 - Success: HTTP 200 `{ok:true, result}`. `result` is the serialized Core result
   and may be `null` (`favorites.match` without a match).
 - Failure: `{ok:false, error}` with a German message and status 400
-  (validation or domain rejection), 404 (unknown entity), 413 (size) or 500 with
+  (validation or domain rejection), 404 (unknown entity), 409 (stale revision), 413 (size) or 500 with
   `outcome_unknown:true`. The web host rejects foreign browser writes with 403
   and the same definite-failure envelope before the API runs.
 - Missing Core entities raise `gusto.core.errors.NotFoundError`, a `ValueError`
@@ -90,13 +90,22 @@ gates compare `data_path` before acting.
   parallel; Core's resource locks serialize writes that share a source of truth.
   The API adds no locking or ordering of its own.
 
-**Operations:** `_OPERATIONS` covers every normal CLI domain command (49
-entries); lifecycle and local commands are unknown operations (400). Handlers
+**Operations:** `_OPERATIONS` covers normal CLI domain commands; lifecycle,
+backup binary transfers and local commands are not command operations. Handlers
 validate strictly through `_arguments` (unknown or missing names are 400 and
 named) and typed helpers. Nullable string, integer and list fields treat `null`
 as absent; omittable boolean flags still require JSON booleans when supplied.
 `recipe.update`, `image.set` and `favorites.product.set` reject a request
 without an effective change, while an empty string is a real change.
+`recipe.show` returns an editable-state revision; `recipe.content.set` and
+`recipe.update` require it and reject stale values before writing. Scaled
+`shopping.add_recipe` requires the revision returned by `shopping.preview_recipe`.
+
+**Backup:** `GET /api/v1/backup` and `/backup/safety/{id}` return ZIP bytes;
+`POST /backup/preview` and `/backup/restore` accept ZIP bytes up to 64 MiB.
+Restore requires `X-Gusto-Restore-Token` from preview. The client writes a
+download to a new local file and does not encode archives as JSON. A restore
+transport failure is uncertain; preview and downloads are read-only.
 
 **Attachments:** only `image.add` (requires `image`), `favorites.product.add`
 and `favorites.product.set` (optional `image`) accept attachments; every other

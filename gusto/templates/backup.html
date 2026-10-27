@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="form-wrap backup-page">
+  <p class="eyebrow">Für alle Fälle</p>
+  <h1 class="page-title">Sicherung</h1>
+  <p class="lede">Sichere deinen Gusto-Datenbestand als ZIP oder stelle eine frühere Sicherung wieder her.</p>
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  {% if restored %}<div class="backup-card"><h2>Wiederherstellung abgeschlossen</h2><p>Der vorherige Datenbestand wurde zusätzlich gesichert.</p><a class="btn-ghost" href="/backup/safety/{{ restored|urlencode }}">Sicherung von vorher herunterladen</a></div>{% endif %}
+  <div class="backup-card"><h2>Sicherung herunterladen</h2><p>Enthält Rezepte, Archiv, Bilder, Einkaufsdaten und Einstellungen des Kochbuchs.</p><a class="btn" href="/backup/download">Sicherung herunterladen</a></div>
+  <div class="backup-card"><h2>Sicherung prüfen und wiederherstellen</h2><p>Beim Wiederherstellen wird der aktuelle Datenbestand ersetzt. Vorher erstellt Gusto eine zusätzliche Sicherung.</p>
+    <form class="recipe-form" method="post" action="/backup/preview" enctype="multipart/form-data">
+      <label>ZIP-Sicherung auswählen<input type="file" name="archive" accept=".zip,application/zip" required></label>
+      <button type="submit" class="btn-ghost">Sicherung prüfen</button>
+    </form>
+  </div>
+  {% if preview %}
+  <div class="backup-card backup-preview"><h2>Prüfung: {{ filename }}</h2>
+    <p>{{ preview.counts.recipe_count }} Rezepte · {{ preview.counts.archive_count }} Archiveinträge · {{ preview.counts.favorite_need_count }} Einkaufsbedarfe · {{ preview.counts.shopping_visible_count }} offene und erledigte Einkaufsposten · {{ preview.counts.log_count }} Logbucheinträge</p>
+    <p>{{ preview.counts.image_count + preview.counts.archive_image_count + preview.counts.favorite_image_count }} Bilder · {{ preview.counts.file_count }} Dateien</p>
+    <p>Dateien: {{ preview.effects.added }} neu, {{ preview.effects.replaced }} ersetzt, {{ preview.effects.removed }} entfernt.</p>
+    {% if preview.warnings %}<h3>Hinweise</h3><ul>{% for warning in preview.warnings %}<li>{% if warning.code == 'uncategorized_tags' %}Tags ohne Gruppe{% elif warning.code == 'unresolved_log_references' %}Nicht zugeordnete Rezepte im Logbuch{% else %}Weitere Hinweise{% endif %}: {{ warning['items']|join(', ') }}</li>{% endfor %}</ul>{% endif %}
+    <p>Wähle dieselbe Datei erneut aus. Gusto prüft, dass sie und der aktuelle Datenbestand seit der Vorschau unverändert sind.</p>
+    <form class="recipe-form" method="post" action="/backup/restore" enctype="multipart/form-data">
+      <input type="hidden" name="token" value="{{ preview.token }}">
+      <label>Geprüfte ZIP-Sicherung erneut auswählen<input type="file" name="archive" accept=".zip,application/zip" required></label>
+      <label class="favorite-check"><input type="checkbox" name="confirm" value="1" required> Ich möchte den aktuellen Datenbestand durch diese Sicherung ersetzen.</label>
+      <button class="btn" type="submit">Datenbestand wiederherstellen</button>
+    </form>
+  </div>{% endif %}
+</section>
+{% endblock %}

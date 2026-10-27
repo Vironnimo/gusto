@@ -5,7 +5,7 @@ The shopping domain owns the household shopping list, recipe ingredient import, 
 ## Overview
 
 Owned code and contracts:
-- `gusto/core/shopping.py` owns ingredient parsing, shopping load/save, mutation and sync; `gusto/core/favorites.py` owns household needs, aliases, ranked preferred products and their image transactions. Their validated record types live in public `gusto/core/records.py`; shared UTC formatting and sync version advancement live in `_timestamps.py`, and image-header validation/failed-copy cleanup in `_images.py`.
+- `gusto/core/shopping.py` owns ingredient parsing, portion preview/import, shopping load/save, mutation and sync; its private `_ingredient_scaling.py` scales quantities conservatively. `gusto/core/favorites.py` owns household needs, aliases, ranked preferred products and their image transactions. Their validated record types live in public `gusto/core/records.py`; shared UTC formatting and sync version advancement live in `_timestamps.py`, and image-header validation/failed-copy cleanup in `_images.py`.
 - `gusto/static/shopping-client.js` (offline browser client) and `gusto/static/sw.js` (service worker, served at `/sw.js` with root scope).
 - `docs/sync-kontrakt.md` (PWA wire and merge contract, German) and `docs/telegram-shopping-handoff.md` (Telegram checklist boundary).
 
@@ -34,6 +34,10 @@ A shopping item kept with `deleted: true` so its removal propagates to other dev
 
 An item's `updated_at` UTC timestamp, compared per id to choose the last writer (see Sync Contract).
 
+### Sync generation
+
+The identity of the household shopping state since the last full restore. Not an item version; see `shopping/offline-pwa.md`.
+
 ### Shopping need (`Einkaufsbedarf`)
 
 Defined in `.vorch/GLOSSARY.md`. Domain detail: it has one canonical name and exact aliases, and list items relate to it only by matching their text at read time (`shopping/preferred-products.md`).
@@ -61,6 +65,8 @@ Transports (all reach the same Core functions):
 List mutation semantics (also stated in the skill):
 - Adds create new ids with `checked: false`. Text must be non-empty and single-line; quantity is single-line free text. `add-many` validates every text, then commits the group in one transaction in argument order. Nothing deduplicates same-looking texts or combines quantities.
 - Ingredient import (`shopping_add_recipe`) needs an active recipe and at least one parsed ingredient, and refuses while any visible item has that recipe as `source`; the error names their count. Items get `source = slug`. Once the old items are tombstoned, a new import creates new ids.
+- Portion preview (`shopping_preview_recipe`) takes an optional positive integer target and returns source/target servings, factor, recipe revision, and original/scaled ingredient lines with warnings. An explicit target needs a stored source serving count. Scaled import requires the preview revision; Core checks it under catalog and shopping locks before writing, then uses the same scaling path. A changed recipe rejects the import rather than changing the reviewed result.
+- Ingredient scaling details and warnings: `shopping/portion-import.md`.
 - A sourced single add (`shopping add --source`) needs an active recipe and joins the same import guard. Archived recipes are rejected for new attribution but remain valid sources of existing items, whose presentation resolves through the catalog's active-or-archived reference map.
 - Explicit check/uncheck to the current state and removing an existing tombstone are no-ops: no write, no new `updated_at`, no change event. Unknown ids are errors; check/uncheck of a tombstone is an error too.
 - `remove-done` tombstones every visible checked item, `clear` every visible item, each in one transaction returning the removed count (API and CLI: `{ "removed": N }`). No restore action exists in Core, API, CLI or web.
@@ -91,6 +97,7 @@ Wire details: `docs/sync-kontrakt.md`. Invariants every shopping change keeps:
 - Any invalid item rejects the whole merge before saving (HTTP 400 on the sync endpoint).
 - A merge without a winning or new item saves nothing and publishes no event; an empty first sync creates no file.
 - Clients accept the server's result for submitted items unchanged during the request, preserve in-flight local edits and additions, and sync again when the list changed during a request.
+- `shopping_exchange` checks the generation owned by `shopping_sync.py` under the shopping lock. Pre-restore clients receive replacement state without uploading their old items; recovery is in `shopping/offline-pwa.md`.
 
 ## Conventions
 
@@ -120,6 +127,7 @@ Read these only when your task matches - not by default.
 
 - Changing `shopping-client.js`, `sw.js`, the shopping page hooks, `/api/shopping*` or `/api/favorites`, or debugging offline or multi-device behavior -> `shopping/offline-pwa.md`
 - Changing shopping needs, aliases, product cards, store narrowing, product images or `favorites` commands -> `shopping/preferred-products.md`
+- Changing ingredient scaling or reviewed portion imports -> `shopping/portion-import.md`
 - Exact PWA wire format and merge rules (German) -> `docs/sync-kontrakt.md`
 - Telegram checklist boundary (German) -> `docs/telegram-shopping-handoff.md`
 - Lock mechanism, atomic writes, change journal -> `storage.md`

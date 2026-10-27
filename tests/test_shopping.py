@@ -24,6 +24,7 @@ os.environ["GUSTO_HOME"] = tempfile.mkdtemp(prefix="gusto-test-")
 import gusto.core.catalog.archive as core_archive  # noqa: E402
 import gusto.core.catalog.recipes as core_recipes  # noqa: E402
 import gusto.core.checks as core_checks  # noqa: E402
+import gusto.core.errors as core_errors  # noqa: E402
 import gusto.core.shopping as core_shopping  # noqa: E402
 import gusto.core.storage as core_storage  # noqa: E402
 
@@ -312,6 +313,73 @@ def main():
     check(core_storage.shopping_path().read_bytes() == before_bytes
           and core_storage.change_state()["revision"] == before_revision,
           "a rejected minimal item must preserve all stored items and revisions")
+
+    # Portion previews and imports share one calculation and one recipe token.
+    portion_content = (
+        "# Portionen\n\n## Zutaten\n"
+        "- 200 g Mehl\n- 1,5 l Milch\n- 1/3 TL Salz\n- 1 1/2 Eier\n"
+        "- ½ Zwiebel\n- 1½ kg Karotten\n- 2-4 EL Öl\n- 2 Biskuit\n"
+        "- 2 x 400 g Tomaten\n- 1 Dose (400 g) Bohnen\n"
+        "- 2 Eigelb + 1 Ei\n- Salz nach Geschmack\n"
+        "- 3,5% Milch\n- 2er-Pack Joghurt\n- 1.000 g Mehl\n"
+        "- 200g Mehl\n- 0.5 l Milch\n"
+    )
+    core_recipes.add_recipe("Portionen", content=portion_content, slug="portionen", servings=4)
+    preview = core_shopping.shopping_preview_recipe("portionen", 6)
+    check((preview["source_servings"], preview["target_servings"], preview["factor"])
+          == (4, 6, 1.5), "preview must identify both serving counts and the factor")
+    originals = [line["original"] for line in preview["ingredients"]]
+    scaled = [line["scaled"] for line in preview["ingredients"]]
+    check(scaled == ["300 g Mehl", "2,25 l Milch", "0,5 TL Salz", "2,25 Eier",
+                     "0,75 Zwiebel", "2,25 kg Karotten", "3-6 EL Öl", "3 Biskuit",
+                     "2 x 400 g Tomaten", "1 Dose (400 g) Bohnen",
+                     "2 Eigelb + 1 Ei", "Salz nach Geschmack", "3,5% Milch",
+                     "2er-Pack Joghurt", "1.000 g Mehl", "300g Mehl", "0,75 l Milch"],
+          "preview must scale clear quantities exactly and preserve ambiguous lines")
+    check(all(not line["warning"] for line in preview["ingredients"][:8])
+          and all(line["warning"] for line in preview["ingredients"][8:15])
+          and all(not line["warning"] for line in preview["ingredients"][15:]),
+          "each ambiguous or unquantified line must be identified")
+    check(originals == core_shopping.parse_ingredients(portion_content),
+          "preview must retain the original wording for review")
+    third = core_shopping.shopping_preview_recipe("portionen", 3)
+    check(third["ingredients"][2]["scaled"] == "0,25 TL Salz",
+          "fractional ingredients must not be rounded")
+    half = core_shopping.shopping_preview_recipe("portionen", 2)
+    check(half["ingredients"][2]["scaled"] == "1/6 TL Salz",
+          "non-terminating quantities must remain exact fractions")
+    for invalid in (0, -1, True, 1.5, "4"):
+        expect_valueerror(core_shopping.shopping_preview_recipe, "portionen", invalid)
+    expect_valueerror(core_shopping.shopping_add_recipe, "portionen", 6)
+    no_baseline = core_shopping.shopping_preview_recipe("t")
+    check(no_baseline["source_servings"] is None and no_baseline["target_servings"] is None
+          and no_baseline["factor"] == 1,
+          "a recipe without servings remains previewable unscaled")
+    expect_valueerror(core_shopping.shopping_preview_recipe, "t", 4)
+
+    core_recipes.update_recipe("portionen", content=portion_content + "\nExtra\n")
+    before_bytes = core_storage.shopping_path().read_bytes()
+    before_revision = core_storage.change_state()["revision"]
+    try:
+        core_shopping.shopping_add_recipe("portionen", 6, preview["recipe_revision"])
+    except core_errors.RevisionConflictError as error:
+        check(bool(error.current_revision), "a stale preview identifies the current recipe revision")
+    else:
+        raise AssertionError("stale ingredient preview must be rejected")
+    check(core_storage.shopping_path().read_bytes() == before_bytes
+          and core_storage.change_state()["revision"] == before_revision,
+          "a stale preview must not change the shopping list or publish an event")
+    preview = core_shopping.shopping_preview_recipe("portionen", 6)
+    core_recipes.update_recipe("portionen", servings=5)
+    expect_valueerror(core_shopping.shopping_add_recipe, "portionen", 6,
+                      preview["recipe_revision"])
+    preview = core_shopping.shopping_preview_recipe("portionen", 6)
+    imported = core_shopping.shopping_add_recipe("portionen", 6, preview["recipe_revision"])
+    check([item.text for item in imported] == [line["scaled"] for line in preview["ingredients"]]
+          and all(item.source == "portionen" for item in imported),
+          "import must use exactly the reviewed lines and retain their source")
+    expect_valueerror(core_shopping.shopping_add_recipe, "portionen", 6,
+                      preview["recipe_revision"])
 
     print(f"OK - {checks} checks passed (GUSTO_HOME={core_storage.project_root()})")
 

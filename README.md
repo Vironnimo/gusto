@@ -160,10 +160,16 @@ gusto categories assign diet vegan # classify a tag through the service
 gusto categories add season "Saison" # create another ordered facet
 gusto show spaghetti-carbonara
 gusto new "Title" --tags a,b --duration 25 --servings 2
-gusto content set <slug> --file recipe.md # replace body through the server
-gusto set <slug> --title "New title" # changes metadata and Markdown H1 together
-gusto set <slug> --servings 4       # change metadata
-gusto set <slug> --clear-servings   # remove optional metadata again
+gusto show <slug> --json            # obtain the current revision
+gusto content set <slug> --file recipe.md --revision <revision>
+gusto set <slug> --title "New title" --revision <revision>
+gusto set <slug> --servings 4 --revision <revision>
+gusto set <slug> --clear-servings --revision <revision>
+gusto shopping preview-recipe <slug> --servings 4 --json
+gusto shopping add-recipe <slug> --servings 4 --revision <recipe_revision>
+gusto backup create --file backup.zip
+gusto backup preview --file backup.zip --json
+gusto backup restore --file backup.zip --token <token>
 gusto cooked <slug>                 # cooked today -> log
 gusto suggest --days 7              # suggestions for the next meal
 gusto delete <slug>                 # reversibly archive Markdown + metadata + images
@@ -191,6 +197,13 @@ gusto install-skill vbot            # install/replace ~/.vbot/skills/gusto
 gusto status                        # current-user service status
 gusto uninstall                     # interactive: app only or app + data
 ```
+
+The recipe edit examples are alternatives: read `show --json` again after each
+change and use its current `revision`. A stale revision is rejected; merge any
+concurrent changes before retrying. For adjusted shopping portions, review the
+preview warnings and use its `recipe_revision`. Review backup effects before
+restoring with the preview's `token`; restore creates a safety backup. Archives
+are limited to 64 MiB compressed, 128 MiB unpacked and 32 MiB per file.
 
 Every command takes `--json` for machine-readable output; normal remote
 commands also accept global `--server URL`, with `GUSTO_URL` as the environment

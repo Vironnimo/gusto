@@ -193,7 +193,7 @@ window.addEventListener("pageshow", (e) => {
     // unsaved input and interrupt running photo uploads. Plain view pages
     // keep reloading so external changes stay visible.
     if (path === "/"
-        || (path.startsWith("/recipe/") && !/\/(edit|images)$/.test(path))) {
+        || (path.startsWith("/recipe/") && !/\/(edit|images|shopping)$/.test(path))) {
       return new Set(["catalog", "log"]);
     }
     return new Set();

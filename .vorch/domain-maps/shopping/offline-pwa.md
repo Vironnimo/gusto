@@ -18,6 +18,8 @@ Browser client `gusto/static/shopping-client.js` and service worker `gusto/stati
 
 ## Sync loop
 
+Full-store restore creates a new generation in `data/shopping-generation.json`, owned by `gusto/core/shopping_sync.py`. Missing generation means `initial`, allowing existing stores and clients before the first restore. The browser persists its generation beside `items`; every exchange checks it under the catalog/shopping locks. A mismatch returns `{items, generation, reset:true}` without importing any submitted item. The client keeps its previous snapshot separately under `gusto.shopping.before-restore`, offers a JSON download, and adopts the restored list. If browser persistence fails, that recovery copy remains in memory and the notice asks the user to download it before closing the tab. Subsequent matching exchanges work normally. Old responses are ignored when another tab has already changed the locally stored generation.
+
 - `sync()` runs on init (an empty local state fills from the server), after each mutation, on `online`, on `shopping` events, and once more when a mutation happened during an in-flight request. It does nothing while `navigator.onLine` is false.
 - It posts all local items including tombstones; on success it accepts the server's result for unchanged submitted items and preserves items changed during the request (`mergeInto`).
 - Network failures and non-2xx responses other than 400 keep local state and retry with backoff: 2 s doubling plus up to 500 ms jitter, capped at 60 s, at most 5 attempts; success or `online` resets the budget.

@@ -1,6 +1,6 @@
 ---
 name: gusto
-description: Operate the Gusto household cookbook and shopping list. Use when the user wants meals from their saved recipes, recipe or shopping changes in Gusto, or help with its installation, service, or bundled vBot skill.
+description: Operate Gusto's cookbook, shopping list, and backups. Use when the user wants meals from saved recipes, recipe or shopping changes, Gusto backup or restore, or help with its installation, service, or bundled vBot skill.
 ---
 
 # Gusto
@@ -63,11 +63,10 @@ cooking entries, or the relevant list/show command.
 Server file cleanup can fail after a saved write and return the same uncertainty flag.
 Read-only calls and documented idempotent operations can be retried.
 
-Successful mutations normally return the resulting object or a confirmation.
-Use that result; run `check` for an integrity diagnosis or a reported integrity
-problem, not after every successful edit. An `edit` or `new --edit` failure can
-leave the recipe created and a local copy at `recovery_path`. Read `show` before
-uploading that copy with `content set <slug> --file <recovery_path> --json`.
+Use the result of a successful mutation; run `check` for an integrity diagnosis,
+not after every edit. An `edit` or `new --edit` failure can
+leave the recipe created and a local copy at `recovery_path`. Read `show`, merge
+any concurrent changes, then upload the copy with `content set --revision`.
 `retained_path` after success means the upload succeeded but local cleanup failed.
 
 ## Act within the request
@@ -89,10 +88,9 @@ uploading that copy with `content set <slug> --file <recovery_path> --json`.
   the vBot copy replaces `~/.vbot/skills/gusto`; it is a separate requested
   action, even after an app update.
 
-Read-only calls can run in parallel. The server serializes writes sharing a
-store, so independent adds, image uploads, and item-specific checks can run in
-parallel. Keep dependencies and ordering sequential: create before using its
-returned id, and do not race reorder/remove/cover with changes to that collection.
+Read-only calls and independent adds, uploads, and item-specific checks can run
+in parallel. Create before using its id; do not race reorder/remove/cover with
+changes to that collection.
 
 ## Common goals
 
@@ -103,10 +101,9 @@ returned id, and do not race reorder/remove/cover with changes to that collectio
    ingredients: `gusto search "haehnchen paprika" --match any --json` searches
    title, tags, and all recipe text. A match mentions an ingredient; it does not
    prove the user has everything required. Read `show` for the chosen candidates.
-3. Return 2–3 choices when available, with a reason based on variety and the
-   user's constraints. `suggest` is a simple ordering, not a dietary judgment.
-   A positive `--max-time` excludes unknown durations. Log JSON is oldest-first;
-   compare `date` values when deciding what was cooked recently.
+3. Return 2–3 choices when available, with reasons based on variety and the
+   user's constraints. `suggest` is not a dietary judgment. A positive
+   `--max-time` excludes unknown durations. Log JSON is oldest-first.
 
 Tags are facets: repeated `--tag` values are OR within a category and AND across
 categories. `gusto tags --json` shows used facets; `--all` shows all configured
@@ -120,16 +117,18 @@ first catalog spelling for an unassigned tag.
    `show`; update when requested, otherwise explain the match before replacing it.
 2. For a new recipe, run `gusto new "<title>" --json` and use the returned slug.
    Add `--tags`, `--duration` (minutes), or `--servings` only for known values.
-   For existing metadata use `gusto set <slug> ... --json`: `--title` also
-   rewrites the Markdown H1, `--tags` replaces all tags, and `--clear-duration`
-   or `--clear-servings` removes the respective value.
-3. For an existing body, read `show` to obtain the content to preserve. Prepare
-   the complete replacement in a local UTF-8 file and run
-   `gusto content set <slug> --file <path> --json`. Preserve existing content
+   Before preparing metadata changes, read `show --json` and use its revision
+   with `gusto set <slug> --revision <revision> ... --json`.
+   `--title` rewrites H1; `--tags` replaces tags; `--clear-duration` and
+   `--clear-servings` remove values.
+3. For body changes, read `show --json` for content and `revision`, including after `new`.
+   Prepare the complete replacement in a local UTF-8 file and run
+   `gusto content set <slug> --file <path> --revision <revision> --json`. Preserve existing content
    outside the requested edit. Use `# <title>`, `## Zutaten` with bullets, and
    `## Zubereitung` with numbered steps, without frontmatter. Gusto rewrites
    the first H1 from stored metadata. UTF-8 stdin is another input option;
    `gusto edit <slug>` is for an interactive human editor.
+   On a revision conflict, read `show` again and merge changes before retrying.
 4. For supplied images, inspect them and attach each useful one with
    `gusto image add <slug> <path> --role <purpose> --caption "<description>" --json`.
    Gusto owns a copy. The first image becomes the cover; `--cover` on add or
@@ -164,6 +163,8 @@ first catalog spelling for an unassigned tag.
    items remain, including checked items and `shopping add --source <slug>`.
    Both ingredient import and new `--source` attribution require an active recipe.
    Report the existing import instead of clearing it to bypass the guard.
+   For adjusted portions, use `shopping preview-recipe`, review warnings, then
+   `shopping add-recipe` with the same `--servings` and preview `--revision`.
 3. Set explicit states with `shopping check <id>` or `shopping uncheck <id>`.
    Repeating the same state is idempotent. Remove one with `shopping remove
    <id>`, bought items with `shopping remove-done`, or all with `shopping clear`.
@@ -193,7 +194,9 @@ Do not propose or build MCP for Gusto.
 
 `references/cli.md` lists every command, flag, and JSON shape; read the relevant
 section for less common operations (`categories`, `image`, `favorites`,
-`archive`, or diagnostics). Run `gusto <command> --help` for the installed
+`archive`, backup or diagnostics). Restore a backup only on explicit request:
+preview it and review effects before `backup restore` with its token.
+Run `gusto <command> --help` for the installed
 version's arguments. Read `references/installation.md` for app lifecycle,
 explicit offline recovery, or `gusto install-skill vbot --json` host delivery.
 

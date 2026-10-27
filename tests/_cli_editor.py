@@ -34,7 +34,7 @@ def check_edit_readback_contract():
     from _cli_support import invoke
 
     with patch.object(cli.client, "command", return_value={
-        "slug": "edit-readback", "content": "# Ok\n",
+        "slug": "edit-readback", "content": "# Ok\n", "revision": "rev",
     }) as command, patch.object(editor_cli.tempfile, "NamedTemporaryFile",
                                  side_effect=OSError("scratch unavailable")):
         result = invoke(["edit", "edit-readback", "--json"])
@@ -46,7 +46,7 @@ def check_edit_readback_contract():
 
     with patch.object(editor_cli, "_open_editor", side_effect=non_utf8_editor):
         with patch.object(cli.client, "command", return_value={
-            "slug": "edit-readback", "content": "# Ok\n",
+            "slug": "edit-readback", "content": "# Ok\n", "revision": "rev",
         }) as command:
             result = invoke(["edit", "edit-readback", "--json"])
     payload = json.loads(result.stdout)
@@ -62,6 +62,21 @@ def check_edit_readback_contract():
           "invalid editor encoding must retain the exact local recovery bytes and path")
     for path in edited_paths:
         path.unlink()
+
+    from gusto import client
+    with patch.object(editor_cli, "_open_editor", side_effect=non_utf8_editor), \
+            patch.object(editor_cli, "_read_content_file", return_value="# Edited\n"), \
+            patch.object(cli.client, "command", side_effect=[
+                {"slug": "edit-readback", "content": "# Ok\n", "revision": "old"},
+                client.ClientError("changed"),
+            ]) as command:
+        result = invoke(["edit", "edit-readback", "--json"])
+    payload = json.loads(result.stdout)
+    check(result.returncode == 1 and payload["recovery_path"] == str(edited_paths[-1])
+          and command.call_args.args[1]["revision"] == "old"
+          and edited_paths[-1].is_file(),
+          "editor conflict must retain the local copy and forward the read revision")
+    edited_paths[-1].unlink()
 
 
 def check_edit_cleanup_failure():
@@ -85,14 +100,14 @@ def check_edit_cleanup_failure():
 
     for plain in (False, True):
         with patch.object(cli.client, "command", side_effect=[
-            {"slug": "cleanup", "content": "# Saved\n"}, {"slug": "cleanup"},
+            {"slug": "cleanup", "content": "# Saved\n", "revision": "rev"}, {"slug": "cleanup"},
         ]) as command, patch.object(editor_cli, "_open_editor", side_effect=editor), \
                 patch.object(Path, "unlink", refuse_copy_unlink):
             result = invoke(["edit", "cleanup", *([] if plain else ["--json"])])
         check(result.returncode == 0 and not result.stderr,
               "a local cleanup failure after upload must remain success")
         check(command.call_count == 2 and command.call_args.args == (
-            "recipe.content.set", {"slug": "cleanup", "content": content}),
+            "recipe.content.set", {"slug": "cleanup", "content": content, "revision": "rev"}),
             "cleanup failure must not replay an accepted upload")
         if plain:
             check(str(paths[-1]) in result.stdout and "cleanup" in result.stdout,
@@ -136,7 +151,7 @@ def check_editor_arguments_contract():
     from _cli_support import invoke
     with patch.dict(os.environ, {"EDITOR": os.fspath(executable)}), \
             patch.object(cli.client, "command", side_effect=[
-                {"slug": "bare-editor", "content": unchanged.read_text(encoding="utf-8")},
+                {"slug": "bare-editor", "content": unchanged.read_text(encoding="utf-8"), "revision": "rev"},
                 {"slug": "bare-editor"},
             ]) as command:
         bare = invoke(["edit", "bare-editor", "--json"])

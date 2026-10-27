@@ -15,6 +15,7 @@ One per-user Gusto service owns the data store and serves the browser UI, the sh
 gusto/core/catalog/  active recipes/cooking, facets/search, snapshots/archive and recipe images
 gusto/core/shopping.py, favorites.py  shopping state/sync and household preferred products
 gusto/core/storage.py, checks.py     persistence/transactions/revisions and read-only diagnostics
+gusto/core/backup.py                 verified household backup and guarded full-store restore
 gusto/api.py         versioned anonymous command API and change events over Core
 gusto/web.py         FastAPI host: mounts the API, serves templates/, static/ and the PWA
 gusto/client.py      stdlib HTTP client the CLI uses to reach the service

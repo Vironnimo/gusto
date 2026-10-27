@@ -430,6 +430,16 @@ try:
         check(edited["duration_min"] is None and edited["servings"] is None,
               "recipe edit can clear optional duration and servings")
 
+        page.goto(BASE + "/recipe/test-pfannkuchen/edit", wait_until="load")
+        page.fill("textarea[name=content]", "## Zutaten\n\n- Mein Entwurf")
+        core_recipes.update_recipe("test-pfannkuchen", content="## Zutaten\n\n- Aktueller Stand")
+        page.locator("button.btn", has_text="Speichern").click()
+        check(page.locator(".conflict-version").count() == 2
+              and "Mein Entwurf" in page.content() and "Aktueller Stand" in page.content(),
+              "stale edit preserves the draft next to the current version")
+        page.screenshot(path=str(SHOTS / "06c_edit_conflict.png"), full_page=True)
+        page.goto(BASE + "/recipe/test-pfannkuchen", wait_until="load")
+
         # Archive preserves the complete recipe and restore returns it intact.
         page.locator(".recipe-more summary").click()
         page.locator("button.btn-text", has_text="Archivieren").click()
@@ -508,9 +518,12 @@ try:
         page.goto(BASE, wait_until="load")
         check(page.locator(".nav a", has_text="Einkauf").count() >= 1, "nav link to the shopping list")
 
-        # Put a recipe's ingredients onto the list (server form on the recipe page)
+        # Put a recipe's reviewed ingredients onto the list.
         page.goto(BASE + "/recipe/spaghetti-carbonara", wait_until="load")
-        page.locator("form[action$='/shopping'] button").click()
+        page.locator("a[href$='/shopping']", has_text="Zutaten einkaufen").click()
+        check(page.locator(".preview-ingredients li").count() == 6,
+              "recipe import shows the ingredients before adding them")
+        page.locator("form[action$='/shopping'] button", has_text="zur Einkaufsliste hinzufügen").click()
         page.wait_for_load_state("load")
         check(page.url.endswith("/shopping"), "button leads to /shopping")
         page.wait_for_function("() => document.querySelectorAll('#shop-client .shop-item').length === 6")
@@ -521,7 +534,8 @@ try:
 
         # A repeated recipe import must explain the no-op and keep the list stable.
         page.goto(BASE + "/recipe/spaghetti-carbonara", wait_until="load")
-        page.locator("form[action$='/shopping'] button").click()
+        page.locator("a[href$='/shopping']", has_text="Zutaten einkaufen").click()
+        page.locator("form[action$='/shopping'] button", has_text="zur Einkaufsliste hinzufügen").click()
         page.wait_for_load_state("load")
         check(page.url.startswith(BASE + "/recipe/spaghetti-carbonara?error="),
               "duplicate recipe import returns to the recipe with context")
@@ -871,6 +885,29 @@ try:
                 capture_output=True,
             )
         live_page.close()
+
+        # Backup preview and restore stay usable without JavaScript.
+        backup_context = browser.new_context(java_script_enabled=False,
+                                             viewport={"width": 320, "height": 720})
+        backup_page = backup_context.new_page()
+        backup_page.goto(BASE + "/backup", wait_until="domcontentloaded")
+        with backup_page.expect_download() as backup_download:
+            backup_page.get_by_role("link", name="Sicherung herunterladen").click()
+        backup_path = TESTDATA / "downloaded-backup.zip"
+        backup_download.value.save_as(backup_path)
+        backup_page.locator("form[action='/backup/preview'] input[type=file]").set_input_files(backup_path)
+        backup_page.locator("form[action='/backup/preview'] button").click()
+        check(backup_page.locator(".backup-preview").count() == 1,
+              "no-JS: backup preview presents replacement effects")
+        check(backup_page.evaluate("() => document.documentElement.scrollWidth <= innerWidth"),
+              "320px: backup confirmation fits the viewport")
+        backup_page.screenshot(path=str(SHOTS / "15_backup_preview.png"), full_page=True)
+        backup_page.locator("form[action='/backup/restore'] input[type=file]").set_input_files(backup_path)
+        backup_page.locator("form[action='/backup/restore'] input[type=checkbox]").check()
+        backup_page.locator("form[action='/backup/restore'] button").click()
+        check(backup_page.locator("a[href^='/backup/safety/']").count() == 1,
+              "no-JS: confirmed restore exposes the pre-restore safety backup")
+        backup_context.close()
 
         browser.close()
 finally:

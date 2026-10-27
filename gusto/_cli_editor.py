@@ -20,8 +20,9 @@ class EditError(client.ClientError):
     def __init__(self, error: Exception, *, slug: str, path: Path):
         super().__init__(
             f"{error} Lokale Rezeptkopie bleibt erhalten: '{path}'. "
-            f"Prüfe zuerst 'show {slug}' auf demselben Server; zum Fortsetzen "
-            f"nutze 'content set {slug}' mit --file und diesem Dateipfad.",
+            f"Lies 'show {slug} --json' auf demselben Server und führe Änderungen "
+            f"zusammen; nutze dann 'content set {slug}' mit --file, diesem "
+            "Dateipfad und --revision aus show.",
             outcome_unknown=getattr(error, "outcome_unknown", False),
         )
         self.slug = slug
@@ -116,7 +117,8 @@ def _edit_remote(args, slug: str) -> dict:
                 f"Bearbeiteter Rezepttext konnte nicht gelesen werden: {error}"
             ) from error
         remote(
-            args, "recipe.content.set", {"slug": slug, "content": content},
+            args, "recipe.content.set", {"slug": slug, "content": content,
+                                         "revision": recipe["revision"]},
         )
     except (OSError, ValueError) as error:
         if temporary.is_file():
@@ -159,7 +161,8 @@ def cmd_content_set(args):
                 f"Rezeptdatei '{args.file}' konnte nicht gelesen werden: {error}"
             ) from error
     recipe = remote(
-        args, "recipe.content.set", {"slug": args.slug, "content": content},
+        args, "recipe.content.set", {"slug": args.slug, "content": content,
+                                     "revision": args.revision},
     )
     if args.json:
         dump(recipe)
@@ -181,6 +184,7 @@ def register_commands(sub, base) -> None:
         help="Gesamten Rezeptinhalt ersetzen; die erste Zeile wird als gespeicherter Titel gesetzt.",
     )
     cp.add_argument("slug", help="Rezept-Slug aus list oder search. Titel ändern: set --title.")
+    cp.add_argument("--revision", required=True, help="Revision aus show --json; bei Konflikt Inhalt erneut lesen und Änderungen zusammenführen.")
     source = cp.add_mutually_exclusive_group(required=True)
     source.add_argument("--file", help="Lokale Markdown-Datei: UTF-8, auch mit BOM, oder UTF-16 mit BOM. Datei bleibt erhalten.")
     source.add_argument(

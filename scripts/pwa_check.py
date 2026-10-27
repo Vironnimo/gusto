@@ -48,6 +48,7 @@ BASE = f"http://127.0.0.1:{PORT}"
 # --- fresh throwaway data ---
 shutil.copytree(ROOT / "recipes", TESTDATA / "recipes")
 shutil.copytree(ROOT / "data", TESTDATA / "data")
+shutil.copytree(ROOT / "images", TESTDATA / "images")
 os.environ["GUSTO_HOME"] = str(TESTDATA)
 import gusto.core.favorites as core_favorites  # noqa: E402
 import gusto.core.records as core_records  # noqa: E402
@@ -383,7 +384,8 @@ try:
         check(pg.locator("#favorite-sheet .favorite-product-card").count() == 1,
               "preferred products: ranked card opens online")
         check(pg.locator("#favorite-sheet .favorite-product-card img").evaluate(
-            "img => img.complete && img.naturalWidth > 0"),
+            "async img => { try { await img.decode(); return img.naturalWidth > 0; }"
+            " catch (error) { return false; } }"),
             "preferred products: product image loads online")
         pg.locator("#favorite-sheet .favorite-sheet-close").click()
 
@@ -454,9 +456,13 @@ try:
               "render survivor: half-typed text survives the re-render")
 
         page.evaluate("window.catalogDraftSurvived = true")
+        recipe_snapshot = page.request.post(BASE + "/api/v1/command", data={
+            "operation": "recipe.show", "arguments": {"slug": "rotes-linsen-dal"},
+        }).json()["result"]
         rename = page.request.post(BASE + "/api/v1/command", data={
             "operation": "recipe.update",
-            "arguments": {"slug": "rotes-linsen-dal", "title": "Dal vom anderen Gerät"},
+            "arguments": {"slug": "rotes-linsen-dal", "title": "Dal vom anderen Gerät",
+                          "revision": recipe_snapshot["revision"]},
         })
         check(rename.ok, "catalog live: foreign recipe rename succeeds")
         page.wait_for_function(
@@ -813,6 +819,72 @@ try:
         check(state["calls"] == 7, "backoff: online resets the exhausted budget and synchronizes again")
         page.clock.run_for(0)
         page.clock.resume()
+        drain_and_close(ctx)
+
+        # A restore must not be undone by an offline device reconnecting. Keep
+        # that device's unsent entries available as a separate download.
+        from gusto.core import backup
+
+        reset_shopping()
+        seed_shopping([mk("Aus Sicherung", past_iso())])
+        archive = backup.create_backup()
+        ctx = new_context(browser, viewport={"width": 390, "height": 844})
+        page = ctx.new_page()
+        page.goto(BASE + "/shopping", wait_until="load")
+        check(wait_item_once(page, "Aus Sicherung"), "restore: device has the original list")
+        page.wait_for_function("() => window.gustoProbe.pending === 0")
+        ctx.set_offline(True)
+        page.locator("#shop-client .shop-add-panel summary").click()
+        page.fill("#shop-client input[name=text]", "Alte Offline-Notiz")
+        page.locator("#shop-client form.shop-add button").click()
+        preview = backup.preview_restore(archive)
+        backup.restore_backup(archive, preview["token"])
+        ctx.set_offline(False)
+        page.wait_for_selector("#shop-restore-notice")
+        page.wait_for_function("() => window.gustoProbe.pending === 0")
+        check([entry["text"] for entry in api_get()] == ["Aus Sicherung"]
+              and page.locator("#shop-client .shop-text", has_text="Alte Offline-Notiz").count() == 0,
+              "restore: reconnect does not upload old offline changes")
+        check(page.evaluate("JSON.parse(localStorage.getItem('gusto.shopping.before-restore'))"
+                            ".some(snapshot => snapshot.items.some(item => item.text === 'Alte Offline-Notiz'))"),
+              "restore: the previous local snapshot is retained separately")
+        with page.expect_download() as exported:
+            page.get_by_role("button", name="Vorherige lokale Listen herunterladen").click()
+        check("Alte Offline-Notiz" in Path(exported.value.path()).read_text(encoding="utf-8"),
+              "restore: the user can recover the previous local list through a download")
+        page.screenshot(path=str(TESTDATA / "restore-shopping-mobile.png"), full_page=True)
+        drain_and_close(ctx)
+
+        # A late success from before a restore cannot move a shared browser
+        # store back to its previous generation or erase another tab's draft.
+        ctx = new_context(browser, service_workers="block")
+        ctx.route("**/api/v1/events?*", lambda route: route.abort())
+        before_restore = core_shopping.shopping_exchange([])
+        ctx.add_init_script("localStorage.setItem('gusto.shopping', "
+                            + json.dumps(json.dumps(before_restore)) + ");")
+        page = ctx.new_page()
+        held_restore = {}
+
+        def hold_before_restore(route):
+            if "response" not in held_restore:
+                held_restore["response"] = route.fetch()
+                held_restore["route"] = route
+            else:
+                route.continue_()
+
+        page.route("**/api/shopping/sync", hold_before_restore)
+        page.goto(BASE + "/shopping", wait_until="load")
+        preview = backup.preview_restore(archive)
+        backup.restore_backup(archive, preview["token"])
+        current = core_shopping.shopping_exchange([])
+        current["items"].append(mk("Neuer Entwurf", now_iso()))
+        page.evaluate("state => localStorage.setItem('gusto.shopping', JSON.stringify(state))", current)
+        held_restore["route"].fulfill(response=held_restore["response"])
+        check(wait_item_once(page, "Neuer Entwurf")
+              and wait_server(lambda items: any(i["text"] == "Neuer Entwurf" for i in items)),
+              "restore: late response preserves another tab's new-generation draft")
+        check(page.evaluate("JSON.parse(localStorage.getItem('gusto.shopping')).generation")
+              == current["generation"], "restore: late response cannot reverse the generation")
         drain_and_close(ctx)
 
         browser.close()
