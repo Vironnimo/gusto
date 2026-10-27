@@ -83,21 +83,21 @@ Store trips: Gusto persists no store layout or walking route (user decision 2026
 ## Sync Contract
 
 Wire details: `docs/sync-kontrakt.md`. Invariants every shopping change keeps:
-- Merge per id: the later valid `updated_at` wins; on a tie the receiving side keeps its version; ids present on one side only are kept, so a missing item never means deletion. Every exchange sends and returns the full state including tombstones.
-- Timestamps: new values are UTC `YYYY-MM-DDTHH:MM:SS.sssZ`; legacy second precision stays valid. Values compare as instants; a valid value beats a malformed one; two malformed values compare as strings; UTC-conversion overflow counts as malformed. The browser's `isNewer` mirrors Core's `_version_key`.
+- Server merge per id: the later valid `updated_at` wins; on a tie the server keeps its version; ids present on one side only are kept, so a missing item never means deletion. Every exchange sends and returns the full state including tombstones.
+- Timestamps: new values are UTC `YYYY-MM-DDTHH:MM:SS.sssZ`; legacy second precision stays valid. Core compares values as instants; a valid value beats a malformed one; two malformed values compare as strings; UTC-conversion overflow counts as malformed.
 - Every state change of an item sets `updated_at` at least 1 ms after its previous value (Core `_now_iso(previous)`, browser `nowIso(previous)`), comparing at the persisted millisecond precision so same-millisecond changes still advance.
 - Remote items must be objects with non-empty string `id` and `text`, string `quantity` (default empty), present boolean `checked` and `deleted`, non-empty string timestamps, and `source` string or null (default null). Unlike normal additions, stored and synced text/quantity are not checked for newlines. A winning version whose timestamp cannot advance another millisecond is invalid too.
 - A winning visible item's `source` must name an active or archived recipe; tombstones and losing versions are not validated, so purged slugs survive in tombstones.
 - Any invalid item rejects the whole merge before saving (HTTP 400 on the sync endpoint).
 - A merge without a winning or new item saves nothing and publishes no event; an empty first sync creates no file.
-- Clients merge a response into their current local state, never overwrite it, and sync again when the list changed during a request.
+- Clients accept the server's result for submitted items unchanged during the request, preserve in-flight local edits and additions, and sync again when the list changed during a request.
 
 ## Conventions
 
 - New shopping behavior goes into Core, then the command API and CLI with `--json`, then web and PWA (`.vorch/PROJECT.md` -> Architecture). The PWA is the only offline writer; the CLI never queues offline work.
 - A list mutation is one load-modify-save transaction under its lock: it advances `updated_at` per changed item, tombstones instead of deleting, and skips the save when nothing changed. `shopping_save` and `favorites_save` replace the whole state and exist for tests; product code must not apply mutations through them.
 - User-visible messages and errors are German; error strings reach agents through the CLI JSON error contract.
-- Contract changes update together: Core, `shopping-client.js` (it duplicates normalization, timestamp and merge rules), the matching `docs/` contract, and the skill's shopping sections (`SKILL.md`, `references/cli.md`, `shopping-trip.md`, `telegram.md`; owner `cli.md`).
+- Contract changes update together: Core, `shopping-client.js` (it duplicates normalization and timestamp advancement), the matching `docs/` contract, and the skill's shopping sections (`SKILL.md`, `references/cli.md`, `shopping-trip.md`, `telegram.md`; owner `cli.md`).
 - Tests owned here: `tests/test_shopping.py` (list rules, ingredient parsing, data validation), `tests/test_favorites.py` (needs, aliases, matching, store narrowing, product images, their events), `tests/test_merge.py` (merge and timestamps), `scripts/pwa_check.py` (Chromium: sync API, offline use, two devices, live events, product-image cache, manifest, service worker). Related elsewhere: `tests/test_api.py` (command cases and revisions), `tests/test_concurrency.py` (parallel adds and merges), `tests/test_cli.py` (commands and help), `scripts/browser_check.py` (no-JS `/shopping`).
 
 ## External Dependencies

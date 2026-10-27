@@ -86,28 +86,76 @@
     return null;
   }
 
+  // Parse legacy ISO calendar/week dates as well as the extended form emitted
+  // by Gusto. Date.parse alone rejects basic and week dates accepted by Core.
+  // Return milliseconds plus the remaining microseconds for rounding up.
+  function parseSyncInstant(value) {
+    var dateMatch = /^(\d{4})(?:-(\d\d)-(\d\d)|(\d\d)(\d\d)|-W(\d\d)(?:-(\d))?|W(\d\d)(\d)?)(?:[\s\S](.+))?$/.exec(value || "");
+    if (!dateMatch) return null;
+    var year = Number(dateMatch[1]);
+    if (!year) return null;
+    var date = new Date(0);
+    date.setUTCHours(0, 0, 0, 0);
+    if (dateMatch[6] || dateMatch[8]) {
+      var week = Number(dateMatch[6] || dateMatch[8]);
+      var weekday = Number(dateMatch[7] || dateMatch[9] || 1);
+      if (week < 1 || week > 53 || weekday < 1 || weekday > 7) return null;
+      date.setUTCFullYear(year, 0, 4);
+      var mondayOffset = (date.getUTCDay() + 6) % 7;
+      date.setUTCDate(date.getUTCDate() - mondayOffset + (week - 1) * 7 + weekday - 1);
+      var thursday = new Date(date.getTime());
+      thursday.setUTCDate(thursday.getUTCDate() + 4 - weekday);
+      if (thursday.getUTCFullYear() !== year) return null;
+    } else {
+      var month = Number(dateMatch[2] || dateMatch[4]);
+      var day = Number(dateMatch[3] || dateMatch[5]);
+      date.setUTCFullYear(year, month - 1, day);
+      if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 ||
+          date.getUTCDate() !== day) return null;
+    }
+    var time = dateMatch[10];
+    if (!time) return { ms: date.getTime(), micros: 0 };
+    var parts = /^(\d\d)(?::?(\d\d))?(?::?(\d\d))?(?:[.,](\d+))?(Z|[+-]\d\d(?::?\d\d(?::?\d\d(?:[.,]\d+)?)?)?)?$/.exec(time);
+    if (!parts) return null;
+    if ((parts[4] && !parts[3]) || (parts[3] &&
+        !/^(?:\d{6}|\d\d:\d\d:\d\d)/.test(time))) return null;
+    var hours = Number(parts[1]), minutes = Number(parts[2] || 0), seconds = Number(parts[3] || 0);
+    if (hours > 23 || minutes > 59 || seconds > 59) return null;
+    var fraction = Number(((parts[4] || "") + "000000").slice(0, 6));
+    var micros = ((hours * 60 + minutes) * 60 + seconds) * 1000000 + fraction;
+    var zone = parts[5];
+    if (zone && zone !== "Z") {
+      var offset = /^(\d\d)(?::?(\d\d))?(?::?(\d\d))?(?:[.,](\d+))?$/.exec(zone.slice(1));
+      if ((offset[4] && !offset[3]) || (offset[3] &&
+          !/^(?:\d{6}|\d\d:\d\d:\d\d)/.test(zone.slice(1)))) return null;
+      var offsetHours = Number(offset[1]), offsetMinutes = Number(offset[2] || 0);
+      var offsetSeconds = Number(offset[3] || 0);
+      var offsetFraction = Number(((offset[4] || "") + "000000").slice(0, 6));
+      var offsetWholeSeconds = (offsetHours * 60 + offsetMinutes) * 60 + offsetSeconds;
+      // Python normalizes oversized offset minutes/seconds, but ignores a
+      // fractional offset when the whole offset is zero.
+      var offsetMicros = offsetWholeSeconds * 1000000 + (offsetWholeSeconds ? offsetFraction : 0);
+      if (offsetMicros >= 86400 * 1000000) return null;
+      micros += zone[0] === "+" ? -offsetMicros : offsetMicros;
+    }
+    var ms = date.getTime() + Math.floor(micros / 1000);
+    var min = new Date("0001-01-01T00:00:00.000Z").getTime();
+    var max = new Date("9999-12-31T23:59:59.999Z").getTime();
+    if (ms < min || ms > max) return null;
+    return { ms: ms, micros: ((micros % 1000) + 1000) % 1000 };
+  }
+
   // Server-compatible timestamp: UTC with milliseconds and a literal Z.
   // For repeated changes to one item, always advance by at least 1 ms so an
   // immediate add-then-toggle cannot produce an ambiguous sync version.
   function nowIso(after) {
     var now = Date.now();
-    var previous = Date.parse(after || "");
-    if (!isNaN(previous) && now <= previous) now = previous + 1;
-    return new Date(now).toISOString();
-  }
-
-  function isNewer(candidate, current) {
-    var candidateMs = Date.parse(candidate || "");
-    var currentMs = Date.parse(current || "");
-    if (!isNaN(candidateMs) && !isNaN(currentMs)) {
-      return candidateMs > currentMs;
+    var previous = parseSyncInstant(after);
+    if (previous) {
+      var minimum = previous.ms + (previous.micros ? 2 : 1);
+      if (now < minimum) now = minimum;
     }
-    // Same ranking as the server's _version_key: a valid timestamp always
-    // beats a malformed legacy value; only two malformed values fall back to
-    // a lexicographic comparison.
-    if (!isNaN(candidateMs)) return true;
-    if (!isNaN(currentMs)) return false;
-    return (candidate || "") > (current || "");
+    return new Date(now).toISOString();
   }
 
   // New unique item id. crypto.randomUUID exists only in secure contexts;
@@ -830,21 +878,33 @@
     }, delay);
   }
 
-  // Merge the server response into the CURRENT local state -- same rule as the
-  // server (per id the larger updated_at wins). This way a sync response does
-  // not overwrite local changes made during the in-flight request (otherwise
-  // fast clicks would be lost).
-  function mergeInto(local, incoming) {
-    // IDs are opaque strings; names such as "__proto__" must be ordinary keys.
+  // The server has already compared the submitted versions using its exact
+  // timestamp rules. Accept its result unless this device changed that item
+  // during the request; those edits stay local and need another exchange.
+  function mergeInto(local, incoming, submitted) {
     var byId = Object.create(null);
+    var sentById = Object.create(null);
+    var changedDuringRequest = false;
+    submitted.forEach(function (it) { sentById[it.id] = JSON.stringify(it); });
     local.forEach(function (it) { byId[it.id] = it; });
     incoming.forEach(function (rem) {
       var cur = byId[rem.id];
-      if (!cur || isNewer(rem.updated_at, cur.updated_at)) {
+      if (!cur || (sentById[rem.id] !== undefined &&
+                   JSON.stringify(cur) === sentById[rem.id])) {
         byId[rem.id] = rem;
+      } else {
+        changedDuringRequest = true;
       }
     });
-    return Object.keys(byId).map(function (k) { return byId[k]; });
+    local.forEach(function (it) {
+      if (sentById[it.id] === undefined || JSON.stringify(it) !== sentById[it.id]) {
+        changedDuringRequest = true;
+      }
+    });
+    return {
+      items: Object.keys(byId).map(function (k) { return byId[k]; }),
+      changedDuringRequest: changedDuringRequest,
+    };
   }
 
   function sync() {
@@ -854,6 +914,7 @@
     // A rejected full state cannot succeed unchanged. Keep it locally and
     // let an actual list change unblock sync, including an in-flight edit.
     if (payload === rejectedPayload) return;
+    var submitted = JSON.parse(payload).items;
     syncing = true;
     pending = false;
 
@@ -879,8 +940,9 @@
         rejectedPayload = null;
         syncRejection = "";
         var incoming = data && Array.isArray(data.items) ? data.items : [];
-        // merge against the CURRENT state, do not blindly overwrite.
-        saveItems(mergeInto(loadItems(), incoming));
+        var merged = mergeInto(loadItems(), incoming, submitted);
+        saveItems(merged.items);
+        if (merged.changedDuringRequest) pending = true;
         render();
       })
       .catch(function (error) {

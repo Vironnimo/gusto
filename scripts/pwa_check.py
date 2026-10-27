@@ -544,6 +544,50 @@ try:
               "malformed local timestamp loses to valid server timestamp")
         drain_and_close(ctx)
 
+        # The server's comparison is authoritative even when Date.parse
+        # truncates a fraction, parses malformed text, or sees an equal version.
+        for label, local_time, server_time in (
+            ("sub-millisecond", "2099-01-01T00:00:00.123100Z", "2099-01-01T00:00:00.123900Z"),
+            ("date-like malformed", "0", "1990-01-01T00:00:00Z"),
+            ("equal version", past_iso(), past_iso()),
+        ):
+            reset_shopping()
+            local = itm(local_time, id="precision", text="local")
+            remote = itm(server_time, id="precision", text="server")
+            seed_shopping([remote])
+            ctx = new_context(browser, service_workers="block")
+            ctx.route("**/api/v1/events?*", lambda route: route.abort())
+            ctx.add_init_script("localStorage.setItem('gusto.shopping', "
+                                + json.dumps(json.dumps({"items": [local]})) + ");")
+            page = ctx.new_page()
+            page.goto(BASE + "/shopping", wait_until="load")
+            check(wait_item_once(page, "server"),
+                  f"server comparison: {label} converges to the server winner")
+            drain_and_close(ctx)
+
+        for label, version, minimum in (
+            ("basic", "20990101T000000Z", "2099-01-01T00:00:00.001Z"),
+            ("week date", "2099-W01-1T00:00:00Z", "2098-12-29T00:00:00.001Z"),
+            ("sub-millisecond", "2099-01-01T00:00:00.123900Z", "2099-01-01T00:00:00.125Z"),
+            ("offset", "2099-01-01T00:00:00+01:30:30.2", "2098-12-31T22:29:29.801Z"),
+        ):
+            reset_shopping()
+            initial = itm(version, id="legacy", text="Legacy")
+            seed_shopping([initial])
+            ctx = new_context(browser, service_workers="block")
+            page = ctx.new_page()
+            page.goto(BASE + "/shopping", wait_until="load")
+            check(wait_item_once(page, "Legacy"), f"legacy {label}: item loaded")
+            page.locator("#shop-client .shop-box").click()
+            def advanced(items):
+                matching = [i for i in items if i["id"] == "legacy" and i["checked"]]
+                if not matching:
+                    return False
+                return matching[0]["updated_at"] >= minimum
+            check(wait_server(advanced),
+                  f"legacy {label}: browser edit advances and reaches the server")
+            drain_and_close(ctx)
+
         # E4: failed browser persistence must not erase the current page's
         # server snapshot or offline edits. Quota failures still allow reads
         # of a stale disk copy; blocked storage fails both reads and writes.
@@ -677,10 +721,11 @@ try:
         # while it is held must survive, then travel in a follow-up request.
         reset_shopping()
         initial = mk("Bestand", past_iso())
-        seed_shopping([initial])
+        removable = mk("Entfernen", past_iso())
+        seed_shopping([initial, removable])
         ctx = new_context(browser, service_workers="block")
         ctx.add_init_script("localStorage.setItem('gusto.shopping', "
-                            + json.dumps(json.dumps({"items": [initial]})) + ");")
+                            + json.dumps(json.dumps({"items": [initial, removable]})) + ");")
         ctx.route("**/api/v1/events?*", lambda route: route.abort())
         held = {}
         requests = []
@@ -698,16 +743,18 @@ try:
         page.goto(BASE + "/shopping", wait_until="load")
         check(wait_item_once(page, "Bestand") and "response" in held,
               "in-flight edit: the initial sync reply is held after server completion")
-        page.locator("#shop-client .shop-box").click()
+        page.locator("#shop-client .shop-item", has_text="Bestand").locator(".shop-box").click()
+        page.locator("#shop-client .shop-item", has_text="Entfernen").locator(".shop-x").click()
         page.locator("#shop-client .shop-add-panel summary").click()
         page.fill("#shop-client input[name=text]", "Während der Anfrage")
         page.locator("#shop-client form.shop-add button").click()
         check(len(requests) == 1, "in-flight edit: local changes coalesce behind the pending request")
         held["route"].fulfill(response=held["response"])
         page.wait_for_function("() => window.gustoProbe.pending === 0")
-        check(wait_server(lambda items: len(items) == 2
-                          and any(i["id"] == initial["id"] and i["checked"] for i in items)),
-              "in-flight edit: old response preserves the newer toggle and addition on the server")
+        check(wait_server(lambda items: len(items) == 3
+                          and any(i["id"] == initial["id"] and i["checked"] for i in items)
+                          and any(i["id"] == removable["id"] and i["deleted"] for i in items)),
+              "in-flight edit: old response preserves toggle, removal and addition on the server")
         check(len(requests) == 2 and wait_item_once(page, "Während der Anfrage")
               and page.locator("#shop-client .shop-group-done .shop-item").count() == 1,
               "in-flight edit: exactly one follow-up synchronizes the current local state")
