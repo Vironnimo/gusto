@@ -70,8 +70,15 @@ def default_settings_path(
 
 def _normalize_server_url(value: str, *, source: str) -> str:
     value = value.strip().rstrip("/")
-    parsed = parse.urlsplit(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    try:
+        parsed = parse.urlsplit(value)
+        valid = (parsed.scheme in {"http", "https"} and bool(parsed.hostname)
+                 and (parsed.port is None or parsed.port > 0)
+                 and all(ord(character) > 32 and ord(character) != 127
+                         for character in value))
+    except ValueError:
+        valid = False
+    if not valid:
         raise ClientError(
             f"Ungültige Gusto-Server-URL aus {source}: '{value}'. "
             "Erwartet wird http://… oder https://…"
@@ -108,7 +115,7 @@ def resolve_server_url(
     if path.is_file():
         try:
             settings = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ClientError(
                 f"Ungültige Gusto-Settings in '{path}': {exc}"
             ) from exc

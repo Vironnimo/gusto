@@ -44,6 +44,9 @@ from the request or earlier command results, including returned slugs and ids.
 
 Global `--server http://host:port` overrides `GUSTO_URL`, instance settings,
 then loopback. `home` combines local diagnosis with selected-server health.
+Missing hosts, invalid ports, embedded whitespace or control characters in a
+server URL, and non-UTF-8 settings fail before a request; correct the reported
+configuration source.
 `serve`, `status`, `start`, `stop`, `restart`, `update`, `uninstall`,
 `install-skill`, and explicit `check --offline` act on the CLI machine;
 `--server` does not redirect them to a remote host.

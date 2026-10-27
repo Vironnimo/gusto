@@ -50,6 +50,26 @@ def check_client_contract():
               "an empty --server must fail instead of falling through")
     else:
         raise AssertionError("an empty --server value was silently ignored")
+    for invalid in ("http://[", "http://:123", "http://example.com:abc",
+                    "http://example.com:99999", "http://example.com:0",
+                    "http://bad host", "http://bad\nhost"):
+        with patch.object(client, "_request_json") as send:
+            try:
+                client.command("shopping.add", {"text": "Milch"}, server_url=invalid)
+            except client.ClientError as error:
+                check(not error.outcome_unknown and not send.called,
+                      "invalid server URLs must fail definitively before sending")
+            else:
+                raise AssertionError(f"invalid server URL accepted: {invalid}")
+    invalid_settings = HOME / "invalid-utf8-settings.json"
+    invalid_settings.write_bytes(b"\xff")
+    try:
+        client.resolve_server_url(environ={}, settings_path=invalid_settings)
+    except client.ClientError as error:
+        check(str(invalid_settings) in str(error) and not error.outcome_unknown,
+              "invalid settings encoding must identify the file as a definite failure")
+    else:
+        raise AssertionError("invalid settings encoding was accepted")
     check(
         client.resolve_server_url(
             environ={"GUSTO_URL": ""}, settings_path=settings,

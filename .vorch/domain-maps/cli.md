@@ -108,6 +108,8 @@ classification (`service.md`), lifecycle behavior and result shapes
   JSON document. Editors that detach need their own wait flag.
 - A failure once the temporary file exists keeps it and raises `_cli_editor.EditError`
   (`slug`, `recovery_path`, inheriting `outcome_unknown` from a failed upload).
+  Failure to create that copy is a definite command error before upload and has
+  no recovery path.
   Success deletes the file; a failed delete adds `retained_path` and still
   reports success, so the upload is never repeated. A failed `new --edit` says
   that the recipe was already created.
