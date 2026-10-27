@@ -185,6 +185,45 @@ def test_return_destination_stays_local():
           "local return paths and encoded query values must survive")
 
 
+def test_favorite_creation_error_keeps_shopping_context():
+    client = TestClient(web.app, follow_redirects=False)
+    core_favorites.favorite_add_need("Bereits vorhanden")
+    alias = "2 & mehr Brötchen"
+    response = client.post("/favorites/add", data={
+        "name": "Bereits vorhanden", "alias": alias, "return_to": "/shopping",
+    })
+    location = response.headers["location"]
+    check(response.status_code == 303 and urlsplit(location).path == "/favorites/match"
+          and parse_qs(urlsplit(location).query).get("text") == [alias],
+          "failed shopping-need creation must keep the original item context")
+    page = client.get(location)
+    check(page.status_code == 200 and 'class="error"' in page.text
+          and "2 &amp; mehr Brötchen" in page.text,
+          "the original item and error must be visible for correction")
+
+
+def test_recipe_form_preserves_markdown_indentation():
+    client = TestClient(web.app, follow_redirects=False)
+    body = "    Code am Anfang\n\nText mit Zeilenumbruch  \nFortsetzung\n"
+    created = client.post("/new", data={"title": "Einrückung", "content": body})
+    check(created.status_code == 303, "a recipe with indented Markdown must save")
+    path = created.headers["location"]
+    check("<pre><code>Code am Anfang" in client.get(path).text,
+          "the first indented line must remain a Markdown code block")
+    form = client.get(path + "/edit")
+    check("    Code am Anfang" in form.text and "Zeilenumbruch  \n" in form.text,
+          "editing must keep indentation and Markdown hard-break spaces")
+    rejected = client.post(path + "/edit", data={
+        "title": "Einrückung", "duration": "invalid", "content": body,
+    })
+    check(rejected.status_code == 400 and "    Code am Anfang" in rejected.text
+          and "Zeilenumbruch  \n" in rejected.text,
+          "a validation error must retain the submitted Markdown")
+    saved = client.post(path + "/edit", data={"title": "Einrückung", "content": body})
+    check(saved.status_code == 303 and "<pre><code>Code am Anfang" in client.get(path).text,
+          "saving edits must keep the leading Markdown indentation")
+
+
 def test_shopping_sync_keeps_server_responsive():
     started = threading.Event()
     release = threading.Event()
@@ -432,6 +471,8 @@ def main():
     test_dropped_tags_keep_children()
     test_shopping_error_notice_is_fixed_text()
     test_return_destination_stays_local()
+    test_favorite_creation_error_keeps_shopping_context()
+    test_recipe_form_preserves_markdown_indentation()
     test_shopping_sync_keeps_server_responsive()
     test_shopping_sync_endpoint_contract()
     test_browser_writes_require_same_origin()

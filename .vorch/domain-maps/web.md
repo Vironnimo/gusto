@@ -60,7 +60,7 @@ Not owned here: the command API, health and SSE endpoints (`service.md`), the of
 - Core deliberately does not deduplicate cooking-log entries; the guard in `app.js` blocks a second submit of a POST form and disables its buttons only after the submit event (disabling during it cancels the submission in Chromium). GET forms are excluded because the clicked button carries the value (day switch).
 - The host's browser write check compares against the externally requested origin. Reverse proxies must preserve its Host and scheme; headerless LAN clients still have the anonymous access described in `service.md`. Purge confirmation is a form field, not authorization.
 - Web multipart uploads have no request-size cap; the 25 MiB check runs after the whole file is received (the command API enforces its own cap).
-- The rendered body omits the first `# ` line (`rendering.without_title`); the edit form shows the body without it and the route rebuilds `# {title}`. Core still enforces the title/H1 invariant (`catalog.md`). Blank duration/servings on the edit form clear the values through Core's clear flags.
+- The rendered body omits the first `# ` line (`rendering.without_title`); the edit form shows the body without it and the route rebuilds `# {title}`. These paths preserve Markdown indentation and trailing spaces, trimming only surrounding line breaks. Core still enforces the title/H1 invariant (`catalog.md`). Blank duration/servings on the edit form clear the values through Core's clear flags.
 - Only Chromium is exercised locally and in CI; Safari/iOS and Firefox behavior (camera `capture`, `backdrop-filter`, bottom sheet) is unverified.
 - `EventSource` cannot send headers; the live stream stays anonymous by design. Do not add auth workarounds to it.
 

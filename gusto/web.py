@@ -380,7 +380,8 @@ def new_form(request: Request):
 def create(request: Request, title: str = Form(...), tags: str = Form(""),
            duration: str = Form(""), servings: str = Form(""),
            content: str = Form("")):
-    body = f"# {title.strip()}\n\n{content.strip()}\n"
+    body_content = content.strip("\r\n")
+    body = f"# {title.strip()}\n\n{body_content}\n"
     try:
         r = core_recipes.add_recipe(title.strip(), tags=_tags(tags),
                             duration_min=_int_or_none(duration),
@@ -389,7 +390,7 @@ def create(request: Request, title: str = Form(...), tags: str = Form(""),
         raise
     except ValueError as e:
         form = {"title": title, "tags": tags, "duration": duration,
-                "servings": servings, "content": content.strip()}
+                "servings": servings, "content": content}
         return templates.TemplateResponse(request, "form.html", {
             "nav": "new", "title": "Neues Rezept",
             "r": None, "form": form, "form_action": "/new", "error": str(e),
@@ -418,7 +419,8 @@ def update(request: Request, slug: str, title: str = Form(...), tags: str = Form
     recipe = core_recipes.get(slug)
     if recipe is None:
         raise StarletteHTTPException(status_code=404)
-    body = f"# {title.strip()}\n\n{content.strip()}\n"
+    body_content = content.strip("\r\n")
+    body = f"# {title.strip()}\n\n{body_content}\n"
     try:
         core_recipes.update_recipe(slug, title=title.strip(), tags=_tags(tags),
                            duration_min=_int_or_none(duration),
@@ -429,7 +431,7 @@ def update(request: Request, slug: str, title: str = Form(...), tags: str = Form
         raise
     except ValueError as error:
         form = {"title": title, "tags": tags, "duration": duration,
-                "servings": servings, "content": content.strip()}
+                "servings": servings, "content": content}
         return templates.TemplateResponse(request, "form.html", {
             "nav": "recipes", "title": f"{recipe.title} bearbeiten",
             "r": recipe, "form": form,
@@ -572,7 +574,9 @@ def favorite_add_route(name: str = Form(...), alias: str = Form(""),
     except core_errors.PostMutationError:
         raise
     except ValueError as error:
-        return _error_redirect("/favorites", str(error))
+        path = ("/favorites/match?" + urlencode({"text": alias})
+                if return_to == "/shopping" and alias else "/favorites")
+        return _error_redirect(path, str(error))
     destination = _safe_return_to(return_to, f"/favorites/{need.id}")
     return RedirectResponse(destination, status_code=303)
 
