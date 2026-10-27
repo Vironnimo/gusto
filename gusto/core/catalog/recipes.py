@@ -236,7 +236,8 @@ def log_cooked(slug: str, when: str | None = None) -> str:
     recipes = load_recipes()
     if not any(r.slug == slug for r in recipes):
         raise errors.NotFoundError(f"Kein Rezept mit Slug '{slug}'.")
-    when = when or date.today().isoformat()
+    if when is None:
+        when = date.today().isoformat()
     if not isinstance(when, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", when):
         raise ValueError("Das Kochdatum muss im Format YYYY-MM-DD angegeben werden.")
     try:
