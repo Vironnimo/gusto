@@ -41,6 +41,7 @@ Coverage is audit evidence, not a new default quality gate or percentage target.
 
 ## Timing
 
+- Close live pages when an independent browser scenario ends. A retained catalog subscriber can reload on another tab's mutation and replace the response of a later `goto`; HTTP navigation assertions use a fresh page.
 - Never stabilize a flaky check with a longer wait. Synchronize on the condition instead: poll the observable state with a short interval and an overall deadline (as `wait_up` in the browser checks), or use file barriers between processes (as `tests/test_update.py` does for competing lock attempts).
 - Ordinary CLI cases call public `cli.main` with captured streams and a fake public `client.command`; result/presentation scenarios use the public command API in process. Keep real processes for entry-point/legacy-console UTF-8 behavior, quoted editor execution, lost-reply recovery and stopped-server/no-local-fallback boundaries. Business rules belong in API or Core owner gates; CLI cases guard argument forwarding, JSON/plain output and exit codes.
 - Service lifecycle checks inject `opener`, `runner`, `health_waiter` and `health_stopper`; update checks inject runtime installation and service actions. There is no shared clock or sleep override today. Keep new timing tests controlled at the owning module; do not patch process-wide `time.sleep`.

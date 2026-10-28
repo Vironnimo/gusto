@@ -467,6 +467,9 @@ try:
         check(page.url.endswith("/archive")
               and "Test Pfannkuchen Deluxe" not in page.content(),
               "explicit purge permanently removes the archived test recipe")
+        # This scenario is complete. Its live archive page would otherwise
+        # reload on the separate dialog scenario's catalog mutations below.
+        page.close()
 
         # Confirmation dialogs must appear even when the title contains an
         # apostrophe (user text is kept out of JS strings, so it cannot break
@@ -503,9 +506,14 @@ try:
                   "confirm accept: recipe is archived")
         cp.close()
 
-        # 404
+        # Isolate the HTTP navigation contract from the prior scenario's
+        # catalog subscriptions; a late live reload can replace goto's response.
+        page = browser.new_page(viewport={"width": 1280, "height": 900})
+        page.on("dialog", lambda d: d.accept())
         resp = page.goto(BASE + "/recipe/gibtsnicht")
-        check(resp.status == 404, "unknown recipe -> 404 page")
+        check(resp is not None and resp.status == 404
+              and page.locator("h1.page-title").inner_text() == "Nicht gefunden",
+              "unknown recipe -> HTTP 404 and not-found page")
 
         # The root-scoped service worker must never come from the HTTP cache,
         # or SW/offline-shell updates would be delayed.
