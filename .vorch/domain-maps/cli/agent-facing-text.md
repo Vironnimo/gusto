@@ -880,6 +880,8 @@ Evidence: each subsection names the function that constructs the message. Catalo
 | `Notiz: {_text(product['note'])}` | Exposes the household product note needed to interpret its preference. |
 | `Bild: {_text(product['image_filename'])}` | Identifies the owned photo attached to this product. |
 | `Anderswo:` | Shows preference rank, product details and other-store alternatives without claiming live stock. |
+| `alle Läden` | Identifies an unrestricted stored product card, matching the empty-store applicability rule rather than implying it belongs only to the requested store. |
+| `{name} ({brand} · {store}) [ID: {id}]` | Keeps the brand of other-store alternatives visible in both favorites reads and combined store shopping output. |
 
 ### cmd_favorites_show
 

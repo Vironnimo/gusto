@@ -441,9 +441,14 @@ def check_favorites(first_photo):
           == [fallback["id"], favorite["id"]],
           "favorites show --store --json must keep products sold there or anywhere")
     store_text = run("favorites", "match", "1 Rolle Pizzateig", "--store", "Edeka")
-    check("1. Pizza-Kit" in store_text.stdout
-          and "Anderswo: Frischer Pizzateig (REWE)" in store_text.stdout,
-          "favorites match --store must print the store's ranking for humans")
+    store_shown = run("favorites", "show", need["id"], "--store", "Edeka")
+    for output in (store_text.stdout, store_shown.stdout):
+        neutral_line = next(line for line in output.splitlines() if "1. Pizza-Kit" in line)
+        elsewhere_line = next(line for line in output.splitlines() if "Anderswo:" in line)
+        check("Knack & Back" in neutral_line and "alle Läden" in neutral_line
+              and "Frischer Pizzateig" in elsewhere_line
+              and "Tante Fanny" in elsewhere_line and "REWE" in elsewhere_line,
+              "favorites store reads must expose brands and distinguish unrestricted cards from other-store alternatives")
     shopping_match = as_json("shopping", "add", "1 Rolle Pizzateig")
     store_list = as_json("shopping", "list", "--store", "Edeka")
     check(store_list[0]["id"] == shopping_match["id"]
@@ -453,8 +458,10 @@ def check_favorites(first_photo):
     plain_store = run("shopping", "list", "--store", "Edeka")
     check(shopping_match["id"] in plain_store.stdout
           and fallback["id"] in plain_store.stdout and favorite["id"] in plain_store.stdout
+          and "Knack & Back" in plain_store.stdout and "alle Läden" in plain_store.stdout
+          and "Tante Fanny" in plain_store.stdout and "REWE" in plain_store.stdout
           and "Anderswo:" in plain_store.stdout,
-          "store shopping output must retain item IDs and distinguish products elsewhere")
+          "store shopping output must retain IDs, brands and unrestricted versus other-store applicability")
     as_json("shopping", "remove", shopping_match["id"])
     updated_plain = run("favorites", "product-set", need["id"], favorite["id"],
                         "--note", "Weiter: Dies ist eine gespeicherte Notiz")

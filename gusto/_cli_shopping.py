@@ -29,8 +29,10 @@ def _print_favorite_products(need: dict) -> None:
         print(f"  Kein Lieblingsprodukt bei {text(need['store'])}." if "store" in need
               else "  Noch keine Lieblingsprodukte hinterlegt.")
     for position, product in enumerate(need["products"], 1):
+        stores = ", ".join(store.strip() for store in product.get("store", "").split(",")
+                           if store.strip()) or "alle Läden"
         details = " · ".join(
-            text(value) for value in [product["brand"], product.get("store")] if value
+            text(value) for value in [product["brand"], stores] if value
         )
         print(
             f"  {position}. {text(product['name'])}  (ID: {text(product['id'])})"
@@ -43,7 +45,7 @@ def _print_favorite_products(need: dict) -> None:
     elsewhere = need.get("other_products") or []
     if elsewhere:
         print("  Anderswo: " + ", ".join(
-            f"{text(product['name'])} ({text(product['store'])})"
+            f"{text(product['name'])} ({text(product['brand'])} · {text(product['store'])})"
             f" [ID: {text(product['id'])}]" for product in elsewhere
         ))
 
