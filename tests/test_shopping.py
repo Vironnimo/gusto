@@ -239,6 +239,58 @@ def main():
     check(core_shopping.shopping_clear() == 0,
           "shopping_clear on an empty visible list must return 0.")
 
+    # Explicit multi-item state changes validate the whole selection and save once.
+    first, second, third = core_shopping.shopping_add_many(["Äpfel", "Tee", "Reis"])
+    core_shopping.shopping_toggle(first.id, checked=True)
+    first_before = next(item for item in core_shopping.shopping_load() if item.id == first.id)
+    before_revision = core_storage.change_state()["revision"]
+    result = core_shopping.shopping_check_many([second.id, first.id, second.id], True)
+    check([item.id for item in result["items"]] == [second.id, first.id]
+          and all(item.checked for item in result["items"])
+          and (result["changed"], result["unchanged"]) == (1, 1),
+          "batch check must return distinct targets in request order with actual transition counts")
+    check(result["items"][0].updated_at > second.updated_at
+          and result["items"][1].updated_at == first_before.updated_at
+          and core_storage.change_state()["revision"] == before_revision + 1,
+          "batch check must timestamp only changed items and publish one event")
+    before_bytes = core_storage.shopping_path().read_bytes()
+    before_revision = core_storage.change_state()["revision"]
+    unchanged = core_shopping.shopping_check_many([first.id, second.id], True)
+    check((unchanged["changed"], unchanged["unchanged"]) == (0, 2)
+          and core_storage.shopping_path().read_bytes() == before_bytes
+          and core_storage.change_state()["revision"] == before_revision,
+          "repeated batch check must preserve stored bytes and revision")
+    for target_ids in ([third.id, "missing"], [], [third.id, ""], [third.id, None], third.id):
+        expect_valueerror(core_shopping.shopping_check_many, target_ids, True)
+        expect_valueerror(core_shopping.shopping_remove_many, target_ids)
+    expect_valueerror(core_shopping.shopping_check_many, [third.id], "false")
+    check(core_storage.shopping_path().read_bytes() == before_bytes
+          and core_storage.change_state()["revision"] == before_revision,
+          "invalid batch arguments or a later missing target must reject every requested change")
+    unchecked = core_shopping.shopping_check_many([first.id, second.id], False)
+    check((unchecked["changed"], unchecked["unchanged"]) == (2, 0)
+          and all(not item.checked for item in unchecked["items"])
+          and core_storage.change_state()["revision"] == before_revision + 1,
+          "batch uncheck must clear every target in a single transaction")
+    before_revision = core_storage.change_state()["revision"]
+    removed_many = core_shopping.shopping_remove_many([second.id, first.id, second.id])
+    check(removed_many == {"removed": 2, "unchanged": 0, "ids": [second.id, first.id]}
+          and core_storage.change_state()["revision"] == before_revision + 1,
+          "batch remove must deduplicate targets and publish one event for all tombstones")
+    before_bytes = core_storage.shopping_path().read_bytes()
+    before_revision = core_storage.change_state()["revision"]
+    expect_valueerror(core_shopping.shopping_check_many, [third.id, first.id], True)
+    expect_valueerror(core_shopping.shopping_remove_many, [third.id, "missing"])
+    repeated = core_shopping.shopping_remove_many([first.id, second.id])
+    check(repeated == {"removed": 0, "unchanged": 2, "ids": [first.id, second.id]}
+          and core_storage.shopping_path().read_bytes() == before_bytes
+          and core_storage.change_state()["revision"] == before_revision,
+          "tombstones reject batch checks, accept repeated removals, and cause no writes")
+    removed_rest = core_shopping.shopping_remove_many([first.id, third.id])
+    check((removed_rest["removed"], removed_rest["unchanged"]) == (1, 1)
+          and core_shopping.shopping_list() == [],
+          "mixed batch removal must count only the new tombstone and preserve existing ones")
+
     # --- sourced single add -------------------------------------------------
     sourced_recipe = core_recipes.add_recipe(
         "Einzelzutat", content="# Einzelzutat\n\n## Zutaten\n\n- Pfeffer\n",

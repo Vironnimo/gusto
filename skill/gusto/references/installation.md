@@ -67,8 +67,8 @@ curl -fsSL https://github.com/Vironnimo/gusto/releases/latest/download/install.s
 
 Expect exactly one JSON object on stdout. Require `ok:true` and
 `status:"installed"`; on Windows also require `python_runtime.kind:"managed"`.
-Then run `gusto home --json` with the installed command before any domain
-operation. If this shell still has the old PATH, use the default stable wrapper:
+For a new or unclear household target, use `gusto home` to identify the
+service URL and server data directory before writing. If this shell still has the old PATH, use the default stable wrapper:
 PowerShell `& "$env:LOCALAPPDATA\Programs\Gusto\bin\gusto.cmd" home --json`,
 or Linux `~/.local/opt/gusto/bin/gusto home --json`. Custom installs use their
 reported application directory's `bin` wrapper.
@@ -108,16 +108,16 @@ clear error rather than creating `~/.vbot` or guessing another host path.
 
 ## Normal update
 
-Use only:
+Run the supported update command:
 
 ```text
-gusto update --json
+gusto update
 ```
 
 Inspect without changing anything:
 
 ```bash
-gusto update --check --json
+gusto update --check
 ```
 
 The update downloads and verifies the published manifest and Wheel, installs
@@ -135,7 +135,11 @@ still reference, so rollback remains usable.
 If a retained version's runtime marker is unreadable or incomplete, interpreter
 cleanup is skipped and `removed_python_runtimes` is empty.
 
-Never present re-running the installer as the update path.
+Never present re-running the installer as the update path. If an old Windows
+installation repeatedly rolls back with a launcher fatal error, keep the healthy
+version selected and report the update diagnostics; repeated attempts do not
+repair a broken launcher. Recover through a verified release and explicitly
+selected app root, not by moving virtual environments or editing their launchers.
 
 An app update refreshes the skill payload in the newly active runtime. It does
 not mutate an already installed vBot copy. Run `gusto install-skill vbot

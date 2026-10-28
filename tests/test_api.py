@@ -28,6 +28,7 @@ from gusto import __version__, api, client as remote_client  # noqa: E402
 import gusto.core.catalog.images as core_images  # noqa: E402
 import gusto.core.catalog.recipes as core_recipes  # noqa: E402
 import gusto.core.errors as core_errors  # noqa: E402
+import gusto.core.favorites as core_favorites  # noqa: E402
 import gusto.core.records as core_records  # noqa: E402
 import gusto.core.shopping as core_shopping  # noqa: E402
 import gusto.core.storage as core_storage  # noqa: E402
@@ -346,6 +347,7 @@ def check_client_failure_recovery():
             "favorites.product.move", "favorites.product.remove", "shopping.add",
             "shopping.add_many", "shopping.add_recipe", "shopping.check", "shopping.uncheck",
             "shopping.remove", "shopping.remove_done", "shopping.clear",
+            "shopping.check_many", "shopping.uncheck_many", "shopping.remove_many",
         }
         check(reads.isdisjoint(writes) and reads | writes == api._OPERATIONS.keys(),
               "the independently curated failure matrix must cover every command")
@@ -526,7 +528,12 @@ def main():
         "tags": ["vegan", "suppe"],
         "duration_min": 30,
         "servings": 4,
+        "content": "# Transporttitel\n\n## Zutaten\n\n- Kartoffeln\n",
     })
+    check(soup["content"].startswith("# Kartoffelsuppe\n")
+          and "- Kartoffeln" in soup["content"]
+          and soup["revision"] == command("recipe.show", {"slug": soup["slug"]})["revision"],
+          "recipe.create must save a complete recipe and return its editable state")
     salad = command("recipe.create", {
         "title": "Salat",
         "tags": ["vegan"],
@@ -592,6 +599,8 @@ def main():
         content_result["content"].startswith("# Kartoffelsuppe\n"),
         "recipe.content.set must preserve the canonical metadata/H1 invariant",
     )
+    check(content_result["revision"] != shown["revision"],
+          "a content write must return the revision for the saved content")
     command("recipe.content.set", {"slug": soup["slug"], "content": "# Lost\n",
             "revision": shown["revision"]}, status=409)
     check(command("recipe.show", {"slug": soup["slug"]})["content"]
@@ -604,15 +613,25 @@ def main():
         "servings": None,
         "clear_duration": False,
         "clear_servings": True,
+        "content": content + "\n## Zubereitung\n\n1. Köcheln lassen.\n",
     })
     check(
         updated["title"] == "Kartoffelsuppe fein"
         and updated["duration_min"] == 25
         and updated["servings"] is None
+        and updated["content"].startswith("# Kartoffelsuppe fein\n")
+        and "Köcheln lassen" in updated["content"]
+        and updated["revision"] != content_result["revision"]
         and updated["warnings"][0]["code"] == "uncategorized_tags",
         "recipe.update must preserve recipe shape and structured tag warnings",
     )
     unchanged_recipe = command("recipe.show", {"slug": soup["slug"]})
+    command("recipe.update", {
+        "slug": soup["slug"], "revision": content_result["revision"],
+        "title": "Lost title", "content": "Lost body", "servings": 99,
+    }, status=409)
+    check(command("recipe.show", {"slug": soup["slug"]}) == unchanged_recipe,
+          "a stale combined edit must change neither metadata nor content")
     command("recipe.update", {
         "slug": soup["slug"], "revision": command("recipe.show", {"slug": soup["slug"]})["revision"],
         "title": None, "tags": None, "duration_min": None, "servings": None,
@@ -665,8 +684,9 @@ def main():
           and cooked["date"] == core_recipes.load_log()[-1]["date"],
           "recipe.cooked must acknowledge its committed date across midnight")
     check(
-        command("log.list", {"days": 7})[-1]["slug"] == soup["slug"],
-        "log.list must expose cooking history",
+        command("log.list", {"days": 7})[-1]["slug"] == soup["slug"]
+        and command("log.list", {"days": 7})[-1]["title"] == cleared["title"],
+        "log.list must expose cooking history with its resolved recipe title",
     )
     check(
         command("suggest.list", {"days": 7, "limit": 1})[0]["slug"]
@@ -925,6 +945,35 @@ def main():
           "shopping.remove_done must tombstone checked visible items")
     check(command("shopping.clear")["removed"] == 3,
           "shopping.clear must tombstone every remaining visible item")
+
+    batch = command("shopping.add_many", {"texts": ["Haferdrink", "Unbekannt"]})
+    batch_ids = [item["id"] for item in batch]
+    command("shopping.list", {"store": " "}, status=400)
+    with patch.object(core_favorites, "favorites_load", wraps=core_favorites.favorites_load) as load_needs:
+        trip = command("shopping.list", {"store": "REWE"})
+    check(load_needs.call_count == 1 and trip[0]["favorite"]["id"] == need["id"]
+          and "other_products" in trip[0]["favorite"] and trip[1]["favorite"] is None
+          and "favorite" not in command("shopping.list")[0],
+          "store shopping reads the preference catalog once and keeps ordinary JSON unchanged")
+    before_batch = command("shopping.list")
+    command("shopping.check_many", {"ids": [*batch_ids, "missing"]}, status=404)
+    check(command("shopping.list") == before_batch,
+          "a batch with a missing target must reject before changing valid items")
+    checked_batch = command("shopping.check_many", {"ids": [*batch_ids, batch_ids[0]]})
+    check(checked_batch["changed"] == 2 and checked_batch["unchanged"] == 0
+          and [item["id"] for item in checked_batch["items"]] == batch_ids
+          and all(item["checked"] for item in checked_batch["items"]),
+          "batch checking must return unique saved states and actual change counts")
+    repeated_batch = command("shopping.check_many", {"ids": batch_ids})
+    check(repeated_batch["changed"] == 0 and repeated_batch["unchanged"] == 2,
+          "batch checking must identify already checked targets")
+    reopened = command("shopping.uncheck_many", {"ids": batch_ids})
+    check(reopened["changed"] == 2 and all(not item["checked"] for item in reopened["items"]),
+          "batch unchecking must reopen the selected items")
+    removed_batch = command("shopping.remove_many", {"ids": batch_ids})
+    check(removed_batch == {"removed": 2, "unchanged": 0, "ids": batch_ids}
+          and command("shopping.remove_many", {"ids": batch_ids})["unchanged"] == 2,
+          "batch removal must report selected IDs and repeated tombstone no-ops")
 
     # Reversible archive lifecycle exposed as domain commands, not app lifecycle.
     archived = command("recipe.archive", {"slug": salad["slug"]})

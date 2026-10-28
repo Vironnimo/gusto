@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 
 from . import client
-from ._cli_terminal import dump, remote
+from ._cli_terminal import dump, recipe_result, remote
 
 
 class EditError(client.ClientError):
@@ -20,7 +20,7 @@ class EditError(client.ClientError):
     def __init__(self, error: Exception, *, slug: str, path: Path):
         super().__init__(
             f"{error} Lokale Rezeptkopie bleibt erhalten: '{path}'. "
-            f"Lies 'show {slug} --json' auf demselben Server und führe Änderungen "
+            f"Lies 'show {slug}' auf demselben Server und führe Änderungen "
             f"zusammen; nutze dann 'content set {slug}' mit --file, diesem "
             "Dateipfad und --revision aus show.",
             outcome_unknown=getattr(error, "outcome_unknown", False),
@@ -116,7 +116,7 @@ def _edit_remote(args, slug: str) -> dict:
             raise client.ClientError(
                 f"Bearbeiteter Rezepttext konnte nicht gelesen werden: {error}"
             ) from error
-        remote(
+        args._edited_recipe = remote(
             args, "recipe.content.set", {"slug": slug, "content": content,
                                          "revision": recipe["revision"]},
         )
@@ -139,12 +139,12 @@ def cmd_edit(args):
     if args.json:
         dump(result)
     else:
-        print(f"Inhalt gespeichert: {result['slug']}")
+        recipe_result(args, args._edited_recipe, heading="Rezeptinhalt gespeichert", mutation=True)
         if result.get("retained_path"):
             print(f"Lokale Kopie konnte nicht entfernt werden: {result['retained_path']}")
 
 
-def cmd_content_set(args):
+def read_content(args) -> str:
     if args.stdin:
         try:
             content = sys.stdin.read()
@@ -160,6 +160,11 @@ def cmd_content_set(args):
             raise client.ClientError(
                 f"Rezeptdatei '{args.file}' konnte nicht gelesen werden: {error}"
             ) from error
+    return content
+
+
+def cmd_content_set(args):
+    content = read_content(args)
     recipe = remote(
         args, "recipe.content.set", {"slug": args.slug, "content": content,
                                      "revision": args.revision},
@@ -167,7 +172,7 @@ def cmd_content_set(args):
     if args.json:
         dump(recipe)
     else:
-        print(f"Inhalt aktualisiert: {args.slug}")
+        recipe_result(args, recipe, heading="Rezeptinhalt gespeichert", mutation=True)
 
 
 def register_commands(sub, base) -> None:
@@ -184,11 +189,13 @@ def register_commands(sub, base) -> None:
         help="Gesamten Rezeptinhalt ersetzen; die erste Zeile wird als gespeicherter Titel gesetzt.",
     )
     cp.add_argument("slug", help="Rezept-Slug aus list oder search. Titel ändern: set --title.")
-    cp.add_argument("--revision", required=True, help="Revision aus show --json; bei Konflikt Inhalt erneut lesen und Änderungen zusammenführen.")
-    source = cp.add_mutually_exclusive_group(required=True)
-    source.add_argument("--file", help="Lokale Markdown-Datei: UTF-8, auch mit BOM, oder UTF-16 mit BOM. Datei bleibt erhalten.")
-    source.add_argument(
-        "--stdin", action="store_true",
-        help="Vollständigen UTF-8-Markdown-Inhalt von stdin lesen. Genau eines von --file/--stdin angeben.",
-    )
+    cp.add_argument("--revision", required=True, help="Revision aus show; bei Konflikt Inhalt erneut lesen und Änderungen zusammenführen.")
+    add_content_input(cp, required=True)
     cp.set_defaults(func=cmd_content_set)
+
+
+def add_content_input(parser, *, required: bool = False):
+    source = parser.add_mutually_exclusive_group(required=required)
+    source.add_argument("--file", help="Vollständige lokale Markdown-Datei: UTF-8 oder UTF-16 mit BOM. Datei bleibt erhalten.")
+    source.add_argument("--stdin", action="store_true", help="Vollständigen UTF-8-Markdown-Inhalt von stdin lesen. Alternative zu --file.")
+    return source

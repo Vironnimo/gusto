@@ -137,6 +137,7 @@ def _complete_help(parser: argparse.ArgumentParser) -> None:
             _complete_help(child)
         return
     parser.epilog = (
+        "Ausgabe: lesbarer Text für die Arbeit mit Gusto; --json für Programme. "
         "Exit-Status: 0 Erfolg, 1 Befehlsfehler, 2 ungültiger Aufruf. "
         "Bei --json stehen Befehlsfehler auf stdout; Aufruffehler auf stderr."
     )
@@ -150,9 +151,11 @@ def main(argv=None) -> None:
             stream.reconfigure(encoding="utf-8")  # robust umlauts/JSON on Windows
         except Exception:
             pass
-    args = build_parser().parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    args = build_parser().parse_args(arguments)
+    args._argv = arguments
     try:
-        args.func(args)
+        _terminal.run_presented(args)
     except (client.ClientError, ValueError) as error:
         if args.json:
             result = {"ok": False, "error": str(error)}
@@ -164,10 +167,15 @@ def main(argv=None) -> None:
                 result["recovery_path"] = recovery.recovery_path
             _terminal.dump(result)
         else:
-            print(str(error), file=sys.stderr)
+            print("Fehler: " + _terminal.text(error), file=sys.stderr)
+            if getattr(error, "outcome_unknown", False):
+                print("Hinweis: Ergebnis unbekannt. Zustand auf demselben Service lesen, bevor du erneut schreibst.", file=sys.stderr)
         raise SystemExit(1) from None
     except SystemExit as error:
         if args.json and isinstance(error.code, str):
             _terminal.dump({"ok": False, "error": error.code})
+            raise SystemExit(1) from None
+        if isinstance(error.code, str):
+            print("Fehler: " + _terminal.text(error.code), file=sys.stderr)
             raise SystemExit(1) from None
         raise

@@ -15,14 +15,15 @@ shopping list and preferred products, `_cli_local.py` for local recovery and
 lifecycle, and `_cli_editor.py` for text input, editor execution and recovery.
 `cli.py` assembles the parser in its established order, completes help, dispatches
 commands, classifies errors and owns windowless autostart; it does not re-export
-handlers. `_cli_terminal.py` owns JSON printing, terminal-value escaping and
-one-call remote dispatch. These are internal edit units of the CLI domain, not
+handlers. `_cli_terminal.py` owns JSON printing, terminal-value escaping,
+bounded text pages, saved recipe receipts and one-call remote dispatch. These are internal edit units of the CLI domain, not
 separate public APIs.
 
 Normal domain commands use `_cli_terminal.remote`; each call sends one command operation
 through `gusto/client.py` (`service.md`). Backup commands use the client's binary
-transfer interface. Editor round-trips and plain `log`
-make multiple calls as described below. Local commands act on the CLI machine without the service: `home`,
+transfer interface. Editor round-trips make multiple calls as described below;
+plain `log` receives resolved titles and archive status in its single service
+response. Local commands act on the CLI machine without the service: `home`,
 `check --offline`, `serve`, `status|start|stop|restart`, `update`, `uninstall`
 and `install-skill`. They are thin wrappers over Core (`home`,
 `check --offline`), uvicorn with `gusto.web:app` (`serve`) and the lifecycle
@@ -59,8 +60,9 @@ classification (`service.md`), lifecycle behavior and result shapes
   (`new`, `set`) is one comma-separated value, and `set --tags ""` clears all
   tags.
 - argparse rejects before any request, with exit 2: `serve --port` outside
-  1..65535 and the exclusive groups `content set --file|--stdin` (one
-  required), `set --duration|--clear-duration` and
+  1..65535, negative pagination positions/sizes, and the exclusive groups
+  `new --file|--stdin|--edit`, `set --file|--stdin`,
+  `content set --file|--stdin` (one required), `set --duration|--clear-duration` and
   `--servings|--clear-servings`, `favorites product-set --image|--remove-image`,
   `uninstall --keep-data|--delete-data`.
 - `_complete_help` makes each leaf's summary its description and adds an epilog
@@ -73,6 +75,8 @@ classification (`service.md`), lifecycle behavior and result shapes
   under `--json`.
 - With `--json`, success prints exactly one JSON document on stdout (indent 2,
   non-ASCII kept): the API `result` unchanged or the local command's result.
+  Explicit list `--limit`/`--offset` slice array results without wrapping them;
+  omitted pagination preserves the complete existing JSON shape.
   `ClientError`, `ValueError` and `sys.exit("message")` become
   `{ok:false, error}` on stdout with empty stderr, plus `outcome_unknown:true`
   when uncertain and `slug` and `recovery_path` for a failed editor round-trip,
@@ -82,10 +86,26 @@ classification (`service.md`), lifecycle behavior and result shapes
   carry a structured result print that result and exit 1 (plain `uninstall`
   writes it to stderr).
 - Plain mode prints German text on stdout and errors on stderr with exit 1.
-  Plain output prints reusable slugs and ids. Stored single-line values pass
+  Expected errors start with `Fehler:`; uncertain outcomes add a `Hinweis:`
+  to read the same service before retrying. Plain output prints reusable slugs and ids. Stored single-line values pass
   through `_cli_terminal.text`, which escapes non-printable characters so stored data cannot
-  inject lines or terminal controls; `show` and `archive show` print raw
-  Markdown. Plain `log` makes two extra reads to resolve titles.
+  inject lines or terminal controls. Recipe Markdown is an indented data block,
+  alongside title, slug, duration, servings, tags and revision when available.
+  Normal domain calls identify their resolved service URL without an extra
+  network request. `Weiter:` only continues a read; archive deletion prints
+  the existing `Rückgängig: ... archive restore` action.
+- List text is limited to 40 entries and a 7,000-character rendered data budget.
+  `--limit` changes the entry count; `--offset` skips entries. A single oversized
+  row continues with `--text-offset`, preserving the same row position. Recipe
+  details use `show --offset`/`archive show --offset` as a character position;
+  oversized tags move into this detail block. Rendered content accounts for
+  escaping and indentation. Continuations preserve explicit server selection
+  and filters. These offsets are positions in the current read, not frozen
+  snapshots across concurrent changes.
+- Mutation receipts show the saved state instead of requiring a verification
+  read. Exceptionally large receipts are marked as limited and give a safe
+  state-read command; they never suggest repeating the mutation. JSON remains
+  complete. Recipe content changes and creation return the saved revision.
 - Other exceptions (for example `KeyboardInterrupt`, an unwrapped `OSError`)
   end with a traceback; new code must raise `ValueError`/`ClientError` or wrap
   `OSError` to keep the JSON contract.
@@ -93,7 +113,11 @@ classification (`service.md`), lifecycle behavior and result shapes
   survive a cp1252 Windows console.
 
 **Recipe text:**
-- `content set` requires `--revision` from `show --json` and reads exactly one of `--file` (UTF-8 with optional BOM or
+- `new --file|--stdin` creates complete content and metadata in one command;
+  omission retains template creation. `set --file|--stdin` combines body and
+  metadata changes under its required revision. Both reuse the same input
+  decoder as `content set`; CLI input failures occur before a service call.
+- `content set` requires `--revision` from `show` and reads exactly one of `--file` (UTF-8 with optional BOM or
   UTF-16 with BOM; UTF-32 and invalid bytes are rejected before upload; CR and
   CRLF become LF; the source file is never removed) or `--stdin` (UTF-8 only)
   and uploads through `recipe.content.set`, so Core rewrites the H1
@@ -117,6 +141,21 @@ classification (`service.md`), lifecycle behavior and result shapes
   Success deletes the file; a failed delete adds `retained_path` and still
   reports success, so the upload is never repeated. A failed `new --edit` says
   that the recipe was already created.
+  Successful editor receipts use the uploaded snapshot, not the original
+  template or pre-edit content.
+
+**Shopping:**
+- `shopping check|uncheck|remove ID [ID...]` retains the original single-ID
+  operation and JSON shape for one ID. Multiple IDs use the corresponding
+  batch operation; state changes report `items`, `changed`, `unchanged`, and
+  removal reports `removed`, `unchanged`, `ids`. Core validates the complete
+  selection before committing (`shopping.md`).
+- `shopping list --store STORE` reads the list with additive `favorite`
+  matches and ranked applicable/other-store products in one service call.
+  Without the flag, its existing item-array result is unchanged.
+- Favorites detail reads and shopping ingredient previews also support bounded
+  normal text pages; their JSON objects remain complete. Mutation receipts
+  expose saved aliases, product details and shopping states.
 
 **Local commands:**
 - `home` never needs the service: local `storage.storage_info()` fields (`path`,
@@ -143,18 +182,18 @@ classification (`service.md`), lifecycle behavior and result shapes
 ## Shipped skill
 
 `skill/gusto/` is the canonical usage documentation for agents operating Gusto;
-`AGENTS.md` routes household operation to `SKILL.md`. `SKILL.md` is the compact
-entry; `references/cli.md` names every leaf with flags and JSON shapes,
-`references/installation.md` covers install, repair, update, service control,
-uninstall and skill delivery, `references/telegram.md` the vBot checklist
-round-trip and `references/shopping-trip.md` store-ordered lists.
+`AGENTS.md` routes household operation to `SKILL.md`. The body teaches normal
+text output, conditional target diagnosis, complete common goals and a grouped
+index of every leaf. `references/cli.md` covers less common product, facet,
+image, backup, editor-recovery and JSON workflows; argument details belong to
+installed help. Other references cover installation/lifecycle, Telegram and
+store-ordered trips, and are routed by explicit triggers from the body.
 
-`tests/test_agent_contract.py` enforces: frontmatter `name: gusto` equal to the
-folder, a description of at most 250 characters containing `Use when`, a
-`SKILL.md` of at most 12,000 bytes, a list of required identifiers (for example
-`home --json`, `server_data_path`, `outcome_unknown`, `recovery_path`),
-references routed only from `SKILL.md` (a reference must not link another), and
-every leaf named in `references/cli.md`.
+`tests/test_agent_contract.py` enforces frontmatter/folder identity, a discovery
+description of at most 250 characters, a body budget of 12,000 bytes, parser
+coverage in the body command index, parseable standalone CLI examples, and
+references routed only from the body. It also guards the combined store-trip
+lookup and host-specific Telegram routing without freezing editable prose.
 
 Every managed runtime carries the skill below `share/gusto/skill/gusto`;
 `gusto install-skill vbot` copies it to `~/.vbot/skills/gusto`
@@ -165,8 +204,7 @@ Every managed runtime carries the skill below `share/gusto/skill/gusto`;
 - Adding or removing a leaf: Core and API first (`service.md`), then the
   parser and `cmd_*` function with `--json` and plain output that prints
   reusable ids, then `EXPECTED_COMMANDS` in `tests/test_agent_contract.py`, the
-  leaf in `references/cli.md`, and `SKILL.md` when agents need it for a common
-  goal.
+  leaf in the `SKILL.md` command index, and common-goal examples when relevant.
 - Adding a skill reference: route it from `SKILL.md` and list it in
   `pyproject.toml` `[tool.setuptools.data-files]` (an explicit list, not a
   glob) and in the expected wheel files of `tests/test_packaging.py`; otherwise

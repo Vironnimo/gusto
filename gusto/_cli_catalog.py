@@ -5,7 +5,8 @@ import sys
 
 from . import _cli_editor as _editor
 from . import client
-from ._cli_terminal import dump, remote, text
+from ._cli_terminal import (add_paging, command_line, dump, nonnegative, page,
+                            recipe_result, remote, text)
 
 
 def _collect_tags(values) -> list[str]:
@@ -16,37 +17,26 @@ def _collect_tags(values) -> list[str]:
     return out
 
 
-def _print_list(recipes: list[dict], as_json: bool) -> None:
-    if as_json:
-        dump(recipes)
-        return
-    if not recipes:
-        print("Keine Rezepte gefunden.")
-        return
-    print(f"{len(recipes)} Rezept(e):")
-    for r in recipes:
-        meta = []
-        if r.get("duration_min"):
-            meta.append(f"{r['duration_min']} min")
-        if r.get("servings"):
-            meta.append(f"{r['servings']} P.")
-        if r.get("tags"):
-            meta.append(", ".join(text(tag) for tag in r["tags"]))
-        if r.get("images"):
-            meta.append(
-                f"{len(r['images'])} Bild"
-                + ("er" if len(r["images"]) != 1 else "")
-            )
-        extra = "  ·  ".join(meta)
-        print(
-            f"  {r['slug']:<22} {text(r['title'])}"
-            + (f"   [{extra}]" if extra else "")
-        )
+def _print_list(recipes: list[dict], args) -> None:
+    def render(r):
+        _print_recipe_row(r)
+    page(args, recipes, "Rezepte (Titelreihenfolge)", render)
 
 
-def _print_tag_warnings(warnings: list[dict]) -> None:
-    for warning in warnings:
-        print(f"Warnung: {text(warning['message'])}")
+def _print_recipe_row(r: dict) -> None:
+    meta = []
+    if r.get("duration_min"):
+        meta.append(f"{r['duration_min']} min")
+    if r.get("servings"):
+        meta.append(f"{r['servings']} P.")
+    if r.get("tags"):
+        meta.append(", ".join(text(tag) for tag in r["tags"]))
+    if r.get("images"):
+        meta.append(f"{len(r['images'])} Bilder")
+    if "last_cooked" in r:
+        meta.append(f"zuletzt gekocht: {r['last_cooked'] or 'noch nie'}")
+    extra = "  ·  ".join(meta)
+    print(f"{r['slug']:<22} {text(r['title'])}" + (f"   [{extra}]" if extra else ""))
 
 
 def cmd_list(args):
@@ -54,7 +44,7 @@ def cmd_list(args):
         "tags": _collect_tags(args.tag),
         "max_time": args.max_time,
     })
-    _print_list(recipes, args.json)
+    _print_list(recipes, args)
 
 
 def cmd_search(args):
@@ -64,38 +54,24 @@ def cmd_search(args):
         "tags": _collect_tags(args.tag),
         "max_time": args.max_time,
     })
-    _print_list(recipes, args.json)
+    _print_list(recipes, args)
 
 
 def cmd_tags(args):
     groups = remote(args, "tags.list", {"all": args.all})
-    if args.json:
-        dump(groups)
-        return
-    if not groups:
-        print("Keine Tag-Kategorien oder Tags gefunden." if args.all else
-              "Keine verwendeten Tags. Mit --all auch unbenutzte Tags anzeigen.")
-        return
-    for g in groups:
-        print(f"{text(g['label'])}:")
-        print("  " + (", ".join(text(tag) for tag in g["tags"]) if g["tags"] else "—"))
+    if not args.json and not args.all:
+        print("Hinweis: Nur verwendete Tags; --all zeigt auch unbenutzte Tags.")
+    page(args, groups, "Tag-Kategorien (definierte Reihenfolge)", _print_category)
 
 
 def _print_category(category: dict) -> None:
-    print(f"{category['key']} — {text(category['label'])}")
+    print(f"{category.get('key') or 'Sonstige'} — {text(category['label'])}")
     print("  " + (", ".join(text(tag) for tag in category["tags"]) if category["tags"] else "—"))
 
 
 def cmd_categories_list(args):
     categories = remote(args, "categories.list")
-    if args.json:
-        dump(categories)
-        return
-    if not categories:
-        print("Keine Tag-Kategorien definiert.")
-        return
-    for category in categories:
-        _print_category(category)
+    page(args, categories, "Tag-Kategorien (definierte Reihenfolge)", _print_category)
 
 
 def cmd_categories_add(args):
@@ -174,21 +150,25 @@ def cmd_show(args):
     if args.json:
         dump(recipe)
     else:
-        print(recipe["content"].rstrip())
+        recipe_result(args, recipe)
 
 
 def cmd_new(args):
     tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
-    recipe = remote(args, "recipe.create", {
+    arguments = {
         "title": args.title,
         "tags": tags,
         "duration_min": args.duration,
         "servings": args.servings,
-    })
+    }
+    if args.file is not None or args.stdin:
+        arguments["content"] = _editor.read_content(args)
+    recipe = remote(args, "recipe.create", arguments)
     editor_result = None
     if args.edit:
         try:
             editor_result = _editor._edit_remote(args, recipe["slug"])
+            recipe = {**recipe, **args._edited_recipe}
         except (OSError, ValueError) as error:
             raise client.ClientError(
                 f"Rezept wurde bereits angelegt (Slug '{recipe['slug']}'); "
@@ -201,8 +181,7 @@ def cmd_new(args):
             result["editor"] = editor_result
         dump(result)
     else:
-        print(f"Angelegt: {recipe['slug']}")
-        _print_tag_warnings(recipe.get("warnings", []))
+        recipe_result(args, recipe, heading="Rezept angelegt", mutation=True)
 
 
 def cmd_cooked(args):
@@ -217,44 +196,18 @@ def cmd_cooked(args):
 
 def cmd_log(args):
     entries = remote(args, "log.list", {"days": args.days})
-    if args.json:
-        dump(entries)
-        return
-    if not entries:
-        print("Logbuch ist leer." if args.days is None else
-              f"Keine Kocheinträge in den letzten {args.days} Tagen.")
-        return
-    references = {
-        recipe["slug"]: {"title": recipe["title"], "archived": False}
-        for recipe in remote(args, "catalog.list", {})
-    }
-    references.update({
-        recipe["slug"]: {"title": recipe["title"], "archived": True}
-        for recipe in remote(args, "archive.list", {})
-    })
-    for e in reversed(entries):  # newest first
-        reference = references.get(e["slug"])
-        title = reference["title"] if reference else e["slug"]
-        suffix = " (archiviert)" if reference and reference["archived"] else ""
-        print(f"  {e['slug']:<22} {e['date']}   {text(title)}{suffix}")
+    def render(entry):
+        suffix = " (archiviert)" if entry.get("archived") else ""
+        print(f"{entry['slug']:<22} {entry['date']}   {text(entry.get('title', entry['slug']))}{suffix}")
+    page(args, entries if args.json else list(reversed(entries)),
+         "Koch-Logbuch (neueste zuerst)", render)
 
 
 def cmd_suggest(args):
     candidates = remote(
         args, "suggest.list", {"days": args.days, "limit": args.limit},
     )
-    if args.json:
-        dump(candidates)
-        return
-    if not candidates:
-        if args.limit == 0:
-            print("Keine Vorschlaege angefordert (--limit 0).")
-        else:
-            print(f"Keine Vorschlaege: kein aktives Rezept erfüllt den Abstand von {args.days} Tagen.")
-        return
-    print(f"Vorschlaege (nicht in den letzten {args.days} Tagen gekocht):")
-    for r in candidates:
-        print(f"  {r['slug']:<22} {text(r['title'])} (zuletzt: {r.get('last_cooked') or 'noch nie'})")
+    page(args, candidates, f"Vorschläge (seit {args.days} Tagen nicht gekocht; älteste zuerst)", _print_recipe_row)
 
 
 def cmd_set(args):
@@ -265,12 +218,14 @@ def cmd_set(args):
         args.servings is not None,
         args.clear_duration,
         args.clear_servings,
+        args.file is not None,
+        args.stdin,
     ]):
         sys.exit("Gib mindestens eine Änderung an.")
     tags = None
     if args.tags is not None:
         tags = [t.strip() for t in args.tags.split(",") if t.strip()]
-    recipe = remote(args, "recipe.update", {
+    arguments = {
         "slug": args.slug,
         "title": args.title,
         "tags": tags,
@@ -279,12 +234,14 @@ def cmd_set(args):
         "clear_duration": args.clear_duration,
         "clear_servings": args.clear_servings,
         "revision": args.revision,
-    })
+    }
+    if args.file is not None or args.stdin:
+        arguments["content"] = _editor.read_content(args)
+    recipe = remote(args, "recipe.update", arguments)
     if args.json:
         dump(recipe)
     else:
-        print(f"Aktualisiert: {recipe['slug']}")
-        _print_tag_warnings(recipe.get("warnings", []))
+        recipe_result(args, recipe, heading="Rezept gespeichert", mutation=True)
 
 
 def cmd_delete(args):
@@ -293,21 +250,13 @@ def cmd_delete(args):
         dump(archived)
     else:
         print(f"Archiviert: {archived['slug']}")
+        print("Rückgängig: " + command_line(args, command=["archive", "restore", archived["slug"]]))
 
 
 def cmd_archive_list(args):
     entries = remote(args, "archive.list")
-    if args.json:
-        dump(entries)
-        return
-    if not entries:
-        print("Das Rezeptarchiv ist leer.")
-        return
-    for entry in entries:
-        print(
-            f"  {entry['slug']:<22} {text(entry['title'])}   "
-            f"[{entry['archived_at']}]"
-        )
+    page(args, entries, "Rezeptarchiv", lambda entry: print(
+        f"{entry['slug']:<22} {text(entry['title'])}   [{entry['archived_at']}]"))
 
 
 def cmd_archive_show(args):
@@ -315,7 +264,7 @@ def cmd_archive_show(args):
     if args.json:
         dump(entry)
     else:
-        print(entry["content"].rstrip())
+        recipe_result(args, entry, heading="Archiviertes Rezept", archived=True)
 
 
 def cmd_archive_restore(args):
@@ -323,7 +272,7 @@ def cmd_archive_restore(args):
     if args.json:
         dump(result)
     else:
-        print(f"Wiederhergestellt: {result['recipe']['slug']}")
+        recipe_result(args, result["recipe"], heading="Rezept wiederhergestellt", mutation=True)
 
 
 def cmd_archive_purge(args):
@@ -348,13 +297,22 @@ def cmd_image_list(args):
         return
     images = result["images"]
     cover_id = result["cover_image_id"]
-    if not images:
-        print("Keine Bilder bei diesem Rezept.")
-        return
-    for image in images:
+    def render(image):
         marker = " [Top-Bild]" if image["id"] == cover_id else ""
         caption = f" — {text(image['caption'])}" if image.get("caption") else ""
         print(f"  {image['id']}  {text(image['role'])}{marker}{caption}")
+        if image.get("filename"):
+            print(f"  Datei: {text(image['filename'])}")
+    page(args, images, f"Bilder für {text(args.slug)} (gespeicherte Reihenfolge)", render)
+
+
+def _print_image(image):
+    print(f"  ID: {image['id']}")
+    for key, label in (("role", "Rolle"), ("caption", "Bildunterschrift"), ("filename", "Datei")):
+        if key in image:
+            print(f"  {label}: {text(image[key]) or 'keine'}")
+    if "is_cover" in image:
+        print("  Top-Bild: " + ("ja" if image["is_cover"] else "nein"))
 
 
 def cmd_image_add(args):
@@ -374,6 +332,7 @@ def cmd_image_add(args):
     else:
         marker = " (Top-Bild)" if image.get("is_cover") else ""
         print(f"Bild hinzugefuegt: {image['id']}{marker}")
+        _print_image(image)
 
 
 def cmd_image_set(args):
@@ -389,6 +348,7 @@ def cmd_image_set(args):
         dump(image)
     else:
         print(f"Bild aktualisiert: {image['id']}")
+        _print_image(image)
 
 
 def cmd_image_cover(args):
@@ -409,6 +369,7 @@ def cmd_image_remove(args):
         dump(result)
     else:
         print(f"Bild entfernt: {args.id}")
+        print(f"Top-Bild: {result.get('cover_image_id') or 'keines'}")
 
 
 def register_discovery(sub, base) -> None:
@@ -425,6 +386,7 @@ def register_discovery(sub, base) -> None:
     sp = sub.add_parser("list", parents=[base], help="Rezepte auflisten/filtern.")
     sp.add_argument("--tag", action="append", metavar="TAG", help=tag_help)
     sp.add_argument("--max-time", type=int, dest="max_time", help=max_time_help)
+    add_paging(sp)
     sp.set_defaults(func=cmd_list)
 
     sp = sub.add_parser("search", parents=[base],
@@ -434,12 +396,14 @@ def register_discovery(sub, base) -> None:
                     help="any: irgendein Begriff; all: alle Begriffe. Ohne Angabe: any.")
     sp.add_argument("--tag", action="append", metavar="TAG", help=tag_help)
     sp.add_argument("--max-time", type=int, dest="max_time", help=max_time_help)
+    add_paging(sp)
     sp.set_defaults(func=cmd_search)
 
     sp = sub.add_parser("tags", parents=[base],
                         help="Tag-Kategorien (Facetten) anzeigen.")
     sp.add_argument("--all", action="store_true",
                     help="Auch unbenutzte Kategorien/Tags zeigen. Ohne Flag: verwendete Tags.")
+    add_paging(sp)
     sp.set_defaults(func=cmd_tags)
 
     sp = sub.add_parser("categories", help="Tag-Kategorien verwalten.")
@@ -448,6 +412,7 @@ def register_discovery(sub, base) -> None:
     cap = catsub.add_parser(
         "list", parents=[base], help="Alle Tag-Kategorien und Tags anzeigen.",
     )
+    add_paging(cap)
     cap.set_defaults(func=cmd_categories_list)
 
     cap = catsub.add_parser(
@@ -499,16 +464,18 @@ def register_discovery(sub, base) -> None:
 
 
 def register_recipes(sub, base) -> None:
-    sp = sub.add_parser("show", parents=[base], help="Ein Rezept ausgeben.")
+    sp = sub.add_parser("show", parents=[base], help="Rezept mit Metadaten, Revision und Inhalt lesen; ändert nichts.")
     sp.add_argument("slug", help="Rezept-Slug aus list oder search.")
+    sp.add_argument("--offset", type=nonnegative, default=0, help="Zeichenoffset in den Rezeptdetails aus Weiter. Ohne Angabe: Anfang; JSON bleibt vollständig.")
     sp.set_defaults(func=cmd_show)
 
-    sp = sub.add_parser("new", parents=[base], help="Rezept mit leerer Zutaten-/Zubereitungsvorlage anlegen.")
+    sp = sub.add_parser("new", parents=[base], help="Rezept mit Inhalt und Metadaten anlegen; ohne --file/--stdin eine leere Vorlage.")
     sp.add_argument("title", help="Titel; der Server erzeugt daraus den Rezept-Slug.")
     sp.add_argument("--tags", help="Kommagetrennt, z.B. pasta,schnell. Ohne Angabe: keine Tags.")
     sp.add_argument("--duration", type=int, help="Dauer als positive ganze Minuten. Ohne Angabe: unbekannt.")
     sp.add_argument("--servings", type=int, help="Positive ganze Portionszahl. Ohne Angabe: unbekannt.")
-    sp.add_argument("--edit", action="store_true", help="Danach interaktiven Editor öffnen und auf sein Ende warten. Ohne Flag: nur anlegen.")
+    source = _editor.add_content_input(sp)
+    source.add_argument("--edit", action="store_true", help="Interaktiv im Editor bearbeiten; für Menschen. Ohne Flag: direkt speichern.")
     sp.set_defaults(func=cmd_new)
 
     _editor.register_commands(sub, base)
@@ -523,6 +490,7 @@ def register_recipes(sub, base) -> None:
 
     sp = sub.add_parser("log", parents=[base], help="Koch-Logbuch anzeigen.")
     sp.add_argument("--days", type=int, help="Letzte N Tage, positive ganze Zahl. Ohne Angabe: gesamtes Logbuch.")
+    add_paging(sp)
     sp.set_defaults(func=cmd_log)
 
     sp = sub.add_parser("suggest", parents=[base], help="Kandidaten fuers naechste Essen.")
@@ -530,15 +498,16 @@ def register_recipes(sub, base) -> None:
                     help="In den letzten N Tagen Gekochtes ausschließen; positive ganze Zahl. Ohne Angabe: 7 Tage.")
     sp.add_argument(
         "--limit", type=int,
-        help="Höchstens N Vorschläge; 0 liefert keine. Ohne Angabe: alle Kandidaten, am längsten nicht gekochte zuerst.",
+        help="Höchstens N Vorschläge; 0 liefert keine. Ohne Angabe: alle Kandidaten, Text bis 40 je Seite; am längsten nicht gekochte zuerst.",
     )
+    add_paging(sp, limit=False)
     sp.set_defaults(func=cmd_suggest)
 
 
 def register_management(sub, base) -> None:
-    sp = sub.add_parser("set", parents=[base], help="Metadaten eines Rezepts aendern.")
+    sp = sub.add_parser("set", parents=[base], help="Inhalt und/oder Metadaten gemeinsam speichern; benötigt die gelesene Revision.")
     sp.add_argument("slug", help="Rezept-Slug aus list oder search; mindestens eine Änderung angeben.")
-    sp.add_argument("--revision", required=True, help="Revision aus show --json; bei Konflikt erneut lesen und Änderungen prüfen.")
+    sp.add_argument("--revision", required=True, help="Revision aus show; bei Konflikt erneut lesen und Änderungen prüfen.")
     sp.add_argument("--title", help="Titel und Markdown-H1 ändern; Slug bleibt gleich. Ohne Angabe: unverändert.")
     sp.add_argument("--tags", help="Kommagetrennt; ersetzt alle Tags. Leerer Wert entfernt alle. Ohne Angabe: unverändert.")
     duration = sp.add_mutually_exclusive_group()
@@ -549,6 +518,7 @@ def register_management(sub, base) -> None:
     servings.add_argument("--servings", type=int, help="Positive ganze Portionszahl. Ohne Angabe: unverändert.")
     servings.add_argument("--clear-servings", action="store_true",
                           help="Gespeicherte Portionszahl entfernen.")
+    _editor.add_content_input(sp)
     sp.set_defaults(func=cmd_set)
 
     sp = sub.add_parser(
@@ -563,11 +533,13 @@ def register_management(sub, base) -> None:
 
     ap = asub.add_parser("list", parents=[base],
                          help="Archivierte Rezepte auflisten.")
+    add_paging(ap)
     ap.set_defaults(func=cmd_archive_list)
 
     ap = asub.add_parser("show", parents=[base],
                          help="Archiviertes Rezept ausgeben.")
     ap.add_argument("slug", help="Archiv-Slug aus archive list.")
+    ap.add_argument("--offset", type=nonnegative, default=0, help="Zeichenoffset in den Rezeptdetails aus Weiter. Ohne Angabe: Anfang; JSON bleibt vollständig.")
     ap.set_defaults(func=cmd_archive_show)
 
     ap = asub.add_parser("restore", parents=[base],
@@ -592,6 +564,7 @@ def register_management(sub, base) -> None:
 
     ip = isub.add_parser("list", parents=[base], help="Rezeptbilder anzeigen.")
     ip.add_argument("slug", help="Rezept-Slug aus list oder search.")
+    add_paging(ip)
     ip.set_defaults(func=cmd_image_list)
 
     ip = isub.add_parser("add", parents=[base], help="Bild zu einem Rezept kopieren.")

@@ -14,7 +14,8 @@ owns the independently specified command/argument/attachment matrix,
 `_cli_client.py` discovery and HTTP client contracts, `_cli_local.py` local
 dispatch and dependency preflight, `_cli_editor.py` editor recovery and genuine
 process/socket boundaries, and `_cli_scenarios.py` result and presentation
-scenarios. `_cli_support.py` owns their disposable fixture and captured public
+scenarios. `_cli_presentation.py` covers complete text receipts and lossless
+bounded continuations. `_cli_support.py` owns their disposable fixture and captured public
 entry-point calls. These helpers run through the CLI gate, not as separate gates.
 
 ## Isolation
@@ -36,7 +37,7 @@ subprocesses. Keep reports and coverage configuration under the checkout's
 Coverage is audit evidence, not a new default quality gate or percentage target.
 
 - Exact strings only for stable contracts: JSON keys and values the CLI or API promises, persisted file formats, exit codes, `outcome_unknown`, the Markdown H1 rule. German UI and error prose is editable; assert structured fields, status codes or the presence of an identifier instead of whole sentences.
-- CLI behavior is checked through the JSON result and exit code, the way an agent sees it.
+- CLI behavior is checked through public text output and exit codes for agent workflows, and JSON shapes for programmatic clients.
 
 ## Timing
 

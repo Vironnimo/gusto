@@ -41,13 +41,19 @@ Taps only change the message. When the user taps Fertig, you receive a note
 that the checklist was submitted, with the items changed since posting:
 `checked` and `unchecked` lines, each with its item id.
 
-1. On the Gusto instance you posted from, run
-   `gusto shopping check <id> --json` for each `checked` id and
-   `gusto shopping uncheck <id> --json` for each `unchecked` id. The calls are
-   independent and can run in parallel. Unchanged items need no call, so
-   changes made elsewhere since posting stay as they are.
-2. Report each failed id separately and confirm only the saved changes. An
-   item removed since posting is not created again.
+1. On the Gusto instance you posted from, group the submitted IDs by their
+   requested state and run one command for each nonempty group:
+
+   ```text
+   gusto shopping check <checked-id> <checked-id>
+   gusto shopping uncheck <unchecked-id> <unchecked-id>
+   ```
+
+   Each group is atomic; unchanged checklist items need no call, so changes
+   made elsewhere since posting stay as they are.
+2. If a group is rejected because an item was removed, read the current list,
+   report the missing ID, and apply the submitted state to the remaining IDs.
+   Do not recreate removed items, and confirm only successful groups.
 
 Fertig removes no items. Run `shopping remove-done` only when the user also
 asked to remove bought items; it removes every checked item of the list, also

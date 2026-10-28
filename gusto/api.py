@@ -160,6 +160,7 @@ def _recipe_dict(recipe: core_records.Recipe, *, include_content: bool = False) 
     result = recipe.to_dict()
     if include_content:
         result["content"] = recipe.content()
+        result["revision"] = core_recipes.edit_revision(recipe, result["content"])
     return result
 
 
@@ -367,7 +368,7 @@ def _recipe_show(arguments: dict, _attachments: dict) -> dict:
 def _recipe_create(arguments: dict, _attachments: dict) -> dict:
     values = _arguments(
         arguments,
-        allowed={"title", "tags", "duration_min", "servings"},
+        allowed={"title", "tags", "duration_min", "servings", "content"},
         required={"title"},
     )
     tags = _strings(values, "tags", default=[])
@@ -376,9 +377,10 @@ def _recipe_create(arguments: dict, _attachments: dict) -> dict:
         tags=tags,
         duration_min=_integer(values, "duration_min"),
         servings=_integer(values, "servings"),
+        content=_string(values, "content", optional=True),
     )
     with _mutation_result():
-        result = recipe.to_dict()
+        result = _recipe_dict(recipe, include_content=True)
         warnings = _tag_warnings(recipe.tags)
         if warnings:
             result["warnings"] = warnings
@@ -402,19 +404,20 @@ def _recipe_content_set(arguments: dict, _attachments: dict) -> dict:
 def _recipe_update(arguments: dict, _attachments: dict) -> dict:
     allowed = {
         "slug", "title", "tags", "duration_min", "servings",
-        "clear_duration", "clear_servings", "revision",
+        "clear_duration", "clear_servings", "revision", "content",
     }
     values = _arguments(arguments, allowed=allowed, required={"slug", "revision"})
     tags = _strings(values, "tags", optional=True)
     slug = _string(values, "slug")
     title = _string(values, "title", optional=True)
+    content = _string(values, "content", optional=True)
     duration_min = _integer(values, "duration_min")
     servings = _integer(values, "servings")
     clear_duration = _boolean(values, "clear_duration")
     clear_servings = _boolean(values, "clear_servings")
     if (title is None and tags is None and duration_min is None
             and servings is None and not clear_duration
-            and not clear_servings):
+            and not clear_servings and content is None):
         raise CommandError("Gib mindestens eine Änderung an.")
     recipe = core_recipes.update_recipe(
         slug,
@@ -424,10 +427,11 @@ def _recipe_update(arguments: dict, _attachments: dict) -> dict:
         servings=servings,
         clear_duration=clear_duration,
         clear_servings=clear_servings,
+        content=content,
         expected_revision=_string(values, "revision"),
     )
     with _mutation_result():
-        result = recipe.to_dict()
+        result = _recipe_dict(recipe, include_content=True)
         if tags is not None:
             warnings = _tag_warnings(recipe.tags)
             if warnings:
@@ -447,7 +451,12 @@ def _recipe_cooked(arguments: dict, _attachments: dict) -> dict:
 
 def _log_list(arguments: dict, _attachments: dict) -> list[dict]:
     values = _arguments(arguments, allowed={"days"})
-    return core_recipes.load_log(days=_integer(values, "days"))
+    entries = core_recipes.load_log(days=_integer(values, "days"))
+    references = core_snapshots.recipe_references()
+    return [{**entry,
+             "title": references.get(entry["slug"], {}).get("title", entry["slug"]),
+             "archived": references.get(entry["slug"], {}).get("archived")}
+            for entry in entries]
 
 
 def _suggest_list(arguments: dict, _attachments: dict) -> list[dict]:
@@ -719,11 +728,23 @@ def _favorites_product_remove(arguments: dict, _attachments: dict) -> dict:
 
 
 def _shopping_list(arguments: dict, _attachments: dict) -> list[dict]:
-    values = _arguments(arguments, allowed={"pending"})
+    values = _arguments(arguments, allowed={"pending", "store"})
+    store = _string(values, "store", optional=True)
+    if store is not None and not core_favorites.normalize_shopping_text(store):
+        raise CommandError("Der Laden darf nicht leer sein.")
     items = core_shopping.shopping_list(
         include_done=not _boolean(values, "pending"),
     )
-    return [item.to_dict() for item in items]
+    if store is None:
+        return [item.to_dict() for item in items]
+    needs = core_favorites.favorites_load()
+    result = []
+    for item in items:
+        need = core_favorites.favorite_match(item.text, needs=needs)
+        result.append({**item.to_dict(), "favorite": (
+            core_favorites.favorite_for_store(need, store) if need else None
+        )})
+    return result
 
 
 def _shopping_add(arguments: dict, _attachments: dict) -> dict:
@@ -792,6 +813,23 @@ def _shopping_remove_done(arguments: dict, _attachments: dict) -> dict:
     return {"removed": core_shopping.shopping_remove_done()}
 
 
+def _shopping_check_many(arguments: dict, _attachments: dict) -> dict:
+    values = _arguments(arguments, allowed={"ids"}, required={"ids"})
+    result = core_shopping.shopping_check_many(_strings(values, "ids"), checked=True)
+    return {**result, "items": [item.to_dict() for item in result["items"]]}
+
+
+def _shopping_uncheck_many(arguments: dict, _attachments: dict) -> dict:
+    values = _arguments(arguments, allowed={"ids"}, required={"ids"})
+    result = core_shopping.shopping_check_many(_strings(values, "ids"), checked=False)
+    return {**result, "items": [item.to_dict() for item in result["items"]]}
+
+
+def _shopping_remove_many(arguments: dict, _attachments: dict) -> dict:
+    values = _arguments(arguments, allowed={"ids"}, required={"ids"})
+    return core_shopping.shopping_remove_many(_strings(values, "ids"))
+
+
 def _shopping_clear(arguments: dict, _attachments: dict) -> dict:
     _arguments(arguments, allowed=set())
     return {"removed": core_shopping.shopping_clear()}
@@ -845,6 +883,9 @@ _OPERATIONS: dict[str, Callable[[dict, dict], object]] = {
     "shopping.add_recipe": _shopping_add_recipe,
     "shopping.check": _shopping_check,
     "shopping.uncheck": _shopping_uncheck,
+    "shopping.check_many": _shopping_check_many,
+    "shopping.uncheck_many": _shopping_uncheck_many,
+    "shopping.remove_many": _shopping_remove_many,
     "shopping.remove": _shopping_remove,
     "shopping.remove_done": _shopping_remove_done,
     "shopping.clear": _shopping_clear,

@@ -101,6 +101,14 @@ without an effective change, while an empty string is a real change.
 `recipe.update` require it and reject stale values before writing. Scaled
 `shopping.add_recipe` requires the revision returned by `shopping.preview_recipe`.
 
+`recipe.create` and `recipe.update` accept optional Markdown `content` together
+with metadata and return saved content and its edit revision. `log.list` adds
+the resolved title and archive state to each entry. `shopping.list` with a
+non-empty `store` adds matched preferred products from one favorites read;
+without `store` its item shape is unchanged. Batch `shopping.check_many`,
+`shopping.uncheck_many` and `shopping.remove_many` validate all ids before
+changing any item; their transaction semantics belong to `shopping.md`.
+
 **Backup:** `GET /api/v1/backup` and `/backup/safety/{id}` return ZIP bytes;
 `POST /backup/preview` and `/backup/restore` accept ZIP bytes up to 64 MiB.
 Restore requires `X-Gusto-Restore-Token` from preview. The client writes a
