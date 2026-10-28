@@ -14,7 +14,7 @@ Browser client `gusto/static/shopping-client.js` and service worker `gusto/stati
 - Device source of truth: `localStorage` `gusto.shopping`. Each mutation loads, changes (new id or `nowIso(previous)`), saves, renders and calls `sync()`.
 - Browser-created items always have `source: null`; sourced items come only from Core. The PWA toggle flips; remove-done and clear tombstone locally; clear asks `window.confirm` first.
 - If storage is full or blocked, items stay in memory, renders and syncs continue, and the next successful write restores persistence. Reads never replace newer memory with an older disk copy while writes fail; closing the page loses unsynced memory.
-- Re-renders keep the add-panel node (half-typed input survives) and restore list focus by item id, else by index.
+- Re-renders keep the add-panel node (half-typed input survives) and the clear-list disclosure (open state survives). They restore list focus by item id or index, or return it to the clear-list control after a background update.
 
 ## Sync loop
 

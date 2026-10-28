@@ -281,8 +281,19 @@ try:
             and any(i["text"] == "Brot" and not i["deleted"] for i in its)
         ), "remove-done: checked-only tombstone reaches the server")
 
-        ctx.set_offline(True)
         page.locator("#shop-client .shop-clear-all summary").click()
+        page.locator("#shop-client .shop-clear-all button").focus()
+        # Force a foreign update while the clear action is open. A late sync
+        # response must not collapse the disclosure or move keyboard focus.
+        api_sync([*api_get(), mk("Reis", now_iso())])
+        page.evaluate("document.dispatchEvent(new CustomEvent('gusto:change', "
+                      "{detail: {resources: ['shopping']}}))")
+        check(wait_item_once(page, "Reis"),
+              "clear panel: foreign change re-renders the open list")
+        check(page.locator("#shop-client .shop-clear-all").evaluate(
+            "panel => panel.open && panel.querySelector('button') === document.activeElement"
+        ), "clear panel: disclosure and keyboard focus survive background sync")
+        ctx.set_offline(True)
         page.once("dialog", lambda dialog: dialog.accept())
         page.locator("#shop-client .shop-clear-all button").click()
         check(wait_count(page, "#shop-client .shop-item", 0),

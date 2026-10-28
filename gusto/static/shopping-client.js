@@ -290,6 +290,9 @@
   function rememberListFocus() {
     var active = document.activeElement;
     if (!clientEl.contains(active) || active.closest(".shop-add-panel")) return null;
+    if (active.closest(".shop-clear-all")) {
+      return { panelControl: active.tagName === "BUTTON" ? "button" : "summary" };
+    }
     var row = active.closest(".shop-item");
     if (!row) return { index: 0, control: ".shop-box" };
     return {
@@ -303,6 +306,12 @@
 
   function restoreListFocus(saved) {
     if (!saved) return;
+    if (saved.panelControl) {
+      var control = clientEl.querySelector(".shop-clear-all " + saved.panelControl)
+        || clientEl.querySelector(".shop-add-panel summary");
+      if (control) control.focus({ preventScroll: true });
+      return;
+    }
     var rows = Array.from(clientEl.querySelectorAll(".shop-item"));
     var row = rows.find(function (node) { return node.dataset.itemId === saved.id; });
     row = row || rows[Math.min(saved.index, rows.length - 1)];
@@ -316,6 +325,8 @@
   function render() {
     if (!clientEl) return;
     var savedFocus = rememberListFocus();
+    // Keep the disclosure open while a sync or metadata response rebuilds rows.
+    var clearPanel = clientEl.querySelector(".shop-clear-all") || renderClearAll();
 
     var items = loadItems().filter(function (it) {
       return !it.deleted;
@@ -447,7 +458,7 @@
       board.appendChild(grpDone);
     }
 
-    board.appendChild(renderClearAll());
+    board.appendChild(clearPanel);
     clientEl.appendChild(board);
     restoreListFocus(savedFocus);
   }
