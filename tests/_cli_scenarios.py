@@ -148,8 +148,11 @@ def check_images_and_cooking(slug):
     cooked = as_json("cooked", slug, "--date", "2026-07-13")
     check(cooked == {"slug": slug, "date": "2026-07-13", "ok": True},
           "cooked --json must confirm the log entry")
-    check(as_json("log") == [{"date": "2026-07-13", "slug": slug}],
-          "log --json must return the written entry")
+    logged = as_json("log")
+    check(len(logged) == 1 and logged[0]["date"] == "2026-07-13"
+          and logged[0]["slug"] == slug and logged[0]["title"] == "Neue Suppe"
+          and logged[0]["archived"] is False,
+          "log JSON must retain the entry and add resolved recipe context")
     check(slug in run("log").stdout and slug in run("suggest").stdout,
           "plain log and suggestions must expose the recipe slug for follow-up commands")
     bad_date = as_json_error("cooked", slug, "--date", "2026-13-45")
@@ -277,6 +280,13 @@ def check_shopping(slug):
     imported = as_json("shopping", "add-recipe", slug)
     check([entry["text"] for entry in imported] == ["Wasser", "Salz"],
           "shopping add-recipe must return imported ingredients")
+    preview = as_json("shopping", "preview-recipe", slug)
+    preview_page = run("shopping", "preview-recipe", slug, "--limit", "1")
+    preview_next = run("shopping", "preview-recipe", slug, "--limit", "1", "--offset", "1")
+    check(preview["recipe_revision"] in preview_page.stdout
+          and "Wasser" in preview_page.stdout and "Salz" not in preview_page.stdout
+          and "Weiter:" in preview_page.stdout and "Salz" in preview_next.stdout,
+          "ingredient preview pages must retain the review revision and every ingredient")
     duplicate_import = as_json_error("shopping", "add-recipe", slug)
     check("2 Einkaufsposten" in duplicate_import["error"]
           and "bereits auf der Einkaufsliste" in duplicate_import["error"],
@@ -325,12 +335,35 @@ def check_shopping(slug):
           and all(entry["id"] in printed_batch.stdout and entry["text"] in printed_batch.stdout
                   for entry in batch_items),
           "plain batch additions must print each created ID and preserve non-ASCII text")
-    for batch_item in batch_items:
-        as_json("shopping", "check", batch_item["id"])
+    batch_ids = [entry["id"] for entry in batch_items]
+    checked_batch = run("shopping", "check", *batch_ids)
+    check(all(item_id in checked_batch.stdout for item_id in batch_ids)
+          and checked_batch.stdout.count("[x]") == 2,
+          "a plain batch check must print every saved item and its checked state")
+    repeated_batch = as_json("shopping", "check", *batch_ids)
+    check(repeated_batch["changed"] == 0 and repeated_batch["unchanged"] == 2
+          and [entry["id"] for entry in repeated_batch["items"]] == batch_ids,
+          "a batch check must expose actual changes and preserve target order")
     no_open_items = run("shopping", "list", "--pending")
     check("Keine offenen" in no_open_items.stdout and "leer" not in no_open_items.stdout,
           "a fully checked list must not be described as empty by --pending")
-    as_json("shopping", "clear")
+    opened_batch = as_json("shopping", "uncheck", *batch_ids)
+    check(opened_batch["changed"] == 2
+          and all(not entry["checked"] for entry in opened_batch["items"]),
+          "batch uncheck must return the stored open states")
+    rejected_batch = as_json_error("shopping", "check", batch_ids[0], "missing-item")
+    check("missing-item" in rejected_batch["error"]
+          and not as_json("shopping", "list")[0]["checked"],
+          "an invalid batch target must not change another requested item")
+    first_page = run("shopping", "list", "--limit", "1")
+    second_page = run("shopping", "list", "--limit", "1", "--offset", "1")
+    check(batch_ids[0] in first_page.stdout and batch_ids[1] not in first_page.stdout
+          and "Weiter:" in first_page.stdout and batch_ids[1] in second_page.stdout,
+          "shopping list pages must preserve saved order and provide continuation")
+    removed_batch = as_json("shopping", "remove", *batch_ids)
+    check(removed_batch["removed"] == 2 and removed_batch["ids"] == batch_ids
+          and as_json("shopping", "list") == [],
+          "batch removal must identify its targets and remove the whole group")
 
 
 
@@ -411,6 +444,25 @@ def check_favorites(first_photo):
     check("1. Pizza-Kit" in store_text.stdout
           and "Anderswo: Frischer Pizzateig (REWE)" in store_text.stdout,
           "favorites match --store must print the store's ranking for humans")
+    shopping_match = as_json("shopping", "add", "1 Rolle Pizzateig")
+    store_list = as_json("shopping", "list", "--store", "Edeka")
+    check(store_list[0]["id"] == shopping_match["id"]
+          and [product["id"] for product in store_list[0]["favorite"]["products"]]
+          == [fallback["id"]],
+          "shopping list --store must return matching preferences in one result")
+    plain_store = run("shopping", "list", "--store", "Edeka")
+    check(shopping_match["id"] in plain_store.stdout
+          and fallback["id"] in plain_store.stdout and favorite["id"] in plain_store.stdout
+          and "Anderswo:" in plain_store.stdout,
+          "store shopping output must retain item IDs and distinguish products elsewhere")
+    as_json("shopping", "remove", shopping_match["id"])
+    updated_plain = run("favorites", "product-set", need["id"], favorite["id"],
+                        "--note", "Weiter: Dies ist eine gespeicherte Notiz")
+    check("Tante Fanny" in updated_plain.stdout and "REWE" in updated_plain.stdout
+          and favorite["image_filename"] in updated_plain.stdout
+          and "  Notiz: Weiter: Dies ist eine gespeicherte Notiz" in updated_plain.stdout
+          and "\nWeiter: Dies ist" not in updated_plain.stdout,
+          "product changes must print saved details with external text in a labeled field")
     renamed_need = as_json(
         "favorites", "set", need["id"], "--name", "Frischer Pizzateig",
     )

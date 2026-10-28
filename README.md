@@ -151,7 +151,7 @@ shell and shopping state for offline use, and `/api/` stays network-only.
 ## CLI
 
 ```bash
-gusto list                          # all recipes
+gusto list                          # recipe page; follow Weiter for more
 gusto list --max-time 30            # only recipes with a known duration <= 30
 gusto home                          # server, service and active data directory
 gusto search "linsen kokos"         # full-text incl. ingredients in the body
@@ -159,13 +159,12 @@ gusto tags --all                    # all tag facets and configured tags
 gusto categories assign diet vegan # classify a tag through the service
 gusto categories add season "Saison" # create another ordered facet
 gusto show spaghetti-carbonara
-gusto new "Title" --tags a,b --duration 25 --servings 2
-gusto show <slug> --json            # obtain the current revision
-gusto content set <slug> --file recipe.md --revision <revision>
-gusto set <slug> --title "New title" --revision <revision>
+gusto new "Title" --file recipe.md --tags a,b --duration 25 --servings 2
+gusto show <slug>                   # content, metadata and current revision
+gusto set <slug> --file recipe.md --title "New title" --revision <revision>
 gusto set <slug> --servings 4 --revision <revision>
 gusto set <slug> --clear-servings --revision <revision>
-gusto shopping preview-recipe <slug> --servings 4 --json
+gusto shopping preview-recipe <slug> --servings 4
 gusto shopping add-recipe <slug> --servings 4 --revision <recipe_revision>
 gusto backup create --file backup.zip
 gusto backup preview --file backup.zip --json
@@ -190,6 +189,8 @@ gusto favorites product-add Spaghetti "De Cecco n. 12" --brand "De Cecco" --imag
 gusto favorites product-move Spaghetti <id> 1
 gusto shopping add "Parmesan" --source spaghetti-carbonara
 gusto shopping add-many "Milch" "Brot" "6 Eier"  # one atomic group
+gusto shopping list --pending --store REWE # items with preferred products
+gusto shopping check <id> <id>     # one atomic group; also uncheck/remove
 gusto shopping remove-done         # remove every checked item
 gusto shopping clear               # empty the complete visible list
 gusto update                        # verified release update + rollback on failure
@@ -198,12 +199,21 @@ gusto status                        # current-user service status
 gusto uninstall                     # interactive: app only or app + data
 ```
 
-The recipe edit examples are alternatives: read `show --json` again after each
-change and use its current `revision`. A stale revision is rejected; merge any
-concurrent changes before retrying. For adjusted shopping portions, review the
+The recipe edit examples are alternatives: use the revision from the state
+you reviewed, including a successful preceding write. A stale revision is
+rejected; read and merge concurrent changes before retrying. `new --file`
+creates the complete recipe in one call; `set --file` combines content and
+metadata changes atomically. For adjusted shopping portions, review the
 preview warnings and use its `recipe_revision`. Review backup effects before
 restoring with the preview's `token`; restore creates a safety backup. Archives
 are limited to 64 MiB compressed, 128 MiB unpacked and 32 MiB per file.
+
+Normal text is the working interface for people and agents: it includes IDs,
+metadata, revisions and saved results. `Hinweis:` carries warnings and service
+selection, `Weiter:` continues bounded output, and `Rückgängig:` supplies an
+available reversal. A successful write needs no verification read. Lists accept
+`--limit`/`--offset`; long recipe details use the returned continuation command.
+JSON remains complete by default unless explicit paging is requested.
 
 Every command takes `--json` for machine-readable output; normal remote
 commands also accept global `--server URL`, with `GUSTO_URL` as the environment
@@ -217,7 +227,7 @@ validation succeeds. Parser/usage errors remain on stderr with exit code 2.
 
 A lost reply to a mutation can report `outcome_unknown:true`; inspect the
 affected state on the same server before repeating that change. Read-only
-queries can be repeated. Headless recipe replacement uses `content set --file`
+queries can be repeated. Headless recipe creation/replacement uses `new --file` or `set --file`
 (UTF-8, optional BOM, or UTF-16 with BOM) or `--stdin` (UTF-8). Input files
 remain in place after upload. Interactive edit failures retain a recovery copy
 and report its `recovery_path`.

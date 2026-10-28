@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -64,7 +65,6 @@ def main():
 
     skill_root = ROOT / "skill/gusto"
     skill = (skill_root / "SKILL.md").read_text(encoding="utf-8")
-    cli_reference = (skill_root / "references/cli.md").read_text(encoding="utf-8")
     installation = (
         skill_root / "references/installation.md"
     ).read_text(encoding="utf-8")
@@ -83,43 +83,35 @@ def main():
     description = metadata.get("description", "").strip()
     check(0 < len(description) <= 250 and "Use when" in description,
           "skill discovery needs a compact task trigger")
-    # Guard exact interface identifiers, not headings or editorial sentences.
-    # Behavioral meaning is reviewed with the skill; prose remains editable.
-    for required in (
-        "home --json",
-        "server_url",
-        "server_reachable",
-        "server_data_path",
-        "outcome_unknown",
-        "recovery_path",
-        "--file",
-        "categories assign",
-        "archive purge",
-        "install-skill vbot",
-        "references/telegram.md",
-        "references/shopping-trip.md",
-    ):
-        check(required in skill, f"main skill lost critical guidance: {required}")
+    # The installed parser is the syntax source; keep the compact body index
+    # complete without pinning editable prose or duplicating its flag lists.
+    command_index = skill.split("## All commands", 1)[1]
+    indexed_commands = set(re.findall(r"`([^`]+)`", command_index))
+    for name in commands:
+        check(name in indexed_commands, f"skill command index is missing: {name}")
+
+    for document in skill_root.rglob("*.md"):
+        source = document.read_text(encoding="utf-8")
+        for block in re.findall(r"```(?:text|bash|powershell)\n(.*?)```", source, re.DOTALL):
+            for line in block.splitlines():
+                if not line.strip().startswith("gusto "):
+                    continue
+                # Parse examples without executing lifecycle or household writes.
+                # Complete flows are exercised through CLI/API gates and live probes.
+                arguments = shlex.split(line.strip())[1:]
+                arguments = ["1" if value in {"<revision>", "<recipe_revision>"}
+                             else value for value in arguments]
+                parsed = build_parser().parse_args(arguments)
+                check(callable(parsed.func),
+                      f"skill example does not reach a leaf: {document.name}: {line}")
+
     trip = (skill_root / "references/shopping-trip.md").read_text(encoding="utf-8")
-    check("--store" in trip and "shopping list" in trip and "products" in trip,
-          "the store trip reference must retain its CLI and ranking inputs")
+    check("shopping list --pending --store" in trip,
+          "a store trip must obtain preferences with its shopping list")
     check("done_label" not in skill and "channel_send" in telegram
           and "checklist" in telegram and "done_label" in telegram
           and "shopping check" in telegram and "shopping uncheck" in telegram,
           "host-specific Telegram detail must stay routed out of the main skill")
-
-    documented_calls = re.findall(r"`([^`]+)`", cli_reference, re.DOTALL)
-    documented_calls = [" ".join(call.split()) for call in documented_calls]
-    documented_calls = [
-        verb + (" " + tail if separator else "")
-        for call in documented_calls
-        for head, separator, tail in [call.partition(" ")]
-        for verb in head.split("|")
-    ]
-    for name in EXPECTED_COMMANDS:
-        check(any(re.match(r"(?:gusto )?" + re.escape(name) + r"(?:\s|$)", call)
-                  for call in documented_calls),
-              f"full CLI reference does not name command: {name}")
     for reference in skill_root.rglob("*.md"):
         content = reference.read_text(encoding="utf-8")
         for relative in re.findall(r"`(references/[^`\s]+\.md)`", content):
@@ -127,14 +119,6 @@ def main():
                   f"broken skill reference in {reference.name}: {relative}")
             check(reference == skill_root / "SKILL.md",
                   "route optional workflows from the body instead of chaining references")
-    for required in (
-        "~/.vbot/skills/gusto",
-        "--app-root PATH",
-        '"status": "installed"',
-        '"overwritten": true',
-    ):
-        check(required in cli_reference,
-              f"CLI reference lost a result/safety contract: {required}")
     for required in (
         "gusto install-skill vbot",
         "~/.vbot/skills/gusto",

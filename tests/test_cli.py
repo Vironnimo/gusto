@@ -12,6 +12,7 @@ from _cli_support import (
 import _cli_support as support
 from _cli_forwarding import check_forwarding
 from _cli_client import check_client_contract
+from _cli_presentation import check_presentation
 from _cli_local import (check_lifecycle_contract, check_serve_json_contract,
                         check_serve_dependency_preflight)
 from _cli_editor import (check_edit_readback_contract, check_editor_arguments_contract,
@@ -27,6 +28,7 @@ def main():
           "importing the normal CLI client must not import local persistence")
     os.environ.update(ENV)
     check_forwarding()
+    check_presentation()
     check_lifecycle_contract()
     check_edit_readback_contract()
     check_edit_cleanup_failure()

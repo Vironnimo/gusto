@@ -4,21 +4,18 @@ from __future__ import annotations
 import sys
 
 from . import client
-from ._cli_terminal import dump, remote, text
+from ._cli_terminal import add_paging, dump, page, remote, text
 
 
 def cmd_favorites_list(args):
     needs = remote(args, "favorites.list")
-    if args.json:
-        dump(needs)
-        return
-    if not needs:
-        print("Noch keine Einkaufsbedarfe hinterlegt.")
-        return
-    for need in needs:
+
+    def render(need):
         count = len(need["products"])
         noun = "Produkt" if count == 1 else "Produkte"
-        print(f"  {need['id']}  {text(need['name'])}  ({count} {noun})")
+        print(f"  {text(need['id'])}  {text(need['name'])}  ({count} {noun})")
+
+    page(args, needs, "Einkaufsbedarfe in gespeicherter Reihenfolge", render)
 
 
 def _store_arguments(args, arguments: dict) -> dict:
@@ -36,7 +33,7 @@ def _print_favorite_products(need: dict) -> None:
             text(value) for value in [product["brand"], product.get("store")] if value
         )
         print(
-            f"  {position}. {text(product['name'])}  (ID: {product['id']})"
+            f"  {position}. {text(product['name'])}  (ID: {text(product['id'])})"
             + (f"  [{details}]" if details else "")
         )
         if product.get("note"):
@@ -47,8 +44,24 @@ def _print_favorite_products(need: dict) -> None:
     if elsewhere:
         print("  Anderswo: " + ", ".join(
             f"{text(product['name'])} ({text(product['store'])})"
-            f" [ID: {product['id']}]" for product in elsewhere
+            f" [ID: {text(product['id'])}]" for product in elsewhere
         ))
+
+
+def _print_need(need: dict) -> None:
+    print(f"Einkaufsbedarf: {text(need['name'])} (ID: {text(need['id'])})"
+          + (f"  (bei {text(need['store'])})" if "store" in need else ""))
+    print("  Aliasse: " + (", ".join(text(alias) for alias in need["aliases"]) or "keine"))
+    _print_favorite_products(need)
+
+
+def _print_product(product: dict) -> None:
+    print(f"  ID: {text(product['id'])}")
+    print(f"  Name: {text(product['name'])}")
+    print(f"  Marke: {text(product['brand'])}")
+    print(f"  Laden: {text(product.get('store') or 'überall')}")
+    print(f"  Notiz: {text(product.get('note') or 'keine')}")
+    print(f"  Bild: {text(product.get('image_filename') or 'keines')}")
 
 
 def cmd_favorites_show(args):
@@ -57,11 +70,7 @@ def cmd_favorites_show(args):
     if args.json:
         dump(need)
         return
-    print(f"{need['id']}  {text(need['name'])}"
-          + (f"  (bei {text(need['store'])})" if "store" in need else ""))
-    if need["aliases"]:
-        print("  Aliasse: " + ", ".join(text(alias) for alias in need["aliases"]))
-    _print_favorite_products(need)
+    page(args, [need], "Einkaufsbedarf mit Lieblingsprodukten, bestes zuerst", _print_need)
 
 
 def cmd_favorites_match(args):
@@ -72,8 +81,8 @@ def cmd_favorites_match(args):
     elif need is None:
         print("Keine Zuordnung gefunden.")
     else:
-        print(f"{text(args.text)} -> {need['id']}  {text(need['name'])}")
-        _print_favorite_products(need)
+        print(f"Zuordnung gefunden für: {text(args.text)}")
+        page(args, [need], "Einkaufsbedarf mit Lieblingsprodukten, bestes zuerst", _print_need)
 
 
 def cmd_favorites_add(args):
@@ -83,7 +92,8 @@ def cmd_favorites_add(args):
     if args.json:
         dump(need)
     else:
-        print(f"Einkaufsbedarf angelegt: {text(need['name'])} ({need['id']})")
+        print("Einkaufsbedarf angelegt.")
+        _print_need(need)
 
 
 def cmd_favorites_set(args):
@@ -93,7 +103,8 @@ def cmd_favorites_set(args):
     if args.json:
         dump(need)
     else:
-        print(f"Einkaufsbedarf aktualisiert: {need['id']}  {text(need['name'])}")
+        print("Einkaufsbedarf aktualisiert.")
+        _print_need(need)
 
 
 def cmd_favorites_remove(args):
@@ -101,7 +112,7 @@ def cmd_favorites_remove(args):
     if args.json:
         dump(result)
     else:
-        print(f"Einkaufsbedarf entfernt: {text(args.need)}")
+        print(f"Einkaufsbedarf entfernt: {text(result['id'])}; nicht wiederherstellbar.")
 
 
 def cmd_favorites_alias_add(args):
@@ -112,6 +123,7 @@ def cmd_favorites_alias_add(args):
         dump(need)
     else:
         print(f"Alias bei '{text(need['name'])}' hinterlegt: {text(args.alias)}")
+        _print_need(need)
 
 
 def cmd_favorites_alias_remove(args):
@@ -123,6 +135,7 @@ def cmd_favorites_alias_remove(args):
         dump(need)
     else:
         print(f"Alias bei '{text(need['name'])}' entfernt: {text(args.alias)}")
+        _print_need(need)
 
 
 def cmd_favorites_product_add(args):
@@ -144,10 +157,8 @@ def cmd_favorites_product_add(args):
     if args.json:
         dump(product)
     else:
-        print(
-            f"Lieblingsprodukt hinzugefuegt: "
-            f"{text(product['name'])} ({product['id']})"
-        )
+        print("Lieblingsprodukt hinzugefügt.")
+        _print_product(product)
 
 
 def cmd_favorites_product_set(args):
@@ -175,7 +186,8 @@ def cmd_favorites_product_set(args):
     if args.json:
         dump(product)
     else:
-        print(f"Lieblingsprodukt aktualisiert: {product['id']}  {text(product['name'])}")
+        print("Lieblingsprodukt aktualisiert.")
+        _print_product(product)
 
 
 def cmd_favorites_product_move(args):
@@ -188,7 +200,7 @@ def cmd_favorites_product_move(args):
         dump(need)
     else:
         print(f"Reihenfolge bei '{text(need['name'])}' aktualisiert.")
-        _print_favorite_products(need)
+        _print_need(need)
 
 
 def cmd_favorites_product_remove(args):
@@ -198,7 +210,8 @@ def cmd_favorites_product_remove(args):
     if args.json:
         dump(need)
     else:
-        print(f"Lieblingsprodukt {args.id} bei '{text(need['name'])}' entfernt.")
+        print(f"Lieblingsprodukt {text(args.id)} bei '{text(need['name'])}' entfernt.")
+        _print_need(need)
 
 
 def _print_shopping_item(item: dict, as_json: bool, *, prefix: str = "") -> None:
@@ -206,25 +219,29 @@ def _print_shopping_item(item: dict, as_json: bool, *, prefix: str = "") -> None
         dump(item)
         return
     marker = "[x]" if item["checked"] else "[ ]"
-    line = f"{marker} {item['id']}  {text(item['text'])}"
+    line = f"{marker} {text(item['id'])}  {text(item['text'])}"
     if item.get("quantity"):
         line += f"  ({text(item['quantity'])})"
     if item.get("source"):
-        line += f"  (aus {item['source']})"
+        line += f"  (aus {text(item['source'])})"
     print(prefix + line)
+    if "favorite" in item:
+        if item["favorite"] is None:
+            print("    Kein zugeordneter Einkaufsbedarf.")
+        else:
+            print(f"    Einkaufsbedarf: {text(item['favorite']['name'])}")
+            _print_favorite_products(item["favorite"])
 
 
 def cmd_shopping_list(args):
-    items = remote(args, "shopping.list", {"pending": args.pending})
-    if args.json:
-        dump(items)
-        return
-    if not items:
+    items = remote(args, "shopping.list", _store_arguments(args, {"pending": args.pending}))
+    if not items and not args.json:
         print("Keine offenen Einkaufsposten." if args.pending else "Einkaufsliste ist leer.")
         return
-    print(f"{len(items)} {'offene ' if args.pending else ''}Einkaufsposten:")
-    for i in items:
-        _print_shopping_item(i, False, prefix="  ")
+    if args.pending and not args.json:
+        print("Hinweis: Nur offene Einträge; ohne --pending auch abgehakte anzeigen.")
+    page(args, items, "Einkaufsposten, älteste zuerst",
+         lambda item: _print_shopping_item(item, False, prefix="  "))
 
 
 def cmd_shopping_add(args):
@@ -255,7 +272,7 @@ def cmd_shopping_add_recipe(args):
     if args.json:
         dump(items)
     else:
-        print(f"{len(items)} Zutat(en) aus '{args.slug}' hinzugefuegt.")
+        print(f"{len(items)} Zutat(en) aus '{text(args.slug)}' hinzugefügt.")
         for item in items:
             _print_shopping_item(item, False, prefix="  ")
 
@@ -270,34 +287,52 @@ def cmd_shopping_preview_recipe(args):
     servings = preview["target_servings"]
     label = f"{servings} Portionen" if servings is not None else "unbekannte Portionszahl"
     print(f"Zutaten für {label} (Revision: {preview['recipe_revision']}):")
-    for ingredient in preview["ingredients"]:
+
+    def render(ingredient):
         print("  " + text(ingredient["scaled"]))
         if ingredient.get("warning"):
             print("    Hinweis: " + text(ingredient["warning"]))
 
+    page(args, preview["ingredients"], "Zutaten in Rezeptreihenfolge", render)
 
-def cmd_shopping_check(args):
-    item = remote(args, "shopping.check", {"id": args.id})
+
+def _shopping_state(args, operation: str, label: str):
+    multiple = len(args.id) > 1
+    item = remote(args, operation + ("_many" if multiple else ""),
+                  {"ids": args.id} if multiple else {"id": args.id[0]})
     if args.json:
         dump(item)
     else:
-        _print_shopping_item(item, False, prefix="Abgehakt: ")
+        items = item["items"] if multiple else [item]
+        print(f"{len(items)} Einkaufsposten {label}."
+              + (f" {item['changed']} geändert, {item['unchanged']} bereits in diesem Zustand."
+                 if multiple else ""))
+        for saved in items:
+            _print_shopping_item(saved, False, prefix="  ")
+
+
+def cmd_shopping_check(args):
+    _shopping_state(args, "shopping.check", "abgehakt")
 
 
 def cmd_shopping_uncheck(args):
-    item = remote(args, "shopping.uncheck", {"id": args.id})
-    if args.json:
-        dump(item)
-    else:
-        _print_shopping_item(item, False, prefix="Wieder offen: ")
+    _shopping_state(args, "shopping.uncheck", "offen")
 
 
 def cmd_shopping_remove(args):
-    result = remote(args, "shopping.remove", {"id": args.id})
+    multiple = len(args.id) > 1
+    result = remote(args, "shopping.remove_many" if multiple else "shopping.remove",
+                    {"ids": args.id} if multiple else {"id": args.id[0]})
     if args.json:
         dump(result)
     else:
-        print(f"Entfernt: {args.id}")
+        if multiple:
+            print(f"{result['removed']} Einkaufsposten entfernt; "
+                  f"{result['unchanged']} bereits entfernt. Nicht wiederherstellbar.")
+            for item_id in result["ids"]:
+                print(f"  ID: {text(item_id)}")
+        else:
+            print(f"Entfernt: {text(args.id[0])}; nicht wiederherstellbar.")
 
 
 def cmd_shopping_remove_done(args):
@@ -330,18 +365,21 @@ def register_commands(sub, base) -> None:
     )
     fp = fsub.add_parser("list", parents=[base],
                          help="Alle Einkaufsbedarfe anzeigen.")
+    add_paging(fp)
     fp.set_defaults(func=cmd_favorites_list)
 
     fp = fsub.add_parser("show", parents=[base],
                          help="Einen Einkaufsbedarf mit Produkten anzeigen.")
     fp.add_argument("need", help="Id oder exakter Name des Einkaufsbedarfs.")
     fp.add_argument("--store", help=store_filter_help)
+    add_paging(fp, limit=False)
     fp.set_defaults(func=cmd_favorites_show)
 
     fp = fsub.add_parser("match", parents=[base],
                          help="Exakten Bedarfsnamen oder Alias zuordnen und Produktranking zeigen; keine Teiltextsuche.")
     fp.add_argument("text", help="Einkaufstext; Groß-/Kleinschreibung und Leerraum werden ignoriert, Mengen nicht.")
     fp.add_argument("--store", help=store_filter_help)
+    add_paging(fp, limit=False)
     fp.set_defaults(func=cmd_favorites_match)
 
     fp = fsub.add_parser("add", parents=[base],
@@ -421,6 +459,9 @@ def register_commands(sub, base) -> None:
     ep = esub.add_parser("list", parents=[base], help="Einkaufsliste anzeigen.")
     ep.add_argument("--pending", action="store_true",
                     help="Nur offene Einträge. Ohne Flag: offene und abgehakte Einträge.")
+    ep.add_argument("--store", help="Passende Lieblingsprodukte für diesen Laden mit anzeigen. "
+                    "Ohne Angabe: nur die Einkaufsposten.")
+    add_paging(ep)
     ep.set_defaults(func=cmd_shopping_list)
 
     ep = esub.add_parser("add", parents=[base], help="Eintrag hinzufuegen.")
@@ -459,18 +500,22 @@ def register_commands(sub, base) -> None:
                          help="Zutaten für eine Portionszahl ohne Änderung prüfen.")
     ep.add_argument("slug", help="Rezept-Slug aus list oder search.")
     ep.add_argument("--servings", type=int, help="Gewünschte Portionszahl. Ohne Angabe: Rezeptportionen.")
+    add_paging(ep)
     ep.set_defaults(func=cmd_shopping_preview_recipe)
 
-    ep = esub.add_parser("check", parents=[base], help="Eintrag abhaken.")
-    ep.add_argument("id", help="Eintrags-ID aus shopping list. Bereits abgehakt bleibt unverändert.")
+    ep = esub.add_parser("check", parents=[base], help="Ein oder mehrere Einträge gemeinsam abhaken; gespeicherte Zustände ausgeben.")
+    ep.add_argument("id", nargs="+", help="Eintrags-IDs aus shopping list. Bereits abgehakt bleibt unverändert. "
+                    "Ungültige IDs verhindern die gesamte Änderung.")
     ep.set_defaults(func=cmd_shopping_check)
 
-    ep = esub.add_parser("uncheck", parents=[base], help="Haekchen wieder entfernen.")
-    ep.add_argument("id", help="Eintrags-ID aus shopping list. Bereits offen bleibt unverändert.")
+    ep = esub.add_parser("uncheck", parents=[base], help="Ein oder mehrere Einträge gemeinsam öffnen; gespeicherte Zustände ausgeben.")
+    ep.add_argument("id", nargs="+", help="Eintrags-IDs aus shopping list. Bereits offen bleibt unverändert. "
+                    "Ungültige IDs verhindern die gesamte Änderung.")
     ep.set_defaults(func=cmd_shopping_uncheck)
 
-    ep = esub.add_parser("remove", parents=[base], help="Eintrag entfernen; nicht per CLI wiederherstellbar.")
-    ep.add_argument("id", help="Eintrags-ID aus shopping list; erneutes Entfernen bleibt ohne Wirkung.")
+    ep = esub.add_parser("remove", parents=[base], help="Ein oder mehrere Einträge gemeinsam entfernen; nicht wiederherstellbar.")
+    ep.add_argument("id", nargs="+", help="Eintrags-IDs aus shopping list; erneutes Entfernen bleibt ohne Wirkung. "
+                    "Unbekannte IDs verhindern die gesamte Änderung.")
     ep.set_defaults(func=cmd_shopping_remove)
 
     remove_done_help = (

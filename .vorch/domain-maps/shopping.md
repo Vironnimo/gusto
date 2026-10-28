@@ -69,6 +69,7 @@ List mutation semantics (also stated in the skill):
 - Ingredient scaling details and warnings: `shopping/portion-import.md`.
 - A sourced single add (`shopping add --source`) needs an active recipe and joins the same import guard. Archived recipes are rejected for new attribution but remain valid sources of existing items, whose presentation resolves through the catalog's active-or-archived reference map.
 - Explicit check/uncheck to the current state and removing an existing tombstone are no-ops: no write, no new `updated_at`, no change event. Unknown ids are errors; check/uncheck of a tombstone is an error too.
+- Batch check/uncheck/remove deduplicate ids in request order and validate all before saving once. Check/uncheck returns items and changed/unchanged counts; remove returns ids and removed/unchanged counts. Single-item result shapes stay unchanged.
 - `remove-done` tombstones every visible checked item, `clear` every visible item, each in one transaction returning the removed count (API and CLI: `{ "removed": N }`). No restore action exists in Core, API, CLI or web.
 
 Ingredient parsing (`parse_ingredients`, owned here): only lines after a line that is exactly `## Zutaten` (after trimming), up to the next line starting with `## `. Only `-` or `*` bullets followed by whitespace count, each whole remaining line one entry; `+` bullets, numbered lists, bold lines and thematic breaks are ignored, while H3 subsections and nested bullets stay inside the section. Changing the rule changes what existing recipes import.
@@ -101,7 +102,7 @@ Wire details: `docs/sync-kontrakt.md`. Invariants every shopping change keeps:
 
 ## Conventions
 
-- New shopping behavior goes into Core, then the command API and CLI with `--json`, then web and PWA (`.vorch/PROJECT.md` -> Architecture). The PWA is the only offline writer; the CLI never queues offline work.
+- The PWA is the only offline writer; the CLI never queues offline work. Delivery order: `.vorch/PROJECT.md` -> Architecture.
 - A list mutation is one load-modify-save transaction under its lock: it advances `updated_at` per changed item, tombstones instead of deleting, and skips the save when nothing changed. `shopping_save` and `favorites_save` replace the whole state and exist for tests; product code must not apply mutations through them.
 - User-visible messages and errors are German; error strings reach agents through the CLI JSON error contract.
 - Contract changes update together: Core, `shopping-client.js` (it duplicates normalization and timestamp advancement), the matching `docs/` contract, and the skill's shopping sections (`SKILL.md`, `references/cli.md`, `shopping-trip.md`, `telegram.md`; owner `cli.md`).

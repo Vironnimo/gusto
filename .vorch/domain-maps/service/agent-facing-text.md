@@ -15,6 +15,7 @@ instructions; preserve its shapes under `service.md` -> Interfaces.
 
 | Text | Reason |
 |---|---|
+| `Der Laden darf nicht leer sein.` | An explicitly requested store enrichment needs a non-empty normalized store name; an absent store retains the ordinary shopping item shape. `test_api.py` checks rejection before enrichment. |
 | `Die Ausführung ist nicht bestätigt; der Befehl kann bereits ausgeführt sein.` | `client._response_failure` cannot distinguish a lost reply from a request that never ran. Prevents interpreting transport failure as permission to repeat a mutation; `test_api.check_client_failure_recovery` and `test_cli.check_uncertain_delivery_contract` cover this boundary. |
 | `Prüfe den Zustand auf demselben Server, bevor du eine Änderung erneut sendest.` | A read from another server cannot establish whether the uncertain mutation happened. Directs recovery to the target already named by the error without replaying a possibly non-idempotent action. |
 | `Dieser Befehl liest nur Daten und kann erneut ausgeführt werden.` | Only operations in `READ_ONLY_OPERATIONS` get this sentence. Allows read recovery without extending retry permission to mutations or unknown operation names. |

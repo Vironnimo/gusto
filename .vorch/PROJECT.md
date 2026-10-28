@@ -4,7 +4,7 @@
 
 Gusto is a self-hosted, German-language recipe system for one household on Windows and Linux, reachable from every device on the local network. It replaces paper recipes and lets an agent answer questions such as "what should I cook today?" or "what can I make with these ingredients?" through the CLI. Recipes are portable Markdown files; metadata, cooking log, shopping list and preferred products live in JSON next to them.
 
-One per-user Gusto service owns the data store and serves the browser UI, the shopping PWA and the anonymous LAN command API. The `gusto` CLI and the browser are thin clients of that running service; agents operate Gusto through the CLI with `--json`, guided by the shipped skill in `skill/gusto/`.
+One per-user Gusto service owns the data store and serves the browser UI, the shopping PWA and the anonymous LAN command API. The `gusto` CLI and the browser are thin clients of that running service. Agents use normal text output for household tasks and `--json` for programmatic processing, guided by the shipped skill in `skill/gusto/` (user decision 2026-10-28).
 
 ## Architecture
 

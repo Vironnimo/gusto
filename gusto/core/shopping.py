@@ -241,6 +241,43 @@ def shopping_toggle(item_id: str, checked: bool | None = None) -> records.Shoppi
     return target
 
 
+def _shopping_targets(items: list[records.ShoppingItem], item_ids: list[str], *,
+                      include_deleted: bool) -> list[records.ShoppingItem]:
+    """Validate the complete explicit selection and keep its first-seen order."""
+    if (not isinstance(item_ids, list) or not item_ids
+            or any(not isinstance(item_id, str) or not item_id for item_id in item_ids)):
+        raise ValueError("Mindestens eine nicht leere Einkaufslisten-ID ist erforderlich.")
+    by_id = {item.id: item for item in items if include_deleted or not item.deleted}
+    targets = []
+    for item_id in dict.fromkeys(item_ids):
+        if item_id not in by_id:
+            raise errors.NotFoundError(f"Kein Einkauf-Item mit id '{item_id}'.")
+        targets.append(by_id[item_id])
+    return targets
+
+
+@storage.locked_mutation("shopping")
+def shopping_check_many(item_ids: list[str], checked: bool) -> dict:
+    """Set explicit checkmarks atomically and report changed and unchanged items.
+
+    Duplicate ids count once, in request order. An unknown id or tombstone
+    rejects the whole selection. Repeating an explicit state does not write.
+    """
+    if not isinstance(checked, bool):
+        raise ValueError("Der Einkaufsstatus muss wahr oder falsch sein.")
+    items = shopping_load()
+    targets = _shopping_targets(items, item_ids, include_deleted=False)
+    changes = [(item, timestamps._now_iso(item.updated_at))
+               for item in targets if item.checked != checked]
+    for item, updated_at in changes:
+        item.checked = checked
+        item.updated_at = updated_at
+    if changes:
+        _shopping_save_unlocked(items)
+    return {"items": targets, "changed": len(changes),
+            "unchanged": len(targets) - len(changes)}
+
+
 @storage.locked_mutation("shopping")
 def shopping_remove(item_id: str) -> None:
     """Mark item as a tombstone: deleted=True + update updated_at (do NOT hard-
@@ -255,6 +292,22 @@ def shopping_remove(item_id: str) -> None:
     target.deleted = True
     target.updated_at = timestamps._now_iso(target.updated_at)
     _shopping_save_unlocked(items)
+
+
+@storage.locked_mutation("shopping")
+def shopping_remove_many(item_ids: list[str]) -> dict:
+    """Tombstone an explicit selection atomically, accepting existing tombstones."""
+    items = shopping_load()
+    targets = _shopping_targets(items, item_ids, include_deleted=True)
+    changes = [(item, timestamps._now_iso(item.updated_at))
+               for item in targets if not item.deleted]
+    for item, updated_at in changes:
+        item.deleted = True
+        item.updated_at = updated_at
+    if changes:
+        _shopping_save_unlocked(items)
+    return {"removed": len(changes), "unchanged": len(targets) - len(changes),
+            "ids": [item.id for item in targets]}
 
 
 @storage.locked_mutation("shopping")
