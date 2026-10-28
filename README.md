@@ -30,7 +30,7 @@ The UI and the data fields are German; the code is English.
 Installation is entirely per-user: no administrator or root rights, no
 system-wide files and no token configuration. Windows needs no preinstalled
 Python: the PowerShell bootstrap downloads Gusto's pinned, SHA-256-verified
-app-private Python and creates each Gusto version in its own venv. Linux uses
+app-private Python 3.14 and creates each Gusto version in its own venv. Linux uses
 an existing Python 3.10 or newer. The installer registers Gusto for the current
 user, enables login autostart, starts the service immediately and verifies its
 health.

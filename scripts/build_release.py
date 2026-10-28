@@ -21,14 +21,14 @@ import gusto  # noqa: E402, F401 - configure temp for this process and its child
 
 MANIFEST_NAME = "gusto-release.json"
 INSTALLER_NAME = "install.py"
-WINDOWS_PYTHON_VERSION = "3.13.14"
+WINDOWS_PYTHON_VERSION = "3.14.10"
 WINDOWS_PYTHON_ASSET = "python-runtime-windows-x64.nupkg"
 WINDOWS_PYTHON_URL = (
     "https://www.nuget.org/api/v2/package/python/"
     f"{WINDOWS_PYTHON_VERSION}"
 )
 WINDOWS_PYTHON_SHA256 = (
-    "9ac15cfa6cab1115c83d48f2af55c554efa4d1bb044bbc4ab1c9d17ad426e16c"
+    "f54ba67c9951c3d773ea47d2bb095150c037c399f0423a968bcda22809241784"
 )
 
 

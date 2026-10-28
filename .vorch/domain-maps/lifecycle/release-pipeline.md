@@ -4,7 +4,7 @@ Owners: `scripts/build_release.py`, the public bootstraps, `.github/workflows/re
 
 ## Asset trust and source
 
-The build creates a wheel, `install.py`, `install.ps1`, `install.sh`, `python-runtime-windows-x64.nupkg` and schema-2 `gusto-release.json`, without an outer bundle ZIP. The manifest includes Gusto version, `minimum_system_python`, and bare asset names with SHA-256. The Windows Python entry also names its version and `layout:tools`. Production builds download the pinned NuGet Python package and check the pinned hash before publishing; the hidden local Python source option exists for fixtures.
+The build creates a wheel, `install.py`, `install.ps1`, `install.sh`, `python-runtime-windows-x64.nupkg` and schema-2 `gusto-release.json`, without an outer bundle ZIP. The manifest includes Gusto version, `minimum_system_python`, and bare asset names with SHA-256. The Windows Python entry also names its version and `layout:tools`. Production builds download the pinned x64 NuGet Python 3.14 package and check the pinned hash before publishing; `scripts/build_release.py` owns the exact maintenance version and SHA-256. The hidden local Python source option exists for fixtures.
 
 Windows bootstrap downloads and verifies wheel, installer and Python package before running the extracted interpreter. Linux uses suitable system Python and verifies wheel/installer. Runtime update validates wheel, installer and Windows Python manifest entries on every platform, although it downloads only what the update needs. `minimum_system_python` is metadata; the Linux bootstrap and shared installer explicitly require 3.10 rather than deriving that minimum dynamically from the manifest.
 
