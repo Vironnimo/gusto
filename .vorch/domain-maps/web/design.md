@@ -10,7 +10,7 @@ The design brief for Gusto's browser UI and where it is implemented. Entry point
 
 Defined once on `:root` in `style.css`; reuse the variables instead of new literals.
 - Paper `--paper #f6efe1` (page, manifest `background_color`), card paper `--paper-card #fcf7ec`, ink `--ink #2a201a`, soft ink `--ink-soft #7a6a59`, rules `--line #e6d9c2` and `--line-strong #d8c6a8`.
-- Paprika accent `--accent #bf4528` (primary buttons, active states, eyebrows, step numerals, `theme-color`, icon background) and `--accent-deep #9c3318` (hover, error text).
+- Paprika accent `--accent #bf4528` (primary buttons, active states, eyebrows, step numerals, `theme-color`) and `--accent-deep #9c3318` (hover, error text).
 - Herb green is `--olive #5f6b43` (tags, durations, quantities, checked boxes, archive badges); `--honey #cf9a3c` appears only in soft gradients and small accents.
 - `--serif` Fraunces (optical size 9..144, weights 400 to 900 with italics) for brand, titles, recipe headings and numerals; `--sans` Hanken Grotesk (400 to 800, body weight 450). Fallbacks are Georgia and system-ui; both families load from Google Fonts (`web.md` -> External Dependencies).
 - `--radius 14px`, warm brown shadows `--shadow` and `--shadow-lift`, content width `--maxw 1080px`.
@@ -23,7 +23,7 @@ Defined once on `:root` in `style.css`; reuse the variables instead of new liter
 - Cards: paper cards with a paprika edge bar and a lift on hover; entry animation `rise` with `animation-delay: calc(var(--i)*45ms)`, where templates set `style="--i: {{ loop.index0 }}"`. Reduced motion and live-search swaps disable it.
 - Buttons: `.btn` (paprika fill), `.btn-ghost` (outlined), `.btn-text` (quiet; destructive actions sit behind `details` or confirmations).
 - Empty states: centered emoji, one sentence, one call to action. Errors: the `.error` box in accent tint.
-- Brand mark `❖` beside the wordmark. PWA icons come from `gusto/static/icons/make_icons.py` (cream glyph on paprika); the script needs the Windows font `seguisym.ttf`.
+- Brand mark: a paprika ceramic mortar and pestle with a basil leaf on cream, beside the wordmark (also on the standalone recovery page). The selected Image Generation master is `assets/branding/gusto-mortar.png`; `gusto/static/icons/make_icons.py` exports PNGs with Pillow, without OS fonts. It supplies browser favicons, the Apple touch icon and PWA icons, including a separately padded maskable version. All runtime icons are precached by `sw.js`; the master stays outside the runtime package.
 
 ## Layout and responsiveness
 

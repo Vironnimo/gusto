@@ -10,7 +10,7 @@
 //                fetched HTML: network-only
 
 // The version bump also evicts HTML pages cached by the old fallthrough.
-const CACHE = "gusto-v20";
+const CACHE = "gusto-v21";
 
 const APP_SHELL = [
   "/shopping",
@@ -20,8 +20,12 @@ const APP_SHELL = [
   "/static/photo-input.js",
   "/static/shopping-client.js",
   "/static/manifest.webmanifest",
+  "/static/icons/icon-32.png",
+  "/static/icons/icon-64.png",
+  "/static/icons/icon-180.png",
   "/static/icons/icon-192.png",
   "/static/icons/icon-512.png",
+  "/static/icons/icon-maskable-512.png",
 ];
 
 self.addEventListener("install", (event) => {

@@ -1,35 +1,38 @@
-"""Generate the PWA icons for Gusto.
+"""Export Gusto's selected mortar artwork into browser and PWA PNG sizes.
 
-Full-bleed accent background (#bf4528) with a centered, cream-colored brand
-glyph (U+2756, black diamond with a dot). Size ~0.58*edge length, which keeps
-it in the safe area for "maskable".
-
-Usage:
-    .venv\\Scripts\\python.exe gusto/static/icons/make_icons.py
+Run from a checkout with Pillow installed:
+    python gusto/static/icons/make_icons.py
+The original artwork stays in assets/branding, outside the runtime package.
 """
-from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 
+from PIL import Image
+
+
 OUT = Path(__file__).resolve().parent
-OUT.mkdir(parents=True, exist_ok=True)
-
-ACCENT = (191, 69, 40, 255)   # #bf4528  paprika red
-CREAM = (252, 247, 236, 255)  # #fcf7ec  cream
-GLYPH = "❖"              # brand glyph
+SOURCE = OUT.parents[2] / "assets" / "branding" / "gusto-mortar.png"
 
 
-def make(size: int) -> None:
-    img = Image.new("RGBA", (size, size), ACCENT)
-    draw = ImageDraw.Draw(img)
-    font = ImageFont.truetype("seguisym.ttf", int(size * 0.58))
-    box = draw.textbbox((0, 0), GLYPH, font=font)
-    x = (size - (box[2] - box[0])) / 2 - box[0]
-    y = (size - (box[3] - box[1])) / 2 - box[1]
-    draw.text((x, y), GLYPH, font=font, fill=CREAM)
-    img.save(OUT / f"icon-{size}.png")
+def main() -> None:
+    with Image.open(SOURCE) as original:
+        artwork = original.convert("RGB")
+    if artwork.width != artwork.height:
+        raise ValueError("The icon master must be square")
+    for size in (32, 64, 180, 192, 512):
+        artwork.resize((size, size), Image.Resampling.LANCZOS).save(
+            OUT / f"icon-{size}.png", optimize=True,
+        )
+
+    # Extra breathing room keeps the mortar and pestle within circular masks.
+    size = 512
+    inset = 52
+    maskable = Image.new("RGB", (size, size), artwork.getpixel((0, 0)))
+    maskable.paste(artwork.resize(
+        (size - 2 * inset, size - 2 * inset), Image.Resampling.LANCZOS,
+    ), (inset, inset))
+    maskable.save(OUT / "icon-maskable-512.png", optimize=True)
+    print("Exported browser, Apple touch and PWA icons")
 
 
 if __name__ == "__main__":
-    for s in (192, 512):
-        make(s)
-    print("icons generated:", [f"icon-{s}.png" for s in (192, 512)])
+    main()

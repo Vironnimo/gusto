@@ -4,10 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }} · Gusto</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='88'%3E%F0%9F%93%96%3C/text%3E%3C/svg%3E">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/icon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="/static/icons/icon-64.png">
   <link rel="manifest" href="/static/manifest.webmanifest">
   <meta name="theme-color" content="#bf4528">
-  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/icon-180.png">
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", function () {
@@ -24,7 +25,7 @@
   <a class="skip-link" href="#main-content">Zum Inhalt</a>
   <header class="masthead">
     <a class="brand" href="/">
-      <span class="brand-mark" aria-hidden="true">❖</span>
+      <img class="brand-mark" src="/static/icons/icon-192.png" width="40" height="40" alt="">
       <span class="brand-text">Gusto</span>
     </a>
     <nav class="nav" aria-label="Hauptnavigation">

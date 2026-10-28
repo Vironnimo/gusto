@@ -343,6 +343,25 @@ try:
               "manifest valid (start_url + icons)")
         check(sw_ready(pg, 8000) is True, "service worker registered + active")
         pg.wait_for_function("() => !!navigator.serviceWorker.controller")
+        icon_assets = pg.evaluate("""async icons => {
+            const entries = [
+                ...icons.map(icon => ({src: icon.src, size: icon.sizes})),
+                ...Array.from(document.querySelectorAll(
+                    'link[rel="icon"], link[rel="apple-touch-icon"]'),
+                    link => ({src: link.getAttribute('href'), size: link.sizes.value})),
+            ];
+            const cache = await caches.open((await caches.keys())[0]);
+            return Promise.all(entries.map(async entry => {
+                const response = await cache.match(entry.src);
+                if (!response || !response.ok) return false;
+                const image = await createImageBitmap(await response.blob());
+                const valid = `${image.width}x${image.height}` === entry.size;
+                image.close();
+                return valid;
+            }));
+        }""", man["icons"])
+        check(all(icon_assets),
+              "PWA, favicon and Apple touch PNGs are precached at their declared sizes")
         with urllib.request.urlopen(BASE + "/static/photo-input.js") as response:
             photo_script = response.read().decode("utf-8")
         cache_result = pg.evaluate("""async () => {
